@@ -21,7 +21,39 @@ function setStatus(text) {
     $('status').textContent = text;
 }
 
+// The run's last lines, kept in the browser's storage as they come, so a tab the browser kills (Safari reloads
+// one that crashed or ran out of memory) leaves them to read at the next visit, as "Previous run's log".
+const LOG_KEY = 'dc-log';
+const LOG_LINES = 400;
+const kept = [];
+let keepTimer = 0;
+
+function keepLog(now) {
+    clearTimeout(keepTimer);
+    keepTimer = 0;
+    const save = () => {
+        try {
+            localStorage.setItem(LOG_KEY, kept.join('\n'));
+        } catch {
+            // Storage full or refused: the log is a help, not a need.
+        }
+    };
+    if (now) {
+        save();
+    } else {
+        keepTimer = setTimeout(save, 250);
+    }
+}
+
 function log(text) {
+    if (window.dcLogging) {
+        kept.push(text);
+        if (kept.length > LOG_LINES) {
+            kept.splice(0, kept.length - LOG_LINES);
+        }
+        // What precedes a crash is written at once; the rest a little later, in one go.
+        keepLog(/error|abort|fail|nan|exception|lost/i.test(text));
+    }
     const pre = $('log');
     pre.textContent += text + '\n';
     if (pre.textContent.length > 200000) {
@@ -351,6 +383,9 @@ function start() {
     if (extra) {
         args.push(...extra.split(/\s+/).filter(Boolean));
     }
+    window.dcLogging = true;
+    kept.length = 0;
+    log(`${new Date().toISOString()} ${navigator.userAgent}`);
     log('darkcloud ' + args.join(' '));
     const canvas = $('canvas');
     // Threads still running when the game exits can abort as it takes them down; the exit is what matters.
@@ -402,7 +437,27 @@ function start() {
     canvas.focus();
 }
 
+// The last run's log, if a run left one (keepLog), whether or not this browser can run the game.
+function showPreviousLog() {
+    let previous = null;
+    try {
+        previous = localStorage.getItem(LOG_KEY);
+    } catch {
+        previous = null;
+    }
+    if (!previous) {
+        return;
+    }
+    $('last-log').textContent = previous;
+    $('last-log-toggle').hidden = false;
+    $('last-log-toggle').addEventListener('click', () => {
+        $('last-log').hidden = !$('last-log').hidden;
+        $('last-log').scrollTop = $('last-log').scrollHeight;
+    });
+}
+
 async function main() {
+    showPreviousLog();
     $('fullscreen').addEventListener('click', () => {
         if (document.fullscreenElement) {
             document.exitFullscreen();
@@ -447,6 +502,7 @@ async function main() {
     }
     navigator.storage.persist?.();
 
+
     const choose = (store) => async (event) => {
         const chosen = event.target.files;
         if (!chosen || chosen.length === 0) {
@@ -472,5 +528,9 @@ async function main() {
     });
     await refresh();
 }
+
+// Errors the page itself meets go to the log too, as the game's do.
+window.addEventListener('error', (event) => log(`[page error] ${event.message} (${event.filename}:${event.lineno})`));
+window.addEventListener('unhandledrejection', (event) => log(`[page error] ${event.reason?.stack ?? event.reason}`));
 
 main().catch((error) => setStatus(`Startup failed: ${error}`));
