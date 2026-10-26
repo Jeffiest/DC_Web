@@ -1,0 +1,80 @@
+# The browser build (PLATFORM WEB, docs/WEB.md): Emscripten, then the build log pushed to the ci-logs
+# branch so it can be read with git alone.
+name: web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EMSDK_VERSION: 6.0.13
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslang-tools python3
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$HOME/emsdk/emsdk" activate "$EMSDK_VERSION"
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+
+      - name: Configure and build
+        id: build
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          mkdir -p ci
+          emcc --version | head -1 | tee ci/build.log
+          set +e
+          cmake --preset web 2>&1 | tee -a ci/build.log
+          configure=${PIPESTATUS[0]}
+          build=1
+          if [ "$configure" -eq 0 ]; then
+            # Keep going so one run reports every unit that fails.
+            cmake --build --preset web -- -k 0 2>&1 | tee -a ci/build.log
+            build=${PIPESTATUS[0]}
+          fi
+          echo "configure=$configure build=$build" | tee ci/status.txt
+          grep -E "error:|Error |undefined symbol|FAILED:" ci/build.log | sort | uniq -c | sort -rn > ci/errors.txt || true
+          ls -la port/build/web/darkcloud* >> ci/status.txt 2>&1 || true
+          [ "$configure" -eq 0 ] && [ "$build" -eq 0 ]
+
+      - name: Publish the log to ci-logs
+        if: always()
+        run: |
+          cd ci
+          printf '%s %s\n' "${{ github.sha }}" "${{ steps.build.outcome }}" > commit.txt
+          git init -q -b ci-logs
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "web build log for ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
+
+      - name: Upload the build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkcloud-web
+          path: |
+            port/build/web/darkcloud.js
+            port/build/web/darkcloud.wasm
+            port/build/web/lang
+            port/build/web/glyphs

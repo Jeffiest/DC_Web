@@ -92,6 +92,18 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "DC_BUILD_TESTS": "OFF"
             }
+        },
+        {
+            "name": "web",
+            "displayName": "WebAssembly (Emscripten), Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/port/build/web",
+            "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+            "cacheVariables": {
+                "PLATFORM": "WEB",
+                "CMAKE_BUILD_TYPE": "Release",
+                "DC_BUILD_TESTS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -114,6 +126,10 @@
         {
             "name": "switch",
             "configurePreset": "switch"
+        },
+        {
+            "name": "web",
+            "configurePreset": "web"
         }
     ],
     "testPresets": [

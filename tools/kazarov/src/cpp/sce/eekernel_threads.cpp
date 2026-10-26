@@ -81,6 +81,9 @@ _kz_fiber_trampoline:
     bl _kz_fiber_entry
     brk #0
 )");
+#elif defined(__EMSCRIPTEN__)
+// WebAssembly has no way to swap stacks by hand; Emscripten's fibers unwind and rewind with Asyncify.
+#include <emscripten/fiber.h>
 #else
 #include <ucontext.h>
 #endif
@@ -167,6 +170,50 @@ void ContextDestroy(Context &c) {
     std::free(c.stack);
     c.stack = nullptr;
     c.sp = nullptr;
+}
+
+#elif defined(__EMSCRIPTEN__)
+
+// Each fiber has its C stack and an Asyncify stack, where a suspended fiber's unwound call frames wait.
+constexpr std::size_t kAsyncifyStackSize = 256 * 1024;
+
+struct Context {
+    emscripten_fiber_t fiber{};
+    void              *stack = nullptr;
+    void              *asyncify_stack = nullptr;
+};
+
+void FiberStart(void *) {
+    RunEntry();
+}
+
+void ContextInitMain(Context &c) {
+    c.asyncify_stack = std::malloc(kAsyncifyStackSize);
+    if (c.asyncify_stack == nullptr) {
+        kz::Abort("eekernel", "out of memory for the main thread's Asyncify stack");
+    }
+    emscripten_fiber_init_from_current_context(&c.fiber, c.asyncify_stack, kAsyncifyStackSize);
+}
+
+void ContextCreate(Context &c) {
+    c.stack = std::malloc(kStackSize);
+    c.asyncify_stack = std::malloc(kAsyncifyStackSize);
+    if (c.stack == nullptr || c.asyncify_stack == nullptr) {
+        kz::Abort("eekernel", "out of memory for a thread stack");
+    }
+    emscripten_fiber_init(&c.fiber, FiberStart, nullptr, c.stack, kStackSize, c.asyncify_stack,
+                          kAsyncifyStackSize);
+}
+
+void ContextSwitch(Context &prev, Context &next) {
+    emscripten_fiber_swap(&prev.fiber, &next.fiber);
+}
+
+void ContextDestroy(Context &c) {
+    std::free(c.stack);
+    std::free(c.asyncify_stack);
+    c.stack = nullptr;
+    c.asyncify_stack = nullptr;
 }
 
 #else

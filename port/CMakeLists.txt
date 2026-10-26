@@ -25,6 +25,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # darkcloud is position-independent (DC_LINK_OPTIONS below).
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(EMSCRIPTEN)
+    # WebAssembly has one statically linked module; position-independent code would ask for dynamic linking.
+    set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+endif()
 
 set(KZ_ROOT "${KAZAROV_SOURCE_DIR}")
 if(NOT EXISTS ${KZ_ROOT}/include/kazarov/port.h)
@@ -44,6 +48,9 @@ endif()
 
 # Python runs the port override script from the Kazarov submodule.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(EMSCRIPTEN)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/web/web.cmake)
+endif()
 # Flatpak builds have no network: their single-file libraries are staged in audio_decoders/ and stb_truetype/; others fetch them.
 set(KZ_PORT_VENDOR_DIRS ${CMAKE_SOURCE_DIR}/audio_decoders ${CMAKE_SOURCE_DIR}/stb_truetype)
 # The Flatpak also stages each library Kazarov's FetchContent_Declare downloads, in flatpak-deps/<name>
@@ -60,6 +67,8 @@ endforeach()
 kz_port_host_library(dc_host)
 if(NINTENDO_SWITCH)
     dc_switch_host(dc_host)
+elseif(EMSCRIPTEN)
+    dc_web_host(dc_host)
 endif()
 # Chronicle still loads retail HD/BD/SQ audio. These compatibility declarations extend the shared
 # semantic audio API; every host and game unit must see the same class definitions.
@@ -70,7 +79,7 @@ set(PORT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(GLOB_RECURSE PS2_SOURCES CONFIGURE_DEPENDS RELATIVE ${PS2_DIR} ${PS2_DIR}/*.cpp)
 file(GLOB_RECURSE PORT_SOURCES CONFIGURE_DEPENDS ${PORT_DIR}/*.cpp)
 list(FILTER PORT_SOURCES EXCLUDE REGEX "/tests/")
-if(NINTENDO_SWITCH)
+if(NINTENDO_SWITCH OR EMSCRIPTEN)
     list(FILTER PORT_SOURCES EXCLUDE REGEX "/platform/(discord|firstrun)\\.cpp$")
 endif()
 # Temporary files beside a source are not units.
@@ -117,10 +126,17 @@ foreach(unit IN LISTS PS2_SOURCES)
         set(stubs "")
         set(header "")
     endif()
+    set(DC_WEB_FOOTER "")
+    set(DC_WEB_FOOTER_COMMAND "")
+    if(EMSCRIPTEN)
+        dc_web_alias_footer(${unit} ${copy})
+    endif()
     add_custom_command(OUTPUT ${copy}
         COMMAND ${Python3_EXECUTABLE} ${PORT_OVERRIDE_SCRIPT} strip --overrides ${PORT_OVERRIDES} ${stubs}
             ${private_overrides} ${port_override_defines} ${PS2_DIR}/${unit} ${copy}
+        ${DC_WEB_FOOTER_COMMAND}
         DEPENDS ${PS2_DIR}/${unit} ${PORT_OVERRIDES} ${PORT_OVERRIDE_SOURCES} ${PORT_OVERRIDE_SCRIPT} ${header}
+            ${DC_WEB_FOOTER}
         COMMENT "Removing overridden definitions from ps2/src/${unit}"
         VERBATIM)
     list(APPEND PS2_UNITS ${copy})
@@ -236,6 +252,8 @@ kz_port_sce_sources(DC_SCE_SOURCES LIBS libvu0 libpad libmc sifdev sifrpc eekern
 add_library(dc_port OBJECT ${PORT_LIB_SOURCES} ${DC_SCE_SOURCES})
 if(NINTENDO_SWITCH)
     dc_switch_port(dc_port)
+elseif(EMSCRIPTEN)
+    dc_web_port(dc_port)
 endif()
 target_link_libraries(dc_port PRIVATE dc_options SDL3::SDL3 Vulkan::Vulkan nlohmann_json::nlohmann_json kz_port_headers)
 target_include_directories(dc_port PRIVATE ${PORT_DIR} ${SHADER_HEADER_DIR})
@@ -263,7 +281,10 @@ target_compile_options(dc_port PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-la
 # the names that are not aliases, EditGaijiTbl among them. ItemPutListTbl12_bytes
 # is not one: port/include/stubs/dngstatusdata.hpp turns GetItem's read through
 # it into a WeaponList lookup.
-if(NINTENDO_SWITCH)
+if(EMSCRIPTEN)
+    # draw_rect and WorkBuffer__2 are aliases appended to their units (web/web.cmake).
+    set(DC_LINK_OPTIONS ${DC_WEB_LINK_OPTIONS})
+elseif(NINTENDO_SWITCH)
     set(DC_LINK_OPTIONS -Wl,--gc-sections -Wl,--defsym=draw_rect=draw_rect_store -Wl,--defsym=WorkBuffer__2=WorkBuffer)
 elseif(WIN32)
     # The two aliases are /alternatename directives in port/src/linknames.cpp.
@@ -350,10 +371,10 @@ endif()
 
 # The tests use an installed GoogleTest, or fetch one at configure time; a build with neither turns them off.
 option(DC_BUILD_TESTS "Build darkcloud_tests" ON)
-if(DC_BUILD_TESTS AND NOT ANDROID AND NOT NINTENDO_SWITCH)
+if(DC_BUILD_TESTS AND NOT ANDROID AND NOT NINTENDO_SWITCH AND NOT EMSCRIPTEN)
     enable_testing()
     add_subdirectory(src/tests)
 endif()
-if(NOT ANDROID AND NOT NINTENDO_SWITCH)
+if(NOT ANDROID AND NOT NINTENDO_SWITCH AND NOT EMSCRIPTEN)
     add_subdirectory(${CMAKE_SOURCE_DIR}/tools/dcdata ${CMAKE_BINARY_DIR}/tools/dcdata)
 endif()

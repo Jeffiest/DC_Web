@@ -7,8 +7,8 @@ get_filename_component(KAZAROV_SOURCE_DIR "${KAZAROV_SOURCE_DIR}" ABSOLUTE BASE_
 
 # PLATFORM picks what is built: PS2 builds and verifies the retail images
 # (ps2/CMakeLists.txt), PC builds the x64 port (port/CMakeLists.txt).
-set(PLATFORM PS2 CACHE STRING "Platform to build: PS2, PC, Switch or Android")
-set_property(CACHE PLATFORM PROPERTY STRINGS PS2 PC SWITCH ANDROID)
+set(PLATFORM PS2 CACHE STRING "Platform to build: PS2, PC, Switch, Android or Web")
+set_property(CACHE PLATFORM PROPERTY STRINGS PS2 PC SWITCH ANDROID WEB)
 if(PLATFORM STREQUAL "PS2")
     add_subdirectory(ps2)
 elseif(PLATFORM STREQUAL "PC")
@@ -22,6 +22,11 @@ elseif(PLATFORM STREQUAL "SWITCH")
     add_subdirectory(port)
 elseif(PLATFORM STREQUAL "ANDROID")
     add_subdirectory(port)
+elseif(PLATFORM STREQUAL "WEB")
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR "PLATFORM WEB requires Emscripten's toolchain (emcmake or the web preset)")
+    endif()
+    add_subdirectory(port)
 else()
-    message(FATAL_ERROR "PLATFORM must be PS2, PC, SWITCH or ANDROID, not ${PLATFORM}")
+    message(FATAL_ERROR "PLATFORM must be PS2, PC, SWITCH, ANDROID or WEB, not ${PLATFORM}")
 endif()

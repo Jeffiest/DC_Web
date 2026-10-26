@@ -28,5 +28,6 @@ void                 ArenaMemoryUnmap(ArenaMemory &memory);
 std::size_t          ArenaMemoryPageSize();
 
 inline bool IsAbove4GiB(const void *pointer) {
-    return reinterpret_cast<std::uintptr_t>(pointer) >> 32 != 0;
+    // Widened first: on wasm32 a pointer is 32 bits wide, and shifting it by 32 is undefined.
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)) >> 32 != 0;
 }
