@@ -27,7 +27,7 @@
 #define DC_ANDROID_TRACE(message) ((void) 0)
 #endif
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
 void TouchOverlaySetOpacity(float opacity);
 void TouchOverlayPoll();
 #endif
@@ -349,7 +349,7 @@ void PumpHost() {
             gfx::SetFrameLayout(layout);
         }
     }
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     TouchOverlayPoll();
 #endif
     InputPoll();
@@ -462,7 +462,7 @@ void ApplyConfigChange(const Config &before, const Config &after) {
         gfx::SetRenderScale(after.render_scale);
     }
 #endif
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     if (after.touch_overlay_opacity != before.touch_overlay_opacity) {
         TouchOverlaySetOpacity(after.touch_overlay_opacity / 100.0f);
     }
@@ -604,7 +604,7 @@ int Run(int argc, const char **argv) {
     WindowInit(window);
     DC_ANDROID_TRACE("Run: window initialized");
     InputInit();
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     TouchOverlaySetOpacity(config.touch_overlay_opacity / 100.0f);
 #endif
 

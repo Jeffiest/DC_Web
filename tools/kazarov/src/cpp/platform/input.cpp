@@ -1042,8 +1042,19 @@ static InputGlyphFamily GamepadFamily(SDL_Gamepad *gamepad) {
 }
 
 #ifdef KZ_TOUCH_OVERLAY
+#if defined(__EMSCRIPTEN__)
+// Whether the page is on a touch screen; the web port's port/web/src/touch.cpp says, as a browser always reports
+// a keyboard and a mouse. None of it in programs without that file.
+__attribute__((weak)) bool WebTouchScreen() { return false; }
+#endif
+
 // The on-screen gamepad stands in for physical devices, so it hides while one is connected or held.
 bool TouchOverlayWanted() {
+#if defined(__EMSCRIPTEN__)
+    return WebTouchScreen() &&
+           std::ranges::none_of(g_slots, [](const PadSlot &slot) { return slot.gamepad != nullptr; }) &&
+           std::ranges::find(g_keys, true) == g_keys.end();
+#endif
     if (std::ranges::any_of(g_slots, [](const PadSlot &slot) { return slot.gamepad != nullptr; }) ||
         SDL_HasKeyboard() || MouseButtons() != 0 || std::ranges::find(g_keys, true) != g_keys.end()) {
         return false;

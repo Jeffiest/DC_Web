@@ -50,9 +50,11 @@ struct Config : HostSettings {
     float ui_scale = 1.0f;
 #if defined(__ANDROID__)
     float render_scale = 0.5f;
-    int   touch_overlay_opacity = 100;
 #else
     float render_scale = 1.0f;
+#endif
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    int   touch_overlay_opacity = 100;
 #endif
     float detail_distance = 0.0f;
     float shadow_distance = 0.0f;

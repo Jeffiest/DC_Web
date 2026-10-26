@@ -223,6 +223,91 @@ function print(text) {
     log(text);
 }
 
+// The on-screen gamepad on a touch screen (port/web/src/touch.cpp): its state goes to the game as a button mask
+// in Android's order and two sticks from -1 to 1, y down; the game says when it shows and how opaque it is.
+const PAD_BITS = {up: 0, down: 1, left: 2, right: 3, cross: 4, circle: 5, square: 6, triangle: 7,
+    l1: 8, r1: 9, l2: 10, r2: 11, select: 12, start: 13};
+const TOUCH_SCREEN = matchMedia('(pointer: coarse)').matches;
+const touches = new Map(); // pointer id -> {mask} or {stick, x, y}
+
+function sendPad() {
+    let mask = 0;
+    const sticks = {left: [0, 0], right: [0, 0]};
+    for (const touch of touches.values()) {
+        mask |= touch.mask ?? 0;
+        if (touch.stick) {
+            sticks[touch.stick] = [touch.x, touch.y];
+        }
+    }
+    window.Module?._dc_web_touch_state?.(mask, ...sticks.left, ...sticks.right);
+}
+
+// Where a touch lies in an element, from -1 to 1 each way.
+function offset(element, event) {
+    const box = element.getBoundingClientRect();
+    return [(event.clientX - box.left) / box.width * 2 - 1, (event.clientY - box.top) / box.height * 2 - 1];
+}
+
+function dpadMask([x, y]) {
+    const dead = 0.33;
+    return (y < -dead) << PAD_BITS.up | (y > dead) << PAD_BITS.down | (x < -dead) << PAD_BITS.left |
+        (x > dead) << PAD_BITS.right;
+}
+
+function setupPad() {
+    const track = (element, update) => {
+        element.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            element.setPointerCapture(event.pointerId);
+            touches.set(event.pointerId, update(event));
+            sendPad();
+        });
+        element.addEventListener('pointermove', (event) => {
+            if (touches.has(event.pointerId)) {
+                touches.set(event.pointerId, update(event));
+                sendPad();
+            }
+        });
+        const release = (event) => {
+            if (touches.delete(event.pointerId)) {
+                update(null);
+                sendPad();
+            }
+        };
+        element.addEventListener('pointerup', release);
+        element.addEventListener('pointercancel', release);
+    };
+    for (const button of document.querySelectorAll('#pad [data-button]')) {
+        const bit = 1 << PAD_BITS[button.dataset.button];
+        track(button, (event) => {
+            button.classList.toggle('held', event !== null);
+            return {mask: bit};
+        });
+    }
+    const dpad = $('pad-dpad');
+    track(dpad, (event) => {
+        const mask = event ? dpadMask(offset(dpad, event)) : 0;
+        for (const arm of dpad.children) {
+            arm.classList.toggle('held', (mask & 1 << PAD_BITS[arm.dataset.dir]) !== 0);
+        }
+        return {mask};
+    });
+    for (const [id, stick] of [['pad-left', 'left'], ['pad-right', 'right']]) {
+        const base = $(id);
+        const knob = base.firstElementChild;
+        track(base, (event) => {
+            let [x, y] = event ? offset(base, event) : [0, 0];
+            const length = Math.hypot(x, y);
+            if (length > 1) {
+                x /= length;
+                y /= length;
+            }
+            knob.style.transform = `translate(${x * 75}%, ${y * 75}%)`;
+            return {stick, x, y};
+        });
+    }
+}
+
 // The Capture button's frames, as the game drew them (port/web/vulkan/device.cpp, CaptureFrame), laid out in one
 // image: frames the screen shows wrong but the capture shows right are the browser's, not the game's.
 const kCaptureFrames = 8;
@@ -275,6 +360,21 @@ function start() {
         canvas,
         print,
         printErr: print,
+        onRuntimeInitialized() {
+            if (TOUCH_SCREEN) {
+                Module._dc_web_touch_screen(1);
+            }
+        },
+        dcTouchVisible(visible) {
+            $('pad').hidden = !(visible && TOUCH_SCREEN);
+            if ($('pad').hidden && touches.size > 0) {
+                touches.clear();
+                sendPad();
+            }
+        },
+        dcTouchOpacity(opacity) {
+            $('pad').style.opacity = String(opacity);
+        },
         dcCaptured(pixels, width, height, remaining) {
             captured.push({pixels, width, height});
             if (remaining <= 0) {
@@ -310,6 +410,7 @@ async function main() {
             $('game').requestFullscreen?.().catch(() => {});
         }
     });
+    setupPad();
     $('capture').addEventListener('click', () => {
         if (window.Module && Module._dc_web_capture) {
             captured = [];

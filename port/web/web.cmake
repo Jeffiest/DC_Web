@@ -76,7 +76,7 @@ endfunction()
 # The desktop-only units, replaced.
 function(dc_web_port target)
     target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/discord.cpp ${DC_WEB_DIR}/src/firstrun.cpp
-        ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp)
+        ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp ${DC_WEB_DIR}/src/touch.cpp)
 endfunction()
 
 # wasm-ld has no --defsym. The two names the other platforms alias at link time are aliases appended to

@@ -34,6 +34,24 @@
     padding: 16px 20px; border-radius: 8px; min-width: min(360px, 80vw); text-align: center; }
   #notice progress { margin-top: 8px; }
   #drawer { position: absolute; left: 0; right: 0; bottom: 0; height: 40vh; background: rgba(0, 0, 0, 0.9); }
+  /* The on-screen gamepad on a touch screen (shell.js): the buttons take touches, the space between them goes
+     to the canvas. Sizes in vmin fit a phone held either way. */
+  #pad { position: absolute; inset: 0; pointer-events: none; touch-action: none; user-select: none;
+    -webkit-user-select: none; }
+  #pad > * { position: absolute; pointer-events: auto; touch-action: none; }
+  .pad-button { width: 11vmin; height: 11vmin; border-radius: 50%; background: rgba(255, 255, 255, 0.16);
+    border: 2px solid rgba(255, 255, 255, 0.35); color: rgba(255, 255, 255, 0.85); display: flex;
+    align-items: center; justify-content: center; font: 600 4.5vmin system-ui, sans-serif; box-sizing: border-box; }
+  .pad-button.held, .pad-dpad .held { background: rgba(255, 255, 255, 0.45); }
+  .pad-shoulder { width: 14vmin; height: 8vmin; border-radius: 3vmin; font-size: 3.6vmin; }
+  .pad-small { width: 12vmin; height: 6vmin; border-radius: 3vmin; font-size: 2.6vmin; }
+  .pad-stick { border-radius: 50%; background: rgba(255, 255, 255, 0.10); border: 2px solid rgba(255, 255, 255, 0.3);
+    box-sizing: border-box; }
+  .pad-knob { position: absolute; left: 30%; top: 30%; width: 40%; height: 40%; border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4); pointer-events: none; }
+  .pad-dpad { width: 30vmin; height: 30vmin; }
+  .pad-dpad > div { position: absolute; width: 33.4%; height: 33.4%; background: rgba(255, 255, 255, 0.16);
+    border: 2px solid rgba(255, 255, 255, 0.35); box-sizing: border-box; pointer-events: none; }
   #captured { position: absolute; inset: 0; overflow: auto; background: rgba(0, 0, 0, 0.95); padding: 8px; }
   #captured img { display: block; max-width: 100%; margin-top: 8px; }
   #captured a.button { text-decoration: none; }
@@ -76,6 +94,26 @@
     <button id="fullscreen" title="Fullscreen (F11 also works)">Fullscreen</button>
     <button id="log-toggle" title="Show what the game prints">Log</button>
     <button id="capture" title="Save the next frames as the game drew them, before the browser shows them">Capture</button>
+  </div>
+  <div id="pad" hidden>
+    <div id="pad-dpad" class="pad-dpad" style="left: 4vmin; bottom: 38vmin">
+      <div data-dir="up" style="left: 33.3%; top: 0"></div><div data-dir="down" style="left: 33.3%; bottom: 0"></div>
+      <div data-dir="left" style="left: 0; top: 33.3%"></div><div data-dir="right" style="right: 0; top: 33.3%"></div>
+    </div>
+    <div id="pad-left" class="pad-stick" style="left: 4vmin; bottom: 3vmin; width: 32vmin; height: 32vmin">
+      <div class="pad-knob"></div></div>
+    <div class="pad-button" data-button="triangle" style="right: 15.5vmin; bottom: 52vmin">&#9651;</div>
+    <div class="pad-button" data-button="square" style="right: 27vmin; bottom: 40.5vmin">&#9633;</div>
+    <div class="pad-button" data-button="circle" style="right: 4vmin; bottom: 40.5vmin">&#9675;</div>
+    <div class="pad-button" data-button="cross" style="right: 15.5vmin; bottom: 29vmin">&#10005;</div>
+    <div id="pad-right" class="pad-stick" style="right: 8vmin; bottom: 3vmin; width: 22vmin; height: 22vmin">
+      <div class="pad-knob"></div></div>
+    <div class="pad-button pad-shoulder" data-button="l2" style="left: 4vmin; bottom: 75vmin">L2</div>
+    <div class="pad-button pad-shoulder" data-button="l1" style="left: 20vmin; bottom: 75vmin">L1</div>
+    <div class="pad-button pad-shoulder" data-button="r1" style="right: 20vmin; bottom: 75vmin">R1</div>
+    <div class="pad-button pad-shoulder" data-button="r2" style="right: 4vmin; bottom: 75vmin">R2</div>
+    <div class="pad-button pad-small" data-button="select" style="left: calc(50% - 14vmin); bottom: 3vmin">SELECT</div>
+    <div class="pad-button pad-small" data-button="start" style="left: calc(50% + 2vmin); bottom: 3vmin">START</div>
   </div>
   <div id="drawer" hidden><pre id="log"></pre></div>
   <div id="captured" hidden>
