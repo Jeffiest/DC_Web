@@ -12,7 +12,8 @@
 </style>
 </head>
 <body>
-<!-- Kazarov's renderer tests on WebGPU (port/web/test/gfx_tests_main.cpp); ?args= passes GoogleTest's arguments. -->
+<!-- Kazarov's renderer tests on WebGPU (port/web/test/gfx_tests_main.cpp); ?args= passes GoogleTest's arguments.
+     The site carries this page too, so a device whose GPU draws the game wrong can show which cases it fails. -->
 <canvas id="canvas" width="640" height="480"></canvas>
 <pre id="log"></pre>
 <script>
@@ -35,7 +36,12 @@
         return;
     }
     sessionStorage.removeItem('dc-tests-reload');
-    const args = (new URLSearchParams(location.search).get('args') || '').split(/\s+/).filter(Boolean);
+    // Without ?args=, the cases the web workflow leaves out (docs/WEB.md): main-depth copies, not offered yet, and
+    // the two eye-plane cases only SwiftShader's clipper fails.
+    const known = '-GfxGpuDepthCopy.*:GfxGpuMeshDc2.FogCrossingTheEyeBlendsClampedFog:' +
+        'GfxGpuMeshDc2.PlainFogCrossesTheEyeWithoutDividingByZero';
+    const given = new URLSearchParams(location.search).get('args');
+    const args = (given ?? `--gtest_filter=${known}`).split(/\s+/).filter(Boolean);
     window.Module = {
         arguments: args,
         canvas: document.getElementById('canvas'),
