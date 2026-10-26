@@ -6,15 +6,16 @@
 // What the player chooses is stored as one of:
 // - chronicle/data.zip, the archive dcdata packs;
 // - chronicle/data/, an extracted data folder;
-// - chronicle/disc.iso or chronicle/disc/ (DATA.DAT and DATA.HD2), which the game extracts into chronicle/data/
-//   at its first start (port/web/src/firstrun.cpp) and then removes.
+// - chronicle/disc.iso or chronicle/disc/ (DATA.DAT and DATA.HD2), which the game reads in place; at its first
+//   start it writes the few files dcdata adds beside a disc's into chronicle/data/ (port/web/src/firstrun.cpp).
 // Storing one removes the others.
 
 'use strict';
 
 const $ = (id) => document.getElementById(id);
 const ISOLATE_FLAG = 'dc-isolate-reload';
-const KINDS = ['data.zip', 'data', 'disc.iso', 'disc'];
+// A disc comes first: chronicle/data/ beside it holds only what the game prepared.
+const KINDS = ['disc.iso', 'disc', 'data.zip', 'data'];
 
 function setStatus(text) {
     $('status').textContent = text;
@@ -177,9 +178,9 @@ function describe(what) {
         case 'data':
             return 'The extracted game data is stored.';
         case 'disc.iso':
-            return `The disc image is stored (${mib(what.size)}). The game extracts it when it starts.`;
+            return `The disc image is stored (${mib(what.size)}). The game reads it in place.`;
         default:
-            return "The disc's files are stored. The game extracts them when it starts.";
+            return "The disc's files are stored. The game reads them in place.";
     }
 }
 
@@ -195,7 +196,7 @@ async function refresh() {
     }
 }
 
-// The game's "extract: files total bytes total" lines, shown over the canvas while a disc is extracted.
+// The game's "extract: files total bytes total" lines, shown over the canvas while it prepares a disc's data.
 function notice(text, fraction) {
     $('notice').hidden = text === null;
     $('notice-text').textContent = text ?? '';
@@ -211,7 +212,7 @@ function print(text) {
     const extract = /^extract: (\d+) (\d+) (\d+) (\d+)$/.exec(text);
     if (extract) {
         const [files, total, bytes, totalBytes] = extract.slice(1).map(Number);
-        notice(`Extracting the game data: ${files} of ${total} files`, totalBytes > 0 ? bytes / totalBytes : 0);
+        notice(`Preparing the game data: ${files} of ${total} files`, totalBytes > 0 ? bytes / totalBytes : 0);
         return;
     }
     if (text === 'extract: done') {

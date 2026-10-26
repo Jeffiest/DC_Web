@@ -316,7 +316,9 @@ int ReadWhole(const IndexedFile &file, void *buffer, std::size_t *out_capacity =
     }
     if (!read) {
         if (file.archived) {
-            std::fprintf(stderr, "data.zip: cannot read or verify %s\n", file.path.generic_string().c_str());
+            std::fprintf(stderr, "%s: cannot read or verify %s\n",
+                         DataArchiveDisc(PathsDataRoot()).empty() ? "data.zip" : "the disc",
+                         file.path.generic_string().c_str());
         } else {
             std::fprintf(stderr, "short read on %s\n", PathsDisplay(file.path).c_str());
         }
@@ -451,14 +453,17 @@ PORT_OVERRIDE void InitCDFile() {
     copied_capacity_count.store(0, std::memory_order_relaxed);
     data_indexed = false;
     if (DataArchivePresent(root)) {
+        // A disc read in place (on the web) carries its loose files from the data root, unprefixed.
+        const fs::path disc = DataArchiveDisc(root);
+        const fs::path source = disc.empty() ? root.parent_path() / "data.zip" : disc;
         try {
-            data_archive = std::make_unique<DataArchive>(root.parent_path() / "data.zip");
+            data_archive = disc.empty() ? std::make_unique<DataArchive>(source) : DataArchive::OpenDisc(disc, root);
         } catch (const std::exception &exception) {
-            std::fprintf(stderr, "%s: %s\n", PathsDisplay(root.parent_path() / "data.zip").c_str(), exception.what());
-            NoData(root, "has an invalid data.zip archive");
+            std::fprintf(stderr, "%s: %s\n", PathsDisplay(source).c_str(), exception.what());
+            NoData(root, disc.empty() ? "has an invalid data.zip archive" : "has an unreadable disc beside it");
         }
-        bool has_data_prefix = true;
-        for (std::size_t index = 0; index < data_archive->Count(); ++index) {
+        bool has_data_prefix = disc.empty();
+        for (std::size_t index = 0; has_data_prefix && index < data_archive->Count(); ++index) {
             const std::string &name = data_archive->GetEntry(index).name;
             if (!name.ends_with('/') && !dcdata::FoldPath(name).starts_with("data/")) {
                 has_data_prefix = false;

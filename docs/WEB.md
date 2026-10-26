@@ -47,14 +47,17 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   private file system under `chronicle/` once: the disc image (`disc.iso`), the disc's `DATA.DAT` and
   `DATA.HD2` (`disc/`), an extracted `data` folder (`data/`), or the `data.zip` dcdata packs. The game mounts
   that file system at `/opfs` through WasmFS (`port/web/src/storage.cpp`) and starts with
-  `--data /opfs/chronicle/data --save /opfs/chronicle/save`; saves persist there. A disc is extracted by the
-  game at its first start with dcdata's own code (`port/web/src/firstrun.cpp`), which then checks every
-  file and removes the disc; an extraction cut short resumes at the next start. `data.zip` is read in
-  place a seek at a time. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
+  `--data /opfs/chronicle/data --save /opfs/chronicle/save`; saves persist there. A disc is read in place
+  (`DataArchive::OpenDisc`, `platform/data_archive.cpp`): each file of `DATA.HD2` from `DATA.DAT` a seek at a
+  time, with the data folder's loose files over them. At its first start the game makes those loose files, what
+  dcdata writes beside a disc's (`normalized/`, `data.hd2`, `languages.json` and the aliases), from the
+  menus, system packs and other files they come from (`port/web/src/firstrun.cpp`); `languages.json`, written last, marks them done.
+  Copying every file of the disc to the browser's storage took many minutes on a phone. `data.zip` is read in
+  place the same way. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
 - **Saves**: Kazarov's `FilesWrite` commits a new file with an exclusive rename or a hard link, neither of
   which WasmFS has; on the web it checks the name is free and renames (`platform/files.cpp`).
 - **The page** (`port/web/site/`): `shell.js` stores the data and starts the game, which then fills the
-  window, scaled to fit, with Fullscreen and Log buttons and the extraction's progress over it; `sw.js` is a
+  window, scaled to fit, with Fullscreen and Log buttons and the first start's progress over it; `sw.js` is a
   service worker that adds COOP/COEP for hosts that cannot send them, GitHub Pages among them, and
   `shell.js` reloads once under it. `?args=--headless+--frames+30` on the URL passes extra arguments.
 
@@ -63,7 +66,7 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 | Stage | State |
 | :-- | :-- |
 | Compiles and links to wasm | Done |
-| Game data in the browser: disc image, disc files, data folder or `data.zip` | Done; the disc extracted in the page |
+| Game data in the browser: disc image, disc files, data folder or `data.zip` | Done; a disc read in place |
 | Renderer on WebGPU (Vulkan on WebGPU) | Done; Kazarov's renderer tests pass in Chromium, the game plays in Chrome |
 | Saves | Done |
 | Page: fills the window, fullscreen, log drawer | Done |
