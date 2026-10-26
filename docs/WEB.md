@@ -93,6 +93,9 @@ offers no timestamps, depth bounds or depth blits.
 - **Shaders** are hand-ported to WGSL (`vulkan/shaders/`) and matched to the renderer's SPIR-V modules
   word for word. Specialisation constants are WGSL overrides with the same ids; clip space is flipped in y.
   When a GLSL shader in `gfx/shaders/` changes, its WGSL port must follow.
+- **Without clip distances** (Mali GPUs, among others), every shader comes in a `_noclip` variant: the vertex
+  shader hands its clip distances to the fragment shader as two more varyings, and that discards where any is
+  negative. CI runs the GPU renderer tests a second time on it (`--no-clip-distances`).
 - **Without dual-source blending** (SwiftShader, some browsers), the blends that use a second source,
   only ever on targets without alpha, draw from one source: the shader writes the factor as alpha and the
   pipeline leaves alpha out of the target.

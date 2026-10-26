@@ -9,7 +9,9 @@ struct In {
 
 struct Out {
     @builtin(position) position: vec4f,
-    @builtin(clip_distances) clip_distances: array<f32, 2>,
+    @builtin(clip_distances) clip_distances: array<f32, 2>, // @clip
+    @location(4) clip_low: vec4f, // @noclip
+    @location(5) clip_high: vec4f, // @noclip
     @location(0) color: vec4f,
     @location(1) uv: vec2f,
     @location(2) fog: vec4f,
@@ -43,8 +45,11 @@ fn main(v: In) -> Out {
     var o: Out;
     o.position = ToWebGpu(clip);
 
-    o.clip_distances[0] = select(1.0, dot((*mc).clip_plane[0], position), (flags & kClip0) != 0u);
-    o.clip_distances[1] = select(1.0, dot((*mc).clip_plane[1], position), (flags & kClip1) != 0u);
+    let clip0 = select(1.0, dot((*mc).clip_plane[0], position), (flags & kClip0) != 0u);
+    let clip1 = select(1.0, dot((*mc).clip_plane[1], position), (flags & kClip1) != 0u);
+    o.clip_distances = array<f32, 2>(clip0, clip1); // @clip
+    o.clip_low = vec4f(clip0, clip1, 1.0, 1.0); // @noclip
+    o.clip_high = vec4f(1.0); // @noclip
 
     var color = (*mc).diffuse.rgb;
     var alpha = (*mc).diffuse.a;

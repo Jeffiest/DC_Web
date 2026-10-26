@@ -233,17 +233,23 @@ function start() {
     }
     log('darkcloud ' + args.join(' '));
     const canvas = $('canvas');
+    // Threads still running when the game exits can abort as it takes them down; the exit is what matters.
+    let exited = false;
     window.Module = {
         arguments: args,
         canvas,
         print,
         printErr: print,
         onExit(code) {
+            exited = true;
             log(`exit=${code}`);
             notice(`The game exited (${code}).`);
         },
         onAbort(reason) {
             log(`abort: ${reason}`);
+            if (exited) {
+                return;
+            }
             notice('The game stopped with an error. The log has what it printed.');
             $('drawer').hidden = false;
         },

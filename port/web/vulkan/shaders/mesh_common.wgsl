@@ -1,6 +1,6 @@
 // What mesh.vert and mesh_prog0.vert share: gfx::MeshConstants records and the fragment inputs.
 
-enable clip_distances;
+enable clip_distances; // @clip
 
 // gfx::MeshConstants. Colours are modulations with 1.0 as GS 0x80. Each chunk's records form one array; the
 // draw's record is at pc.mesh_index.

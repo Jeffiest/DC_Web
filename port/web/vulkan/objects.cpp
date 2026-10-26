@@ -102,14 +102,20 @@ const KnownModule kKnownModules[] = {
     {"depth_planes_frag",      depth_planes_frag,      sizeof(depth_planes_frag)     },
 };
 
+} // namespace
+
+// The WGSL for a module by name, its _noclip variant where the adapter has no clip distances.
 const WgslShader *FindWgsl(const char *name) {
+    const std::string wanted = std::string(name) + (g.clip_distances ? "" : "_noclip");
     for (size_t i = 0; i < kWgslShaderCount; i++) {
-        if (std::strcmp(kWgslShaders[i].name, name) == 0) {
+        if (wanted == kWgslShaders[i].name) {
             return &kWgslShaders[i];
         }
     }
     return nullptr;
 }
+
+namespace {
 
 std::vector<uint32_t> OverrideIds(const char *code) {
     std::vector<uint32_t> ids;

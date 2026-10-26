@@ -13,6 +13,8 @@ struct Out {
     @location(1) uv: vec2f,
     @location(2) fog: vec4f,
     @location(3) @interpolate(flat) fog_mode: vec4f,
+    @location(4) clip_low: vec4f, // @noclip
+    @location(5) clip_high: vec4f, // @noclip
 }
 
 @vertex
@@ -23,5 +25,7 @@ fn main(v: In) -> Out {
     o.uv = v.uv * pc.uv_xform.xy + pc.uv_xform.zw;
     o.fog = vec4f(v.fog, 0.0, 0.0, 0.0);
     o.fog_mode = vec4f(0.0, 0.0, -1.0, 0.0);
+    o.clip_low = vec4f(1.0); // @noclip
+    o.clip_high = vec4f(1.0); // @noclip
     return o;
 }

@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 
@@ -110,6 +111,10 @@ bool RequestAdapter() {
     }
     g.dual_source = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_DualSourceBlending);
     g.depth32_stencil8 = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_Depth32FloatStencil8);
+    // DC_WEBGPU_NO_CLIP_DISTANCES=1 takes the fallback where the adapter has them, as the web workflow tests it.
+    const char *no_clip = std::getenv("DC_WEBGPU_NO_CLIP_DISTANCES");
+    g.clip_distances = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_ClipDistances) &&
+                       (no_clip == nullptr || std::strcmp(no_clip, "1") != 0);
     wgpuAdapterGetLimits(g.adapter, &g.limits);
     WGPUAdapterInfo info = {};
     wgpuAdapterGetInfo(g.adapter, &info);
@@ -535,7 +540,12 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice, const VkDeviceCr
         if (!RequestAdapter()) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        std::vector<WGPUFeatureName> features = {WGPUFeatureName_ClipDistances};
+        std::vector<WGPUFeatureName> features;
+        if (g.clip_distances) {
+            features.push_back(WGPUFeatureName_ClipDistances);
+        } else {
+            Warn("no clip distances: the fragment shader clips instead");
+        }
         if (g.dual_source) {
             features.push_back(WGPUFeatureName_DualSourceBlending);
         } else {

@@ -3,7 +3,9 @@
 
 Each shader is its parts joined, with every `enable` directive hoisted to the top as WGSL requires. The
 fragment shader's two variants come from one file: lines ending in `// @dual` are kept for the dual-source
-variant only, lines ending in `// @single` for the single-source one.
+variant only, lines ending in `// @single` for the single-source one. Every shader also comes as
+`<name>_noclip`, for adapters without WebGPU's clip distances: lines ending in `// @clip` are left out of
+it and lines ending in `// @noclip` kept in it alone.
 
 usage: embed_wgsl.py <shaders dir> <output.cpp>
 """
@@ -21,15 +23,17 @@ SHADERS = {
 }
 
 
-def assemble(directory: Path, parts: list[str], variant: str | None) -> str:
+def assemble(directory: Path, parts: list[str], variant: str | None, clip: bool) -> str:
+    tags = {"dual", "single", "clip", "noclip"}
+    kept = {variant, "clip" if clip else "noclip"}
     enables: list[str] = []
     body: list[str] = []
     for part in parts:
         for line in (directory / f"{part}.wgsl").read_text(encoding="utf-8").splitlines():
             stripped = line.rstrip()
-            for tag in ("dual", "single"):
+            for tag in tags:
                 if stripped.endswith(f"// @{tag}"):
-                    if variant != tag:
+                    if tag not in kept:
                         stripped = None
                     else:
                         stripped = stripped[: -len(f"// @{tag}")].rstrip()
@@ -56,10 +60,11 @@ def main() -> int:
         "const WgslShader kWgslShaders[] = {",
     ]
     for name, (parts, variant) in SHADERS.items():
-        code = assemble(directory, parts, variant)
-        if ")wgsl\"" in code:
-            raise SystemExit(f"embed_wgsl: {name} contains the raw string's delimiter")
-        lines.append(f'    {{"{name}", R"wgsl({code})wgsl"}},')
+        for clip in (True, False):
+            code = assemble(directory, parts, variant, clip)
+            if ")wgsl\"" in code:
+                raise SystemExit(f"embed_wgsl: {name} contains the raw string's delimiter")
+            lines.append(f'    {{"{name}{"" if clip else "_noclip"}", R"wgsl({code})wgsl"}},')
     lines += ["};", "", "const size_t kWgslShaderCount = sizeof(kWgslShaders) / sizeof(kWgslShaders[0]);", "",
               "} // namespace vkwebgpu", ""]
     output.write_text("\n".join(lines), encoding="utf-8")

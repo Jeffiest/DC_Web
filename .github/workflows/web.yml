@@ -119,6 +119,10 @@ jobs:
           timeout 900 node gfx_tests.mjs http://localhost:8000/gfx_tests.html "$GITHUB_WORKSPACE/ci/gfx_tests.log" \
             "--gtest_filter=-$known"
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/gfx_tests.log"
+          # Again on the fallback for adapters without clip distances (Mali, among others), the GPU cases only.
+          timeout 900 node gfx_tests.mjs http://localhost:8000/gfx_tests.html "$GITHUB_WORKSPACE/ci/gfx_tests_noclip.log" \
+            "--gtest_filter=GfxGpu*-$known" --no-clip-distances
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/gfx_tests_noclip.log"
 
       # The WebGPU probe in Chromium on SwiftShader: device, canvas, readback and fibers on the game's thread model.
       - name: WebGPU probe in Chromium
