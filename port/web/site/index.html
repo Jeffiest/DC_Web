@@ -34,6 +34,9 @@
     padding: 16px 20px; border-radius: 8px; min-width: min(360px, 80vw); text-align: center; }
   #notice progress { margin-top: 8px; }
   #drawer { position: absolute; left: 0; right: 0; bottom: 0; height: 40vh; background: rgba(0, 0, 0, 0.9); }
+  #captured { position: absolute; inset: 0; overflow: auto; background: rgba(0, 0, 0, 0.95); padding: 8px; }
+  #captured img { display: block; max-width: 100%; margin-top: 8px; }
+  #captured a.button { text-decoration: none; }
   #log { margin: 0; height: 100%; overflow: auto; padding: 8px 12px; box-sizing: border-box; color: #b8b8c0;
     font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 </style>
@@ -72,8 +75,14 @@
   <div id="toolbar">
     <button id="fullscreen" title="Fullscreen (F11 also works)">Fullscreen</button>
     <button id="log-toggle" title="Show what the game prints">Log</button>
+    <button id="capture" title="Save the next frames as the game drew them, before the browser shows them">Capture</button>
   </div>
   <div id="drawer" hidden><pre id="log"></pre></div>
+  <div id="captured" hidden>
+    <div class="row"><a id="captured-save" class="button" download="frames.png">Save</a>
+      <button id="captured-close" class="secondary">Close</button></div>
+    <img id="captured-image" alt="The captured frames">
+  </div>
 </div>
 <script src="shell.js"></script>
 </body>

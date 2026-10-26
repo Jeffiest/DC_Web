@@ -7,6 +7,7 @@
 #include <emscripten/emscripten.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <cstdarg>
@@ -797,6 +798,75 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR ha
     return VK_SUCCESS;
 }
 
+// The page's Capture button (port/web/site/shell.js) asks for the next frames as the layer presents them, before
+// the browser has the canvas: they tell a frame drawn wrong from one the browser shows wrong.
+std::atomic<int> g_capture_frames{0};
+
+// Reads the frame back and hands it to the page as RGBA, opaque.
+static void CaptureFrame(Image *image, uint32_t width, uint32_t height) {
+    const uint32_t       row = width * 4;
+    const uint32_t       padded = (row + 255) & ~255u;
+    WGPUBufferDescriptor buffer_descriptor = {};
+    buffer_descriptor.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    buffer_descriptor.size = static_cast<uint64_t>(padded) * height;
+    WGPUBuffer               buffer = wgpuDeviceCreateBuffer(g.device, &buffer_descriptor);
+    WGPUCommandEncoder       encoder = wgpuDeviceCreateCommandEncoder(g.device, nullptr);
+    WGPUTexelCopyTextureInfo from = {};
+    from.texture = image->texture;
+    from.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferInfo to = {};
+    to.buffer = buffer;
+    to.layout.bytesPerRow = padded;
+    to.layout.rowsPerImage = height;
+    const WGPUExtent3D extent = {width, height, 1};
+    wgpuCommandEncoderCopyTextureToBuffer(encoder, &from, &to, &extent);
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+    wgpuQueueSubmit(g.queue, 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+    struct Mapped {
+        bool done = false;
+        bool ok = false;
+    } mapped;
+    WGPUBufferMapCallbackInfo callback = {};
+    callback.mode = WGPUCallbackMode_AllowProcessEvents;
+    callback.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *out, void *) {
+        static_cast<Mapped *>(out)->ok = status == WGPUMapAsyncStatus_Success;
+        static_cast<Mapped *>(out)->done = true;
+    };
+    callback.userdata1 = &mapped;
+    wgpuBufferMapAsync(buffer, WGPUMapMode_Read, 0, buffer_descriptor.size, callback);
+    WaitUntil([&] { return mapped.done; });
+    const int remaining = g_capture_frames.fetch_sub(1) - 1;
+    if (mapped.ok) {
+        const auto          *src = static_cast<const uint8_t *>(wgpuBufferGetConstMappedRange(buffer, 0, buffer_descriptor.size));
+        std::vector<uint8_t> pixels(static_cast<size_t>(row) * height);
+        const bool           bgra = image->format == WGPUTextureFormat_BGRA8Unorm;
+        for (uint32_t y = 0; y < height; y++) {
+            const uint8_t *in = src + static_cast<size_t>(y) * padded;
+            uint8_t       *out = pixels.data() + static_cast<size_t>(y) * row;
+            for (uint32_t x = 0; x < width; x++) {
+                out[x * 4 + 0] = in[x * 4 + (bgra ? 2 : 0)];
+                out[x * 4 + 1] = in[x * 4 + 1];
+                out[x * 4 + 2] = in[x * 4 + (bgra ? 0 : 2)];
+                out[x * 4 + 3] = 255;
+            }
+        }
+        wgpuBufferUnmap(buffer);
+        MAIN_THREAD_EM_ASM({
+            // Memory may have grown since the main thread's views were made.
+            const heap = HEAPU8.buffer === wasmMemory.buffer ? HEAPU8 : new Uint8Array(wasmMemory.buffer);
+            if (Module.dcCaptured) {
+                Module.dcCaptured(heap.slice($0, $0 + $1 * $2 * 4), $1, $2, $3);
+            }
+        }, pixels.data(), width, height, remaining);
+    } else {
+        std::fprintf(stderr, "webgpu: a captured frame could not be read back\n");
+    }
+    wgpuBufferDestroy(buffer);
+    wgpuBufferRelease(buffer);
+}
+
 // Draws alpha 1 over the canvas's texture, leaving its colour. The frame's alpha is the GS frame buffer's, often
 // below 1; the canvas is configured opaque, which should make the browser ignore it. Android (on Mali at least)
 // flickers to frames as much brighter as a colour divided by that alpha would be, and only there.
@@ -853,6 +923,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
         auto              *chain = Get<Swapchain>(info->pSwapchains[i]);
         Image             *image = chain->images[info->pImageIndices[i]];
         VkResult           result = VK_SUCCESS;
+        if (g_capture_frames.load() > 0 && image->texture != nullptr) {
+            CaptureFrame(image, chain->width, chain->height);
+        }
         WGPUSurfaceTexture current = {};
         wgpuSurfaceGetCurrentTexture(g.surface, &current);
         if (current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
@@ -1051,3 +1124,8 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const
 }
 
 } // extern "C"
+
+// The page's Capture button: the next frames presented are read back and handed to it (CaptureFrame).
+extern "C" EMSCRIPTEN_KEEPALIVE void dc_web_capture(int frames) {
+    g_capture_frames.store(frames);
+}
