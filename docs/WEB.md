@@ -56,6 +56,9 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   `languages.json`, written last, marks them done.
   Copying every file of the disc to the browser's storage took many minutes on a phone. `data.zip` is read in
   place the same way. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
+- **Render resolution**: the game draws at half the window's resolution on a touch screen, as Android's port
+  starts (a phone's GPU filling all its screen's pixels fell to about 47 frames a second in town), and at the
+  whole of it elsewhere; Options' Render Resolution changes it (`video.render_scale`, 0 for that choice).
 - **On-screen gamepad**: on a touch screen (`pointer: coarse`) the page draws a PS2 pad over the game, D-pad,
   face and shoulder buttons, Select, Start and both sticks, and hands its state to the game the way Android's
   Java overlay does (`port/web/src/touch.cpp`, `KZ_TOUCH_OVERLAY`). The game hides it while a gamepad is

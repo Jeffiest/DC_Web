@@ -50,6 +50,8 @@ struct Config : HostSettings {
     float ui_scale = 1.0f;
 #if defined(__ANDROID__)
     float render_scale = 0.5f;
+#elif defined(__EMSCRIPTEN__)
+    float render_scale = 0.0f; /**< 0: chosen by the screen (ConfigRenderScale). */
 #else
     float render_scale = 1.0f;
 #endif
@@ -102,6 +104,11 @@ float ConfigDetailDistance();
 // How far from the eye a town part casts its shadow at full strength: video.shadow_distance, or
 // infinity where it is 0. Past it the game's own distances apply.
 float ConfigShadowDistance();
+
+// The game's internal image size against the window's: video.render_scale, or on the web where it is 0, half on a
+// touch screen, as Android's port starts, a phone's GPU filling a screen of its pixels at the frame rate no more,
+// and whole elsewhere.
+float ConfigRenderScale(const Config &config);
 
 // Parses a JSON text (comments allowed) over the defaults: an object of the sections game, video,
 // audio, input and discord. Unknown keys and bad values are reported on stderr and leave the default in

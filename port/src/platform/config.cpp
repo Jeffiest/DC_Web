@@ -531,9 +531,16 @@ bool Apply(Config &config, std::string_view name, const Json &value) {
         return true;
     }
 #endif
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     if (name == "video.render_scale") {
         float scale = 0.0f;
+#if defined(__EMSCRIPTEN__)
+        // 0 leaves the choice to the screen (ConfigRenderScale).
+        if (ReadNumber(value, scale) && scale == 0.0f) {
+            config.render_scale = 0.0f;
+            return true;
+        }
+#endif
         if (!ReadNumber(value, scale) || !(scale >= 0.5f && scale <= 2.0f)) {
             return false;
         }
@@ -655,6 +662,20 @@ float ConfigShadowDistance() {
     return distance > 0.0f ? distance : std::numeric_limits<float>::infinity();
 }
 
+#if defined(__EMSCRIPTEN__)
+// Whether the page is on a touch screen (port/web/src/touch.cpp).
+bool WebTouchScreen();
+#endif
+
+float ConfigRenderScale(const Config &config) {
+#if defined(__EMSCRIPTEN__)
+    if (config.render_scale <= 0.0f) {
+        return WebTouchScreen() ? 0.5f : 1.0f;
+    }
+#endif
+    return config.render_scale;
+}
+
 Config ConfigParse(std::string_view text) {
     Config config;
     if (Trim(text).empty()) {
@@ -719,7 +740,7 @@ std::string ConfigSerialize(const Config &config) {
     root["video"]["fullscreen"] = config.fullscreen;
     root["video"]["aspect"] = config.aspect == ConfigAspect::FourThree ? "4:3" : "auto";
     root["video"]["ui_scale"] = Shortest(config.ui_scale);
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     root["video"]["render_scale"] = Shortest(config.render_scale);
 #endif
 #if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
