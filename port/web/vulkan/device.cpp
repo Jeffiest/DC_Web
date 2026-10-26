@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -171,6 +172,17 @@ bool RequestAdapter() {
         }
     }
     Copy(g.adapter_name, sizeof g.adapter_name, name.c_str());
+    // Arm's Mali GPUs (Android phones) draw frames wrong while two are on the GPU at once: some draws take the next
+    // frame's state, which showed as flicker and wrong texels that no frame read back alone had, and finishing each
+    // frame before the next was begun (DC_WEBGPU_SERIAL_FRAMES) cured it. This is the narrower wait, one submission
+    // on the GPU at a time while the CPU builds the next frame. DC_WEBGPU_ONE_FRAME=1 or 0 overrides the choice.
+    std::string vendor = text(info.vendor);
+    std::transform(vendor.begin(), vendor.end(), vendor.begin(), [](unsigned char c) { return std::tolower(c); });
+    const char *one_frame = std::getenv("DC_WEBGPU_ONE_FRAME");
+    g.one_frame_on_gpu = one_frame != nullptr ? std::strcmp(one_frame, "1") == 0 : vendor == "arm";
+    if (g.one_frame_on_gpu) {
+        std::fprintf(stderr, "webgpu: one submission on the GPU at a time\n");
+    }
     wgpuAdapterInfoFreeMembers(info);
     return true;
 }
@@ -1087,6 +1099,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice, uint32_t count, const V
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue, uint32_t count, const VkSubmitInfo2 *submits, VkFence fence) {
     AssertDeviceThread(__func__);
+    // Before any of this submission's writes too: they would land in buffers the GPU may still be reading.
+    if (g.one_frame_on_gpu) {
+        WaitForSerial(SubmitSerial());
+    }
     std::vector<WGPUCommandBuffer> commands;
     std::vector<Readback>          readbacks;
     for (uint32_t s = 0; s < count; s++) {

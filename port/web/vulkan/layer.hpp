@@ -295,6 +295,8 @@ struct Context {
     bool              depth32_stencil8 = false;
     // Without WebGPU's clip distances (Mali, among others), the shaders' _noclip variants clip by discarding.
     bool              clip_distances = false;
+    // Whether a submission waits for the GPU to finish the ones before it (vkQueueSubmit2).
+    bool              one_frame_on_gpu = false;
     WGPULimits        limits = {};
     char              adapter_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {};
 };
