@@ -20,10 +20,13 @@ set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+# patch_sdl.py fixes the dummy audio driver's timer, which headless runs use.
 FetchContent_Declare(SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG release-3.4.18
-    GIT_SHALLOW TRUE)
+    GIT_SHALLOW TRUE
+    PATCH_COMMAND ${Python3_EXECUTABLE} ${DC_WEB_DIR}/patch_sdl.py <SOURCE_DIR>
+    UPDATE_DISCONNECTED TRUE)
 FetchContent_MakeAvailable(SDL3)
 if(NOT TARGET SDL3::SDL3)
     add_library(SDL3::SDL3 ALIAS SDL3-static)
@@ -73,7 +76,7 @@ endfunction()
 # The desktop-only units, replaced.
 function(dc_web_port target)
     target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/discord.cpp ${DC_WEB_DIR}/src/firstrun.cpp
-        ${DC_WEB_DIR}/src/storage.cpp)
+        ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp)
 endfunction()
 
 # wasm-ld has no --defsym. The two names the other platforms alias at link time are aliases appended to

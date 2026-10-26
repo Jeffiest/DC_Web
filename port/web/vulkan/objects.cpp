@@ -924,7 +924,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice, VkPipeline pipeline, cons
     delete object;
 }
 
-// The browser caches compiled shaders itself; the renderer's cache stays empty.
+// The browser caches compiled shaders itself; the renderer's cache holds only a header.
 VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineCache(VkDevice, const VkPipelineCacheCreateInfo *,
                                                      const VkAllocationCallbacks *, VkPipelineCache *cache) {
     static uint8_t caches;
@@ -934,8 +934,21 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineCache(VkDevice, const VkPipelineC
 
 VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineCache(VkDevice, VkPipelineCache, const VkAllocationCallbacks *) {}
 
-VKAPI_ATTR VkResult VKAPI_CALL vkGetPipelineCacheData(VkDevice, VkPipelineCache, size_t *size, void *) {
-    *size = 0;
+// A cache of just its header, which matches the device, so the renderer keeps and accepts its cache file.
+VKAPI_ATTR VkResult VKAPI_CALL vkGetPipelineCacheData(VkDevice, VkPipelineCache, size_t *size, void *data) {
+    VkPipelineCacheHeaderVersionOne header = {};
+    header.headerSize = sizeof header;
+    header.headerVersion = VK_PIPELINE_CACHE_HEADER_VERSION_ONE;
+    if (data == nullptr) {
+        *size = sizeof header;
+        return VK_SUCCESS;
+    }
+    if (*size < sizeof header) {
+        *size = 0;
+        return VK_INCOMPLETE;
+    }
+    std::memcpy(data, &header, sizeof header);
+    *size = sizeof header;
     return VK_SUCCESS;
 }
 

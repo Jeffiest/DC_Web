@@ -92,6 +92,15 @@ offers no timestamps, depth bounds or depth blits.
 Headless Chromium on SwiftShader, which CI uses, loses the WebGPU device once a canvas presents, so CI
 runs the game `--offscreen` and checks pixels through readbacks. A browser with a GPU does not.
 
+Kazarov's renderer tests (`gfx_*_test.cpp`, built as `kazarov_gfx_tests` and run in Chromium by CI) are the
+layer's conformance suite. Left out of the run:
+
+- `GfxGpuDepthCopy.*`: main-depth copies (`CopyMainDepthToTarget`) are not offered yet, as WebGPU cannot blit
+  depth. The game then draws the depth-of-field haze without its low-resolution copy.
+- `GfxGpuMeshDc2.FogCrossingTheEyeBlendsClampedFog` and `PlainFogCrossesTheEyeWithoutDividingByZero`: their
+  vertices lie exactly on the eye plane (w = 0), where SwiftShader's clipper leaves those vertices out of the
+  interpolation. A hair either side of the plane, and on other GPUs, the result is the expected one.
+
 ## Watch for
 
 wasm-ld turns a call whose type differs from its definition into a trap, where native linkers let it
