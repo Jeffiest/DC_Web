@@ -100,3 +100,21 @@ set(DC_WEB_LINK_OPTIONS
     -sENVIRONMENT=web,worker,node
     -sEXPORTED_RUNTIME_METHODS=FS,callMain
     -Wl,--error-limit=0)
+
+# The WebGPU probe (probe/): what the renderer's WebGPU backend will rely on, with the game's thread model.
+add_executable(webgpu_probe ${DC_WEB_DIR}/probe/webgpu_probe.cpp)
+set_target_properties(webgpu_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+target_compile_options(webgpu_probe PRIVATE --use-port=emdawnwebgpu)
+target_link_options(webgpu_probe PRIVATE
+    --use-port=emdawnwebgpu
+    -sPROXY_TO_PTHREAD=1
+    -sASYNCIFY=1
+    -sALLOW_MEMORY_GROWTH=1
+    -sOFFSCREENCANVAS_SUPPORT=1
+    "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas"
+    -sEXIT_RUNTIME=1
+    -sENVIRONMENT=web,worker)
+add_custom_command(TARGET webgpu_probe POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/probe/probe.html ${CMAKE_BINARY_DIR}
+    VERBATIM)
+add_dependencies(webgpu_probe dc_web_site)

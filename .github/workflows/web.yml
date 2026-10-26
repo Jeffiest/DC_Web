@@ -92,6 +92,19 @@ jobs:
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
 
+      # The WebGPU probe in Chromium on SwiftShader: device, canvas, readback and fibers on the game's thread model.
+      - name: WebGPU probe in Chromium
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          cd "$RUNNER_TEMP/smoke"
+          cp "$GITHUB_WORKSPACE/port/web/test/probe.mjs" .
+          timeout 300 node probe.mjs http://localhost:8000/probe.html "$GITHUB_WORKSPACE/ci/probe.log" \
+            "$GITHUB_WORKSPACE/ci/probe"
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/probe.log"
+          cp "$GITHUB_WORKSPACE"/port/build/web/webgpu_probe.* "$GITHUB_WORKSPACE/ci/" 2>/dev/null
+
       - name: Publish the log to ci-logs
         if: always()
         run: |
