@@ -223,6 +223,41 @@ function print(text) {
     log(text);
 }
 
+// The Capture button's frames, as the game drew them (port/web/vulkan/device.cpp, CaptureFrame), laid out in one
+// image: frames the screen shows wrong but the capture shows right are the browser's, not the game's.
+const kCaptureFrames = 8;
+let captured = [];
+
+function showCaptured() {
+    const columns = 2;
+    const width = Math.min(800, captured[0].width);
+    const height = Math.round(captured[0].height * width / captured[0].width);
+    const sheet = document.createElement('canvas');
+    sheet.width = columns * width;
+    sheet.height = Math.ceil(captured.length / columns) * height;
+    const context = sheet.getContext('2d');
+    const frame = document.createElement('canvas');
+    captured.forEach(({pixels, width: w, height: h}, index) => {
+        frame.width = w;
+        frame.height = h;
+        frame.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels.buffer), w, h), 0, 0);
+        const x = (index % columns) * width;
+        const y = Math.floor(index / columns) * height;
+        context.drawImage(frame, x, y, width, height);
+        context.fillStyle = '#ff0';
+        context.font = `${Math.round(height / 8)}px sans-serif`;
+        context.fillText(String(index + 1), x + 8, y + Math.round(height / 7));
+    });
+    captured = [];
+    sheet.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        $('captured-image').src = url;
+        $('captured-save').href = url;
+        $('captured').hidden = false;
+        log(`capture: ${kCaptureFrames} frames ready`);
+    });
+}
+
 function start() {
     $('setup').hidden = true;
     $('game').hidden = false;
@@ -240,6 +275,12 @@ function start() {
         canvas,
         print,
         printErr: print,
+        dcCaptured(pixels, width, height, remaining) {
+            captured.push({pixels, width, height});
+            if (remaining <= 0) {
+                showCaptured();
+            }
+        },
         onExit(code) {
             exited = true;
             log(`exit=${code}`);
@@ -268,6 +309,18 @@ async function main() {
         } else {
             $('game').requestFullscreen?.().catch(() => {});
         }
+    });
+    $('capture').addEventListener('click', () => {
+        if (window.Module && Module._dc_web_capture) {
+            captured = [];
+            log(`capture: the next ${kCaptureFrames} frames`);
+            Module._dc_web_capture(kCaptureFrames);
+        }
+        $('canvas').focus();
+    });
+    $('captured-close').addEventListener('click', () => {
+        $('captured').hidden = true;
+        $('canvas').focus();
     });
     $('log-toggle').addEventListener('click', () => {
         $('drawer').hidden = !$('drawer').hidden;
