@@ -1,11 +1,12 @@
 // The web's first run (docs/WEB.md): the page stores what the player chose beside the data directory in the
-// browser's storage, and the game extracts a disc from there itself, as the desktop's first run does.
+// browser's storage.
 //
 // - data.zip, or a data directory with files: nothing to do.
-// - disc.iso, a disc image, or disc/, a directory holding DATA.DAT and DATA.HD2: extracted into the data
-//   directory with dcdata, then checked file by file. The disc stays until every file checks out, so an
-//   extraction cut short resumes at the next start (dcdata keeps what is already whole); then it goes, so the
-//   game's data is not stored twice.
+// - disc.iso, a disc image, or disc/, a directory holding DATA.DAT and DATA.HD2: the game reads the disc's
+//   files in place (DataArchive::OpenDisc), and the data directory holds only what dcdata writes beside them
+//   (normalized/, data.hd2, languages.json and the aliases). Those are made here once, from the few files
+//   they come from: writing every file of the disc to the browser's storage takes many minutes on a phone.
+//   languages.json, written last, marks them done; until it is there, they are made again from the start.
 //
 // Progress goes to stdout as "extract: <files> <total files> <bytes> <total bytes>", which the page shows.
 
@@ -14,40 +15,38 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
+#include "platform/data_archive.hpp"
 #include "platform/paths.hpp"
 
 namespace fs = std::filesystem;
 
 namespace {
 
-bool HasRegularFile(const fs::path &root) {
-    std::error_code error;
-    if (!fs::is_directory(root, error)) {
-        return false;
-    }
-    auto options = fs::directory_options::skip_permission_denied;
-    for (fs::recursive_directory_iterator it(root, options, error), end; !error && it != end; it.increment(error)) {
-        std::error_code entry_error;
-        if (it->is_regular_file(entry_error)) {
+// The files dcdata's Normalize, FillFloorPlates and their helpers read; it must follow them.
+bool NeededToNormalize(std::string_view path) {
+    for (std::string_view name : {"meswin/mes_tex.pak", "meswin/systeme.bin", "meswin/system14_1.mes",
+                                  "dun/pack/teximg2.pac", "gedit/system/editsys.bin", "opdat/usa/fconv.bin",
+                                  "titledat/title.pak", "opdat/dungeon/dungeon.pim", "opdat/norn/norn.pak",
+                                  "opdat/norn2/norn2.pim", "opdat/toan/toan.pim"}) {
+        if (path == name) {
             return true;
         }
     }
-    return false;
+    return path.starts_with("commenu/") || path.starts_with("dun/img/us/dname0") ||
+           (path.starts_with("gedit/system/esys") && path.ends_with(".pak")) ||
+           (path.starts_with("dun/script/") && path.ends_with("/event.stb")) ||
+           (path.starts_with("rmdat/rmdat") && path.ends_with(".pak")) ||
+           path.find("/dungeon/dunmenu5.pak") != std::string_view::npos;
 }
 
-// The jobs one after another: a browser tab gains little from more threads writing the same storage.
-void RunInOrder(std::vector<dcdata::ClassJob> jobs) {
-    for (dcdata::ClassJob &job : jobs) {
-        job.run();
-    }
-}
-
-void Report(const dcdata::Progress &progress) {
-    std::printf("extract: %zu %zu %llu %llu\n", progress.files, progress.total_files,
-                static_cast<unsigned long long>(progress.bytes), static_cast<unsigned long long>(progress.total_bytes));
+void Report(std::size_t files, std::size_t total_files, std::uint64_t bytes, std::uint64_t total_bytes) {
+    std::printf("extract: %zu %zu %llu %llu\n", files, total_files, static_cast<unsigned long long>(bytes),
+                static_cast<unsigned long long>(total_bytes));
     std::fflush(stdout);
 }
 
@@ -55,48 +54,79 @@ void Report(const dcdata::Progress &progress) {
 
 void FirstRunIfNoData(bool) {
     const fs::path &root = PathsDataRoot();
-    const fs::path  home = root.parent_path();
+    const fs::path  disc = DataArchiveDisc(root);
     std::error_code error;
-    fs::path        source;
-    for (const fs::path &candidate : {home / "disc.iso", home / "disc"}) {
-        if (fs::exists(candidate, error)) {
-            source = candidate;
-            break;
-        }
-    }
-    // A disc still here means its extraction has not finished, whatever the data directory holds.
-    if (source.empty() || fs::is_regular_file(home / "data.zip", error)) {
+    if (disc.empty() || fs::is_regular_file(root / dcdata::kLanguagesFile, error)) {
         return;
     }
-    if (HasRegularFile(root)) {
-        std::printf("extract: resuming the extraction of %s\n", source.filename().string().c_str());
-    }
+    // What a data directory holds is the disc's own copy or an earlier start's; both are made again.
+    const fs::path staging = root.parent_path() / "prepare";
+    fs::remove_all(root, error);
+    fs::remove_all(staging, error);
+    std::printf("extract: preparing the game data from %s\n", disc.filename().string().c_str());
+    std::fflush(stdout);
     try {
-        dcdata::Archive archive = dcdata::OpenArchive(source);
-        auto            last = std::chrono::steady_clock::time_point{};
-        dcdata::Extract(
-            archive, root, nullptr,
-            [&](const dcdata::Progress &progress) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now - last >= std::chrono::milliseconds(500) || progress.files == progress.total_files) {
-                    last = now;
-                    Report(progress);
-                }
-                return true;
-            },
-            RunInOrder);
-        std::vector<unsigned char>          hd2 = dcdata::ReadExtent(archive.hd2);
-        std::vector<dcdata::Record>         records = dcdata::ParseIndex(hd2);
-        std::vector<const dcdata::Record *> bad = dcdata::Mismatched(records, root);
-        if (!bad.empty()) {
-            dcdata::Fail("{} files are missing or the wrong size after extraction, {} among them", bad.size(),
-                         bad.front()->path);
+        const dcdata::Archive             archive = dcdata::OpenArchive(disc);
+        const std::vector<unsigned char>  hd2 = dcdata::ReadExtent(archive.hd2);
+        const std::vector<dcdata::Record> records = dcdata::ParseIndex(hd2);
+        std::size_t                       duplicates = 0;
+        std::vector<const dcdata::Record *> needed;
+        std::uint64_t                       total_bytes = 0;
+        for (const dcdata::Record *record : dcdata::Reachable(records, nullptr, &duplicates)) {
+            if (NeededToNormalize(record->path)) {
+                needed.push_back(record);
+                total_bytes += record->size;
+            }
         }
+        dcdata::Reader             dat(archive.dat.file);
+        std::vector<unsigned char> bytes;
+        std::uint64_t              done_bytes = 0;
+        auto                       last = std::chrono::steady_clock::time_point{};
+        for (std::size_t index = 0; index < needed.size(); ++index) {
+            const dcdata::Record *record = needed[index];
+            bytes.resize(record->size);
+            dat.Read(archive.dat.offset + record->sector * dcdata::kSector, bytes.data(), bytes.size());
+            dcdata::WriteFile(staging / record->path, bytes);
+            done_bytes += record->size;
+            const auto now = std::chrono::steady_clock::now();
+            if (index + 1 < needed.size() && now - last >= std::chrono::milliseconds(500)) {
+                last = now;
+                Report(index + 1, needed.size(), done_bytes, total_bytes);
+            }
+        }
+        Report(needed.size(), needed.size(), done_bytes, total_bytes);
+
+        dcdata::Normalize(staging, records);
+        const dcdata::Release release = dcdata::ReleaseOf(hd2, records);
+        if (release.blank_floor_plates) {
+            dcdata::FillFloorPlates(staging);
+        }
+        dcdata::WriteFile(staging / "data.hd2", hd2);
+
+        // Kept: what the disc does not hold. The disc's own files are read from it.
+        std::unordered_set<std::string> on_disc;
+        for (const dcdata::Record &record : records) {
+            on_disc.insert(record.path);
+        }
+        std::vector<fs::path> kept;
+        for (fs::recursive_directory_iterator it(staging), end; it != end; ++it) {
+            if (it->is_regular_file() &&
+                !on_disc.contains(dcdata::FoldPath(it->path().lexically_relative(staging).generic_string()))) {
+                kept.push_back(it->path());
+            }
+        }
+        for (const fs::path &path : kept) {
+            const fs::path target = root / path.lexically_relative(staging);
+            fs::create_directories(target.parent_path());
+            fs::rename(path, target);
+        }
+        dcdata::WriteLanguages(root, release);
+        std::printf("extract: the disc is %s\n", std::string(release.name).c_str());
     } catch (const std::exception &failure) {
-        std::fprintf(stderr, "extracting %s failed: %s\n", source.filename().string().c_str(), failure.what());
-        return;
+        std::fprintf(stderr, "preparing the data from %s failed: %s\n", disc.filename().string().c_str(),
+                     failure.what());
     }
-    fs::remove_all(source, error);
+    fs::remove_all(staging, error);
     std::printf("extract: done\n");
     std::fflush(stdout);
 }

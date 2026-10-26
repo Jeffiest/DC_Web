@@ -393,11 +393,7 @@ bool IsConstantAlpha(VkBlendFactor factor) {
 ShaderModule *SingleSourceStandIn() {
     static ShaderModule module;
     if (module.wgsl == nullptr) {
-        for (size_t i = 0; i < kWgslShaderCount; i++) {
-            if (std::strcmp(kWgslShaders[i].name, "draw_bound_single_frag") == 0) {
-                module.wgsl = &kWgslShaders[i];
-            }
-        }
+        module.wgsl = FindWgsl("draw_bound_single_frag");
         for (const char *at = std::strstr(module.wgsl->code, "@id("); at != nullptr; at = std::strstr(at + 4, "@id(")) {
             module.override_ids.push_back(static_cast<uint32_t>(std::strtoul(at + 4, nullptr, 10)));
         }

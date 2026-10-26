@@ -115,6 +115,9 @@ struct ShaderModule {
     WGPUShaderModule      module = nullptr;
 };
 
+// The WGSL standing for one of the renderer's modules, by name, in the variant the adapter takes.
+const WgslShader *FindWgsl(const char *name);
+
 WGPUShaderModule ModuleOf(ShaderModule *shader);
 // The empty fragment shader for pipelines that write no colour and have no fragment stage.
 WGPUShaderModule EmptyFragmentModule();
@@ -290,6 +293,8 @@ struct Context {
     WGPUTextureFormat surface_format = WGPUTextureFormat_BGRA8Unorm;
     bool              dual_source = false;
     bool              depth32_stencil8 = false;
+    // Without WebGPU's clip distances (Mali, among others), the shaders' _noclip variants clip by discarding.
+    bool              clip_distances = false;
     WGPULimits        limits = {};
     char              adapter_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {};
 };

@@ -10,9 +10,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 
 #define STBI_SUPPORT_ZLIB
 #include "stb_image.h"
+
+#include "../../../tools/dcdata/dcdata.hpp"
 
 namespace {
 
@@ -326,6 +329,56 @@ DataArchive::DataArchive(const std::filesystem::path &path)
     }
 }
 
+std::unique_ptr<DataArchive> DataArchive::OpenDisc(const std::filesystem::path &disc,
+                                                   const std::filesystem::path &overlay) {
+    std::unique_ptr<DataArchive> archive(new DataArchive());
+    const dcdata::Archive        opened = dcdata::OpenArchive(disc);
+    const std::vector<unsigned char> hd2 = dcdata::ReadExtent(opened.hd2);
+    const std::vector<dcdata::Record> records = dcdata::ParseIndex(hd2);
+    std::size_t                       duplicates = 0;
+    archive->path_ = opened.dat.file;
+    archive->stream_.open(opened.dat.file, std::ios::binary);
+    if (!archive->stream_) {
+        Invalid(opened.dat.file, "cannot open the disc's DATA.DAT");
+    }
+    std::unordered_map<std::string, std::size_t> by_name;
+    for (const dcdata::Record *record : dcdata::Reachable(records, nullptr, &duplicates)) {
+        const std::uint64_t offset = record->sector * dcdata::kSector;
+        if (offset + record->size > opened.dat.size) {
+            Invalid(disc, "DATA.DAT is truncated: " + record->name + " lies past its end");
+        }
+        by_name.emplace(record->path, archive->records_.size());
+        archive->records_.push_back({.entry = {.name = record->path, .size = record->size},
+                                     .source = Source::kDisc,
+                                     .disc_offset = opened.dat.offset + offset});
+    }
+    std::error_code error;
+    if (std::filesystem::is_directory(overlay, error)) {
+        auto options = std::filesystem::directory_options::skip_permission_denied;
+        for (std::filesystem::recursive_directory_iterator it(overlay, options, error), end; !error && it != end;
+             it.increment(error)) {
+            std::error_code entry_error;
+            if (!it->is_regular_file(entry_error)) {
+                continue;
+            }
+            const std::string name = it->path().lexically_relative(overlay).generic_string();
+            Record            loose{.entry = {.name = name, .size = it->file_size(entry_error)},
+                                    .source = Source::kLoose,
+                                    .loose_path = it->path()};
+            if (entry_error) {
+                continue;
+            }
+            const auto [at, added] = by_name.emplace(dcdata::FoldPath(name), archive->records_.size());
+            if (added) {
+                archive->records_.push_back(std::move(loose));
+            } else {
+                archive->records_[at->second] = std::move(loose);
+            }
+        }
+    }
+    return archive;
+}
+
 std::size_t DataArchive::Count() const {
     return records_.size();
 }
@@ -341,6 +394,21 @@ bool DataArchive::Read(std::size_t index, std::span<std::uint8_t> output) const 
         return false;
     }
     Record &record = records_[index];
+    if (record.source != Source::kZip) {
+        if (record.entry.size != output.size()) {
+            return false;
+        }
+        if (record.source == Source::kLoose) {
+            std::ifstream loose(record.loose_path, std::ios::binary);
+            loose.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
+            return static_cast<std::size_t>(loose.gcount()) == output.size();
+        }
+        std::scoped_lock lock(stream_mutex_);
+        stream_.clear();
+        stream_.seekg(static_cast<std::streamoff>(record.disc_offset));
+        stream_.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
+        return static_cast<std::size_t>(stream_.gcount()) == output.size();
+    }
     if (record.entry.name.back() == '/' || record.entry.size != output.size() ||
         output.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
         record.compressed_size > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
@@ -487,5 +555,25 @@ bool DataArchive::Read(std::size_t index, std::span<std::uint8_t> output) const 
 
 bool DataArchivePresent(const std::filesystem::path &data_root) {
     std::error_code error;
-    return std::filesystem::is_regular_file(data_root.parent_path() / "data.zip", error);
+    return std::filesystem::is_regular_file(data_root.parent_path() / "data.zip", error) ||
+           !DataArchiveDisc(data_root).empty();
+}
+
+std::filesystem::path DataArchiveDisc(const std::filesystem::path &data_root) {
+#if defined(__EMSCRIPTEN__)
+    std::error_code             error;
+    const std::filesystem::path home = data_root.parent_path();
+    if (std::filesystem::is_regular_file(home / "data.zip", error)) {
+        return {};
+    }
+    if (std::filesystem::is_regular_file(home / "disc.iso", error)) {
+        return home / "disc.iso";
+    }
+    if (std::filesystem::is_directory(home / "disc", error)) {
+        return home / "disc";
+    }
+#else
+    (void)data_root;
+#endif
+    return {};
 }

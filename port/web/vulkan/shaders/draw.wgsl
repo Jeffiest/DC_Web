@@ -29,6 +29,9 @@ struct In {
     @location(2) fog: vec4f,
     // xy: near/far limits; z: -2 constant, -1 direct 2D, 0 DC1 mesh, 1 DC2 prog0; w: constant F.
     @location(3) @interpolate(flat) fog_mode: vec4f,
+    // Without WebGPU's clip distances, the vertex shader's, which clip where any is negative.
+    @location(4) clip_low: vec4f, // @noclip
+    @location(5) clip_high: vec4f, // @noclip
 }
 
 struct Out {
@@ -119,6 +122,7 @@ fn AlphaPasses(alpha: f32) -> bool {
 
 @fragment
 fn main(v: In) -> Out {
+    if (any(min(v.clip_low, v.clip_high) < vec4f(0.0))) { discard; } // @noclip
     // Alpha is carried in GS units over 128 (1.0 = 0x80) so the alpha test and blend factor see values above
     // 0x80 before the attachment saturates them.
     var color: vec4f;

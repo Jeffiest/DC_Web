@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -529,6 +530,36 @@ TEST(DataArchive, RejectsPayloadWithWrongCrc) {
         DataArchive archive(archive_path);
         std::vector<std::uint8_t> output(4);
         ASSERT_FALSE(archive.Read(0, output));
+    }
+    fs::remove_all(dir);
+}
+
+TEST(DataArchive, ReadsADiscInPlaceUnderItsLooseFiles) {
+    const fs::path dir = TempDir("archive_disc");
+    const Disc     disc = StandardDisc();
+    WriteBytes(dir / "disc" / "DATA.DAT", disc.dat);
+    WriteBytes(dir / "disc" / "DATA.HD2", disc.hd2);
+    WriteBytes(dir / "data" / "img" / "TITLE.img", Bytes{7, 8, 9});
+    WriteBytes(dir / "data" / "normalized" / "rmdat" / "rmdat1.pak", Bytes{1});
+    {
+        std::unique_ptr<DataArchive> archive = DataArchive::OpenDisc(dir / "disc", dir / "data");
+        std::map<std::string, Bytes> read;
+        for (std::size_t index = 0; index < archive->Count(); ++index) {
+            const DataArchive::Entry &entry = archive->GetEntry(index);
+            Bytes                     bytes(entry.size);
+            ASSERT_TRUE(archive->Read(index, bytes)) << entry.name;
+            read[entry.name] = bytes;
+            Bytes wrong(entry.size + 1);
+            ASSERT_FALSE(archive->Read(index, wrong));
+        }
+        // The first of the duplicates, the loose file over the disc's, and the overlay's own.
+        ASSERT_EQ(read.size(), kStandardReachable + 1);
+        ASSERT_EQ(read.at("dun/pack/maindat.pac"), disc.files[0].data);
+        ASSERT_EQ(read.at("sound/bgm/b01.snd"), disc.files[2].data);
+        ASSERT_EQ(read.at("rmdat/rmdat1.pak"), disc.files[3].data);
+        ASSERT_EQ(read.at("empty.bin"), Bytes{});
+        ASSERT_EQ(read.at("img/TITLE.img"), (Bytes{7, 8, 9}));
+        ASSERT_EQ(read.at("normalized/rmdat/rmdat1.pak"), Bytes{1});
     }
     fs::remove_all(dir);
 }

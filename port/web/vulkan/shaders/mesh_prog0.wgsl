@@ -14,7 +14,9 @@ struct In {
 
 struct Out {
     @builtin(position) position: vec4f,
-    @builtin(clip_distances) clip_distances: array<f32, 6>,
+    @builtin(clip_distances) clip_distances: array<f32, 6>, // @clip
+    @location(4) clip_low: vec4f, // @noclip
+    @location(5) clip_high: vec4f, // @noclip
     @location(0) color: vec4f,
     @location(1) uv: vec2f,
     @location(2) fog: vec4f,
@@ -194,19 +196,16 @@ fn main(v: In) -> Out {
     var o: Out;
     o.position = ToWebGpu(clip);
 
+    var low = vec4f(1.0);
+    var high = vec4f(1.0);
     if ((F & kScissor) != 0u) {
         let c = (*p0).clip_or_view * vec4f(position, 1.0);
-        o.clip_distances[0] = c.w - c.x;
-        o.clip_distances[1] = c.w + c.x;
-        o.clip_distances[2] = c.w - c.y;
-        o.clip_distances[3] = c.w + c.y;
-        o.clip_distances[4] = c.w - c.z;
-        o.clip_distances[5] = c.w + c.z;
-    } else {
-        for (var i = 0; i < 6; i++) {
-            o.clip_distances[i] = 1.0;
-        }
+        low = vec4f(c.w - c.x, c.w + c.x, c.w - c.y, c.w + c.y);
+        high = vec4f(c.w - c.z, c.w + c.z, 1.0, 1.0);
     }
+    o.clip_distances = array<f32, 6>(low.x, low.y, low.z, low.w, high.x, high.y); // @clip
+    o.clip_low = low; // @noclip
+    o.clip_high = high; // @noclip
 
     // ftoi0 truncates the VU's colour channels.
     o.color = floor(clamp(color, vec4f(0.0), vec4f(255.0))) / 255.0;
