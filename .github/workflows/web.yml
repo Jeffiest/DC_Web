@@ -190,6 +190,8 @@ jobs:
           cd port/build/web
           cp index.html shell.js sw.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
             webgpu_probe.js webgpu_probe.wasm ../../../site/
+          # The renderer tests too, for running on a device whose GPU draws wrong (gfx_tests.html).
+          cp gfx_tests.html kazarov_gfx_tests.js kazarov_gfx_tests.wasm ../../../site/ 2>/dev/null || true
           touch ../../../site/.nojekyll
 
       - name: Upload the site for Pages
