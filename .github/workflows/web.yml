@@ -85,7 +85,7 @@ jobs:
           (python3 -m http.server 8000 > /dev/null 2>&1 &)
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
-          npm install --no-audit --no-fund playwright@1.49.1 > /dev/null
+          npm install --no-audit --no-fund playwright@1.63.0 > /dev/null
           npx playwright install --with-deps chromium > /dev/null
           cp "$GITHUB_WORKSPACE/port/web/test/browser_smoke.mjs" .
           timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
@@ -117,6 +117,22 @@ jobs:
           git commit -qm "web build log for ${{ github.sha }}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
 
+      # The site: the page and the build, without the build directory's other files.
+      - name: Assemble the site
+        if: success() && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p site
+          cd port/build/web
+          cp index.html shell.js sw.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
+            webgpu_probe.js webgpu_probe.wasm ../../../site/
+          touch ../../../site/.nojekyll
+
+      - name: Upload the site for Pages
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
       - name: Upload the build
         if: success()
         uses: actions/upload-artifact@v4
@@ -131,3 +147,21 @@ jobs:
             port/build/web/sw.js
             port/build/web/lang
             port/build/web/glyphs
+
+  # Publishes main's build to GitHub Pages (jeffiest.github.io/DC_Web/). Pages' source must be GitHub Actions.
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - id: deployment
+        uses: actions/deploy-pages@v4

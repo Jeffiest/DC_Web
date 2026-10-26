@@ -163,7 +163,7 @@ void ClearTo(WGPUTextureView view, double r, double g, double b) {
 }
 
 // A synchronous readback, as ReadbackFrame and ReadDepth need: copy, map, wait.
-void Readback() {
+void Readback(const char *name) {
     WGPUTextureDescriptor texture_descriptor{};
     texture_descriptor.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
     texture_descriptor.dimension = WGPUTextureDimension_2D;
@@ -192,26 +192,33 @@ void Readback() {
     WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
     wgpuQueueSubmit(queue, 1, &commands);
 
-    bool                      mapped = false;
-    bool                      map_ok = false;
+    struct MapResult {
+        bool done = false;
+        int  status = -1;
+        char message[128] = {};
+    } result;
     WGPUBufferMapCallbackInfo map_callback{};
     map_callback.mode = WGPUCallbackMode_AllowProcessEvents;
-    map_callback.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *done, void *ok) {
-        *static_cast<bool *>(ok) = status == WGPUMapAsyncStatus_Success;
-        *static_cast<bool *>(done) = true;
+    map_callback.callback = [](WGPUMapAsyncStatus status, WGPUStringView message, void *out, void *) {
+        auto *r = static_cast<MapResult *>(out);
+        r->status = static_cast<int>(status);
+        std::snprintf(r->message, sizeof(r->message), "%.*s", static_cast<int>(message.length),
+                      message.data != nullptr ? message.data : "");
+        r->done = true;
     };
-    map_callback.userdata1 = &mapped;
-    map_callback.userdata2 = &map_ok;
+    map_callback.userdata1 = &result;
     wgpuBufferMapAsync(buffer, WGPUMapMode_Read, 0, buffer_descriptor.size, map_callback);
-    WaitFor([&] { return mapped; });
-    uint8_t pixel[4] = {};
+    WaitFor([&] { return result.done; });
+    const bool map_ok = result.status == WGPUMapAsyncStatus_Success;
+    uint8_t    pixel[4] = {};
     if (map_ok) {
         std::memcpy(pixel, wgpuBufferGetConstMappedRange(buffer, 0, 4), 4);
         wgpuBufferUnmap(buffer);
     }
-    char detail[64];
-    std::snprintf(detail, sizeof(detail), "%u %u %u %u", pixel[0], pixel[1], pixel[2], pixel[3]);
-    Report("readback", map_ok && pixel[0] == 255 && pixel[1] >= 127 && pixel[1] <= 128 && pixel[2] == 0, detail);
+    char detail[192];
+    std::snprintf(detail, sizeof(detail), "%u %u %u %u (map status %d %s)", pixel[0], pixel[1], pixel[2], pixel[3],
+                  result.status, result.message);
+    Report(name, map_ok && pixel[0] == 255 && pixel[1] >= 127 && pixel[1] <= 128 && pixel[2] == 0, detail);
 
     wgpuCommandBufferRelease(commands);
     wgpuCommandEncoderRelease(encoder);
@@ -238,7 +245,7 @@ void DrawFrames(int count) {
         // A slow sweep from dark blue to teal, so a screenshot shows which frame it caught.
         ClearTo(view, 0.0, 0.25 + 0.5 * i / count, 0.5);
         wgpuTextureViewRelease(view);
-        wgpuSurfacePresent(surface);
+        // No wgpuSurfacePresent on the web: the browser shows the canvas once the worker yields.
         wgpuTextureRelease(current.texture);
         emscripten_sleep(16);
         frames_drawn++;
@@ -256,7 +263,7 @@ emscripten_fiber_t draw_fiber;
 void FiberEntry(void *arg) {
     auto *job = static_cast<FiberJob *>(arg);
     DrawFrames(job->frames);
-    Readback();
+    Readback("readback in a fiber");
     job->done = true;
     emscripten_fiber_swap(&draw_fiber, &main_fiber);
 }
@@ -271,10 +278,11 @@ int main(int argc, char **argv) {
         return 1;
     }
     ConfigureSurface();
-    Readback();
+    Readback("readback");
     if (surface != nullptr) {
         DrawFrames(frames / 2);
     }
+    Readback("readback after frames");
 
     // The rest from a fiber, as the game's PS2 threads run.
     static char main_asyncify[256 * 1024];
