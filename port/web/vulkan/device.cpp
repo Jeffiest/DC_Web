@@ -176,9 +176,10 @@ bool RequestAdapter() {
     // copy to the canvas outran the frame's last draws, as flicker, frames missing their last overlays and
     // wrong-coloured blocks, none of them in a frame read back once finished. Waiting for each frame before
     // copying it (DC_WEBGPU_SERIAL_FRAMES) cured it at half the frame rate; showing the newest finished frame
-    // instead costs a frame of latency and no waiting. DC_WEBGPU_PRESENT_FINISHED=1 or 0 overrides the choice.
-    // DC_WEBGPU_ONE_FRAME=1 also keeps a submission off the GPU until the ones before it finish, which alone did
-    // not cure it.
+    // instead costs a frame of latency and no waiting, but alone did not cure it, nor did keeping each frame off
+    // the GPU until the one before it had finished: the two together did. A wait costs about a refresh on Android,
+    // as the browser tells of finished work then, so there is one a frame, at its first submission.
+    // DC_WEBGPU_PRESENT_FINISHED and DC_WEBGPU_ONE_FRAME, 1 or 0, override the choices.
     std::string vendor = text(info.vendor);
     std::transform(vendor.begin(), vendor.end(), vendor.begin(), [](unsigned char c) { return std::tolower(c); });
     auto choice = [](const char *name, bool otherwise) {
@@ -186,12 +187,12 @@ bool RequestAdapter() {
         return value != nullptr ? std::strcmp(value, "1") == 0 : otherwise;
     };
     g.present_finished = choice("DC_WEBGPU_PRESENT_FINISHED", vendor == "arm");
-    g.one_frame_on_gpu = choice("DC_WEBGPU_ONE_FRAME", false);
+    g.one_frame_on_gpu = choice("DC_WEBGPU_ONE_FRAME", vendor == "arm");
     if (g.present_finished) {
         std::fprintf(stderr, "webgpu: the canvas shows the newest frame the GPU has finished\n");
     }
     if (g.one_frame_on_gpu) {
-        std::fprintf(stderr, "webgpu: one submission on the GPU at a time\n");
+        std::fprintf(stderr, "webgpu: one frame on the GPU at a time\n");
     }
     wgpuAdapterInfoFreeMembers(info);
     return true;
@@ -820,6 +821,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR ha
     return VK_SUCCESS;
 }
 
+// Set by each present: the next submission begins a frame, which waits for the last (one_frame_on_gpu).
+bool g_new_frame = true;
+
 // The page's Capture button (port/web/site/shell.js) asks for the next frames as the layer presents them, before
 // the browser has the canvas: they tell a frame drawn wrong from one the browser shows wrong.
 std::atomic<int> g_capture_frames{0};
@@ -1042,6 +1046,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
             overall = result;
         }
     }
+    g_new_frame = true;
     // The browser shows the canvas once this thread yields to it; there is no present call.
     emscripten_sleep(0);
     return overall;
@@ -1128,9 +1133,21 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice, uint32_t count, const V
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue, uint32_t count, const VkSubmitInfo2 *submits, VkFence fence) {
     AssertDeviceThread(__func__);
-    // Before any of this submission's writes too: they would land in buffers the GPU may still be reading.
-    if (g.one_frame_on_gpu) {
+    // A frame's first submission waits for the frames before it to finish, before its writes too: they would land
+    // in buffers the GPU may still be reading. What the waits cost is logged now and then.
+    if (g.one_frame_on_gpu && g_new_frame) {
+        static int    frames = 0;
+        static double waited = 0.0;
+        const auto    started = std::chrono::steady_clock::now();
         WaitForSerial(SubmitSerial());
+        waited += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        if (++frames == 600) {
+            std::fprintf(stderr, "webgpu: waited %.1f ms a frame for the GPU over the last %d frames\n",
+                         waited / frames, frames);
+            frames = 0;
+            waited = 0.0;
+        }
+        g_new_frame = false;
     }
     std::vector<WGPUCommandBuffer> commands;
     std::vector<Readback>          readbacks;

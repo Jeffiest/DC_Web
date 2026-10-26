@@ -106,8 +106,10 @@ offers no timestamps, depth bounds or depth blits.
   When a GLSL shader in `gfx/shaders/` changes, its WGSL port must follow.
 - **Mali GPUs** (Android phones) showed frames on the canvas before the GPU had finished drawing them: the copy
   to the canvas outran the frame's last draws, as flicker and texel-sized blocks. On an Arm adapter the canvas
-  gets the newest frame the GPU has finished, a frame late (`DC_WEBGPU_PRESENT_FINISHED=1` or `0` with
-  `?args=--env+...` forces the choice; `DC_WEBGPU_SERIAL_FRAMES=1` waits for each frame instead, at half speed).
+  gets the newest frame the GPU has finished, a frame late, and each frame's first submission waits for the
+  frames before it to finish; either alone left the flicker. The log tells what the waits cost every 600 frames.
+  `DC_WEBGPU_PRESENT_FINISHED` and `DC_WEBGPU_ONE_FRAME`, `1` or `0` with `?args=--env+...`, force the choices;
+  `DC_WEBGPU_SERIAL_FRAMES=1` waits for each whole frame at present instead, at half speed.
 - **Without clip distances** (Mali GPUs, among others), every shader comes in a `_noclip` variant: the vertex
   shader hands its clip distances to the fragment shader as two more varyings, and that discards where any is
   negative. CI runs the GPU renderer tests a second time on it (`--no-clip-distances`).
