@@ -42,7 +42,7 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 - **`main`** has the standard two-argument signature on the web.
 - **Exceptions** are Emscripten's JavaScript-based ones (`-fexceptions`); native wasm exceptions do not
   work with Asyncify.
-- Discord and the first-run extractor are stubbed, as on the Switch.
+- Discord is stubbed, as on the Switch.
 - **Game data** is the player's own, from their PAL disc. The page copies what they choose into the origin
   private file system under `chronicle/` once: the disc image (`disc.iso`), the disc's `DATA.DAT` and
   `DATA.HD2` (`disc/`), an extracted `data` folder (`data/`), or the `data.zip` dcdata packs. The game mounts
@@ -63,12 +63,12 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 | Stage | State |
 | :-- | :-- |
 | Compiles and links to wasm | Done |
-| Starts under Node up to the game-data check | Done |
-| Runs game logic with real data (headless) | Not yet tested: needs extracted data |
-| Game data in the browser (drop `data.zip`, keep it in OPFS) | Built; checked in Chromium by CI |
-| Renderer on WebGPU (Vulkan on WebGPU) | Written; first CI runs |
-| Page | Done |
-| Audio, input and hosting | Not started |
+| Game data in the browser: disc image, disc files, data folder or `data.zip` | Done; the disc extracted in the page |
+| Renderer on WebGPU (Vulkan on WebGPU) | Done; Kazarov's renderer tests pass in Chromium, the game plays in Chrome |
+| Saves | Done |
+| Page: fills the window, fullscreen, log drawer | Done |
+| Main-depth copies | Not yet (see below) |
+| Hosting on GitHub Pages | Deploy job ready, from `main` |
 
 ## Vulkan on WebGPU
 
