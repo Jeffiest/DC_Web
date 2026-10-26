@@ -177,9 +177,12 @@ bool RequestAdapter() {
     // wrong-coloured blocks, none of them in a frame read back once finished. Waiting for each frame before
     // copying it (DC_WEBGPU_SERIAL_FRAMES) cured it at half the frame rate; showing the newest finished frame
     // instead costs a frame of latency and no waiting, but alone did not cure it, nor did keeping each frame off
-    // the GPU until the one before it had finished: the two together did. A wait costs about a refresh on Android,
-    // as the browser tells of finished work then, so there is one a frame, at its first submission.
-    // DC_WEBGPU_PRESENT_FINISHED and DC_WEBGPU_ONE_FRAME, 1 or 0, override the choices.
+    // the GPU until the one before it had finished; waiting before every submission as well did, at 30 frames a
+    // second, as a wait lasts until the browser next tells of finished work. A frame is two submissions, the
+    // game's and the display's that copies it, and on Mali a submission can read what the one before it has not
+    // finished writing; inside one submission it cannot (the renderer tests pass there). So the submissions are
+    // held and go to the GPU together at each present, and only a frame's first waits for the frames before it.
+    // DC_WEBGPU_PRESENT_FINISHED, DC_WEBGPU_ONE_FRAME and DC_WEBGPU_BATCH, 1 or 0, override the choices.
     std::string vendor = text(info.vendor);
     std::transform(vendor.begin(), vendor.end(), vendor.begin(), [](unsigned char c) { return std::tolower(c); });
     auto choice = [](const char *name, bool otherwise) {
@@ -188,11 +191,15 @@ bool RequestAdapter() {
     };
     g.present_finished = choice("DC_WEBGPU_PRESENT_FINISHED", vendor == "arm");
     g.one_frame_on_gpu = choice("DC_WEBGPU_ONE_FRAME", vendor == "arm");
+    g.batch_submits = choice("DC_WEBGPU_BATCH", vendor == "arm");
     if (g.present_finished) {
         std::fprintf(stderr, "webgpu: the canvas shows the newest frame the GPU has finished\n");
     }
     if (g.one_frame_on_gpu) {
         std::fprintf(stderr, "webgpu: one frame on the GPU at a time\n");
+    }
+    if (g.batch_submits) {
+        std::fprintf(stderr, "webgpu: a frame's submissions go to the GPU together at present\n");
     }
     wgpuAdapterInfoFreeMembers(info);
     return true;
@@ -352,7 +359,40 @@ uint64_t SubmitSerial() { return g_submitted; }
 
 uint64_t CompletedSerial() { return Completed(); }
 
+// Submissions held back to reach the GPU with the ones after them (batch_submits), and the last one's serial.
+std::vector<WGPUCommandBuffer> g_held;
+uint64_t                       g_held_serial = 0;
+
+// Hands commands to the GPU as one submission; serial counts as finished once they are.
+void SubmitToGpu(std::vector<WGPUCommandBuffer> &commands, uint64_t serial) {
+    wgpuQueueSubmit(g.queue, commands.size(), commands.data());
+    for (WGPUCommandBuffer command : commands) {
+        wgpuCommandBufferRelease(command);
+    }
+    commands.clear();
+    WGPUQueueWorkDoneCallbackInfo callback = {};
+    callback.mode = WGPUCallbackMode_AllowProcessEvents;
+    callback.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void *done, void *) {
+        const auto value = reinterpret_cast<uintptr_t>(done);
+        g_completed = std::max<uint64_t>(g_completed, value);
+        if (FenceDelay().count() > 0) {
+            g_finished.push_back({value, std::chrono::steady_clock::now()});
+        }
+    };
+    callback.userdata1 = reinterpret_cast<void *>(static_cast<uintptr_t>(serial));
+    wgpuQueueOnSubmittedWorkDone(g.queue, callback);
+}
+
+// Sends what is held to the GPU: before anything waits for it, and at each present.
+void FlushHeld() {
+    if (g_held_serial != 0) {
+        SubmitToGpu(g_held, g_held_serial);
+        g_held_serial = 0;
+    }
+}
+
 void WaitForSerial(uint64_t serial) {
+    FlushHeld();
     WaitUntil([serial] { return Completed() >= serial; });
 }
 
@@ -958,6 +998,7 @@ static WGPURenderPipeline OpaquePipeline(WGPUTextureFormat format) {
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR *info) {
     AssertDeviceThread(__func__);
+    FlushHeld();
     VkResult overall = VK_SUCCESS;
     for (uint32_t i = 0; i < info->swapchainCount; i++) {
         auto              *chain = Get<Swapchain>(info->pSwapchains[i]);
@@ -1090,6 +1131,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice, uint32_t count, const VkF
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice, VkFence fence) {
+    FlushHeld();
     Fence *object = Get<Fence>(fence);
     if (!object->signaled && object->serial != 0 && Completed() >= object->serial) {
         FinishReadbacks(object->readbacks);
@@ -1101,6 +1143,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice, VkFence fence) {
 VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice, uint32_t count, const VkFence *fences, VkBool32 wait_all,
                                                uint64_t timeout) {
     AssertDeviceThread(__func__);
+    FlushHeld();
     auto ready = [&](uint32_t i) {
         Fence *fence = Get<Fence>(fences[i]);
         return fence->signaled || (fence->serial != 0 && Completed() >= fence->serial);
@@ -1156,24 +1199,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue, uint32_t count, const VkS
             TakeSubmission(submits[s].pCommandBufferInfos[c].commandBuffer, commands, readbacks);
         }
     }
-    // What the CPU wrote reaches the GPU before the commands that read it.
+    // What the CPU wrote reaches the GPU before the commands that read it. Held commands go after this
+    // submission's writes; they write to its own command buffers and its frame slot's memory, which held commands of
+    // another slot do not read, as a native renderer's frames in flight may not either.
     UploadDirty();
-    wgpuQueueSubmit(g.queue, commands.size(), commands.data());
-    for (WGPUCommandBuffer command : commands) {
-        wgpuCommandBufferRelease(command);
+    const uint64_t serial = ++g_submitted;
+    if (g.batch_submits) {
+        g_held.insert(g_held.end(), commands.begin(), commands.end());
+        g_held_serial = serial;
+    } else {
+        SubmitToGpu(commands, serial);
     }
-    const uint64_t                    serial = ++g_submitted;
-    WGPUQueueWorkDoneCallbackInfo callback = {};
-    callback.mode = WGPUCallbackMode_AllowProcessEvents;
-    callback.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void *done, void *) {
-        const auto value = reinterpret_cast<uintptr_t>(done);
-        g_completed = std::max<uint64_t>(g_completed, value);
-        if (FenceDelay().count() > 0) {
-            g_finished.push_back({value, std::chrono::steady_clock::now()});
-        }
-    };
-    callback.userdata1 = reinterpret_cast<void *>(static_cast<uintptr_t>(serial));
-    wgpuQueueOnSubmittedWorkDone(g.queue, callback);
     if (fence != VK_NULL_HANDLE) {
         Fence *object = Get<Fence>(fence);
         object->signaled = false;

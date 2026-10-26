@@ -105,14 +105,15 @@ offers no timestamps, depth bounds or depth blits.
   word for word. Specialisation constants are WGSL overrides with the same ids; clip space is flipped in y.
   When a GLSL shader in `gfx/shaders/` changes, its WGSL port must follow.
 - **Mali GPUs** (Android phones) showed frames on the canvas before the GPU had finished drawing them: the copy
-  to the canvas outran the frame's last draws, as flicker and texel-sized blocks. On an Arm adapter the canvas
-  gets the newest frame the GPU has finished, a frame late, and each frame's first submission waits for the
-  frames before it to finish; either alone left the flicker. The log tells what the waits cost every 600 frames.
-  `DC_WEBGPU_PRESENT_FINISHED` and `DC_WEBGPU_ONE_FRAME`, `1` or `0` with `?args=--env+...`, force the choices;
-  `DC_WEBGPU_SERIAL_FRAMES=1` waits for each whole frame at present instead, at half speed.
+  to the canvas outran the frame's last draws, as flicker and texel-sized blocks: on Mali a submission can read
+  what the one before it has not finished writing, though not inside one submission. On an Arm adapter a frame's
+  submissions (the game's and the display copy's) are held and go to the GPU together at present, each frame's
+  first waits for the frames before it, and the canvas gets the newest finished frame. The log tells what the
+  waits cost every 600 frames. `DC_WEBGPU_BATCH`, `DC_WEBGPU_ONE_FRAME` and `DC_WEBGPU_PRESENT_FINISHED`, `1` or
+  `0` with `?args=--env+...`, force the choices; CI runs the GPU renderer tests a second time with all three.
 - **Without clip distances** (Mali GPUs, among others), every shader comes in a `_noclip` variant: the vertex
   shader hands its clip distances to the fragment shader as two more varyings, and that discards where any is
-  negative. CI runs the GPU renderer tests a second time on it (`--no-clip-distances`).
+  negative. CI runs the GPU renderer tests a second time on it, as on Mali (`--no-clip-distances --mali`).
 - **Without dual-source blending** (SwiftShader, some browsers), the blends that use a second source,
   only ever on targets without alpha, draw from one source: the shader writes the factor as alpha and the
   pipeline leaves alpha out of the target.
