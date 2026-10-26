@@ -1,0 +1,2123 @@
+# PC port
+
+`PLATFORM=PC` builds the game's code as a native x64 Linux program with clang
+20, as C++26, on SDL3 and Vulkan 1.4 (`docs/MACOS.md` covers macOS on Apple
+Silicon, `docs/WINDOWS.md` x64 Windows). The port accepts PAL and NTSC game data;
+there is no region setting. The game runs 60 ticks a
+second, and the code that sped PAL up for its 50 Hz (`#ifdef PAL_TIMING` in
+ps2/src, which only the PS2 PAL build defines) is left out. `docs/PC_PORT_PLAN.md` is the plan it was built
+to and records the phases; this document describes what is built.
+
+## Building and running
+
+`run.bat` and `run.sh` launch native builds with `port/run/` as their working
+directory and explicitly select `port/run/data/` and `port/run/save/`. Runtime
+files, including soundtrack files, Windows icons and shortcuts, and relative
+screenshot output, stay under this ignored directory. Explicit `--data` and
+`--save` arguments override these script defaults. Relative file arguments are
+resolved from `port/run/`; use absolute paths for inputs elsewhere.
+
+For an existing checkout, move `data/`, `data.zip`, `save/`, `soundtrack/` and `darkcloud.ico`
+from the repository root into `port/run/` before the first script launch to keep
+using them. A directly launched executable retains the path defaults below.
+
+```sh
+./build.sh linux-x64
+(cd port/build/pc && ctest --output-on-failure -j4)
+```
+
+The build runs in the dev container (in place when already inside one) using
+the Debug `linux-x64` preset, and discards a `CMakeCache.txt` configured for
+another source path. `CLEAN=1`
+discards `port/build/pc` first; `JOBS=N` sets the number of parallel build jobs.
+
+The tests are GoogleTest cases, each a unit test that finishes in
+milliseconds; none of them runs the whole game. The `AudioRealData` cases read
+the title pack out of the extracted data and are skipped unless `DC_DATA` names
+it.
+
+`cmake --preset linux-x64` (and `linux-x64-release`, in `port/build/pc-release`)
+with `cmake --build --preset` and `ctest --preset` of the same name does the
+same.
+
+It needs clang 20 with lld, Python 3, CMake 3.28, Ninja,
+`glslangValidator`, SDL3 (3.4) and the Vulkan 1.4 headers and loader, and at
+run time a device with Vulkan 1.3 or later, `dualSrcBlend` and `shaderClipDistance`
+(any desktop driver; Mesa's lavapipe in CI; `tools/kazarov/src/cpp/gfx/README.md`, "Device", has the whole list). `.github/workflows/pc.yml` is a
+complete recipe on Ubuntu 26.04.
+
+The game's files come from the disc (see "Game data"). Without them a
+windowed start asks for the disc image and extracts it; `dcdata` does the
+same from a shell:
+
+```sh
+port/build/pc/dcdata extract "rom/pal/Dark Cloud (PAL).iso" data
+port/build/pc/dcdata pack data
+port/build/pc/darkcloud --data data --save save
+```
+
+`pack` writes `data.zip` beside `data/`. The archive contains the extracted and normalized game data, including `languages.json`; you can install just the archive for game data. When both are present, the archive supplies game files. Keep `data/` until you have verified the archive and any workflows that need loose files.
+
+The extractor accepts a PAL or NTSC disc image. For NTSC data it supplies the
+localized filenames and pack members expected by the shared game code, including
+the dungeon event text that NTSC keeps inside each `event.stb`. For the
+PAL disc's English data it gives every weapon icon sheet the one in the HUD's
+palette, which the language's dungeon-entry packs carry. The game copies the
+HUD's weapon icon by palette index from whichever sheet a menu last loaded, and
+English's others keep the American palette, so on closing the main menu or the
+quick-change ring the icon came out in the wrong colours. The other languages'
+fishing and shop sheets get it too. Original disc files remain in the extracted
+tree for verification against `DATA.HD2`;
+normalized pack copies live under `data/normalized` and are selected by the
+port's file index. Extract again after updating the port to refresh them.
+
+The extractor also writes `languages.json`: the release the disc is and the
+languages it carries, as `LanguageCode` numbers. It knows a release by a
+fingerprint of its `DATA.HD2` (dcdata's `KnownReleases`, which prints the name
+it found); a release it does not know gets NTSC's or PAL's languages by its file
+layout. The port offers the languages in `SupportedLanguages`: with one, it
+starts in it past the language select; with several, the select offers them.
+NTSC 1.02 has American English (1) alone, as retail NTSC: the disc's other
+languages are early drafts whose images were never translated (its French and
+German title cards read "Nolun Village" and "Sun/Moon Temple"), its
+British-named files have no town dialogue, and its Spanish is missing files.
+The July 12 PAL prototype has the five its select offers, English being British
+(2). Data extracted before this file existed starts at the select, with a note
+to extract again.
+
+The select is retail's one image of all five buttons, so it cannot yet leave out
+a language the data lacks, and its English button reads as the disc's art does.
+
+`darkcloud` takes:
+
+| Option | Meaning |
+|---|---|
+| `--data DIR` | the extracted data directory or the logical directory beside `data.zip` (default: `DC_DATA`, then `./data`, then `data/` beside the executable, then `$XDG_DATA_HOME/chronicle/data`) |
+| `--save DIR` | saves, `config.json`, the pipeline cache and host files (default: `DC_SAVE`, then `./save`, then `save/` beside the executable, then `save/` beside a local `data/`, then `$XDG_DATA_HOME/chronicle/save`); created on first use |
+| `--seed-save DIR` | copy this save-root fixture before startup reads it; requires an explicit `--save DIR` pointing to a new or empty directory; omit on subsequent runs |
+| `--headless` | SDL's offscreen video driver with `VK_EXT_headless_surface`, SDL's dummy audio driver, and the game clock unbounded (one tick per pump, no sleeping) |
+| `--offscreen` | `--headless` without a Vulkan surface: frames are drawn to an image only (what `--headless` does by itself when the loader has no `VK_EXT_headless_surface`) |
+| `--frames N` | stop after N frames of the game's main loop |
+| `--screenshot PATH` | after the run, write the last tick's canonical image (or the loading screen's frame, if it presented since) to PATH as a PNG; never a display frame, so never the FPS counter |
+| `--input FILE` | drive the pads from a script (default: `DC_INPUT`; see "Scripted input") |
+| `--width W`, `--height H` | window size in pixels, over `config.json` (default: the monitor's resolution) |
+| `--jump MODE[:MAP]` | test hook: start in a mode (see "Test hooks"); also `DC_JUMP` |
+| `--fast-load` | test hook: loading-screen holds and fades of a few ticks; also `DC_FAST_LOAD=1` |
+| `--give ITEM,...` | test hook: items and weapons the party is given when a town or dungeon starts (see "Test hooks"); also `DC_GIVE` |
+| `--display-per-tick N` | headless test aid: render N interpolated display frames per tick (offscreen, not presented) before presenting the tick's canonical image |
+| `--show-fps` | draw the FPS counter when headless too (a headless run leaves `show_fps` off) |
+| `--perf-log` | print tick, render-thread, GPU-timestamp and present timings once a second (see [Switch](SWITCH.md#performance-measurement)) |
+| `--screenshot-fps` | with `--screenshot` and `--show-fps`: write the image as a window shows it, the counter over the canonical image, instead of the canonical image alone |
+
+Environment: `DC_DATA` and `DC_SAVE` (above), `DC_INPUT` (above), `DC_AUDIO=off` (no audio
+device), `DC_AUDIO_WAV` and `DC_AUDIO_TRACE` (see "Audio"), `DC_VULKAN_VALIDATION` (enable the Khronos validation layer in a
+release build; a debug build always asks for it), `DC_PRESENT_STATS=1` (print
+draws per tick and render times at exit, and what the FPS counter said last
+when it is on), and SDL's own variables.
+
+Exit statuses (`port/src/exitcodes.hpp`): 0 when the window was closed or
+`--frames` ran out, 1 when the window, the renderer or the screenshot failed,
+2 for bad arguments, 3 when the data directory is missing or holds no file
+and no disc was given at the first-run prompt (one line names it and the
+`dcdata` command; a headless run checks before any window opens), 4 for a failed game assertion (retail's `__assert`, after the game's
+own message: `LoadFile` prints `File open error "<path>"`). A `PS2_UNIMPLEMENTED`
+stub aborts (SIGABRT) so a debugger or a core dump stops at it.
+
+For an isolated fixture, use `--seed-save path/to/fixture --save path/to/new-save` once.
+The source directory contains the save-root contents directly, such as `saves/1/save.dat`
+and `saves/state.json`. Existing nonempty destinations, overlapping roots and source links
+are refused. Files are copied without inheriting read-only source permissions; the source
+is unchanged. An I/O failure can leave a partial destination, which is refused on retry.
+Omit `--seed-save` on later runs to retain that root's config and pipeline cache. Any
+`config.json` included in the fixture is loaded normally; omit it to use platform defaults.
+Seeding does not change rendering settings or command-line overrides.
+
+`<save>/config.json` (`port/src/platform/config.cpp`, read with
+[nlohmann/json](https://github.com/nlohmann/json); `//` and `/* */` comments
+are allowed, unknown keys and bad values are reported and ignored, and a file
+that is not valid JSON is reported and leaves every default in place). When
+there is no `config.json`, `darkcloud` creates one holding the defaults (the
+file it writes has no comments). It prints `config: loaded <path>` when it
+has read the file and `config: saved <path>` when it has written it. Every
+key is optional; these are the defaults:
+
+```jsonc
+{
+    "game": {
+        "tick_rate": 60,            // logic ticks (the game's VSyncs) per second
+        "debug_mode": false,        // Start with debug controls off; the debug toggle chord enables them
+        "qte_always_win": false,    // button-prompt events (event battles) still play, but always end in a perfect
+        "element_quick_select": false, // D-pad Up in a dungeon opens the quick-change menu as an element picker
+        "swap_keeps_lock_on": false, // switching characters with SELECT keeps the lock-on
+        "text_wipe": false,         // developer tool: F9 splits the screen between picture text and runtime text (docs/TEXTWIPE.md)
+        "save_cursor_position": true, // the game's own options, for every save (see "The Options screen")
+        "message_speed": "normal",  // normal or fast
+        "clock": true,              // the town clock
+        "time_speed": "normal",     // normal or fast: how fast the town's day goes
+        "map": 2,                   // the dungeon map's density, 1 to 3; 0: hidden
+        "enemy_damage": true,       // damage numbers over enemies
+        "player_damage": true,      // damage numbers over the party
+        "enemy_hp": true,           // enemies' health gauges
+        "names": true               // people's and monsters' names
+    },
+    "video": {
+        "present_mode": "fifo",     // fifo, mailbox or immediate (each falls back to the next safer one)
+        "interpolation": true,      // false: present each tick's image once, as rendered
+        "render_thread": "async",   // off, lockstep or async; takes effect after restarting
+        "max_fps": 0,               // display frames per second at most; 0: as the present mode allows
+        "width": 0,                 // window size in pixels; 0: the monitor's resolution. Both 0: fullscreen on the
+        "height": 0,                //   monitor, so "aspect": "auto" takes the monitor's shape; headless: 1280x960
+        "fullscreen": false,        // fullscreen at a given width and height
+        "aspect": "auto",           // auto: the world fills the window, the HUD in its corners, other 2D in the centred 4:3 frame; 4:3: letterboxed
+        "ui_scale": 1.0,            // 0.25 to 4: the HUD and menus scaled about the window's centre (not the Options screen)
+        "show_fps": true,           // the FPS counter at the window's top-left corner (headless: --show-fps)
+        "fps_detail": "all",        // what it shows: fps (the frame rate alone), ticks (and the logic ticks) or all (and the draws)
+        "detail_distance": 0,       // how far full detail reaches (world units); 0: at any distance
+        "shadow_distance": 0,       // how far town parts cast full shadows (world units); 0: at any distance
+        "anisotropy": 0,            // anisotropic filtering of 3D textures: 0 (off), 2, 4, 8 or 16 samples
+        "soft_focus": true          // the game's farside soft focus
+    },
+    "audio": {
+        "master_volume": 1.0,       // 0 to 1
+        "sound": "stereo"           // mono, stereo or surround (the stereo mix spread to 5.1 speakers)
+    },
+    "input": {
+        "mouse_sensitivity": 0.1,   // degrees the camera turns per count of mouse motion
+        "stick_sensitivity": 1.33,  // gamepad stick scale before the game's dead zone (PCSX2's default)
+        "stick_invert_x": false,    // the gamepad's camera stick, flipped left to right
+        "stick_invert_y": false,    // ...and up and down
+        "gyro": "held",             // when the gyroscope turns the camera: off, always, first_person (R2's view) or held (gyro_hold)
+        "gyro_sensitivity": 0.5,    // camera-stick deflection per radian per second the pad turns
+        "gyro_invert_x": false,
+        "gyro_invert_y": false,
+        "touchpad": true,           // a DualSense's touchpad is the menus' mouse
+        "touchpad_sensitivity": 1.0, // pointer speed: 1 is a swipe across the pad for 1500 window pixels
+        "lightbar": true,           // a DualSense's lightbar shows the active character's life in a dungeon
+        "rumble_strength": 1.0,     // scales a gamepad's rumble motors, 0 to 1
+        "mouse_invert_y": false,
+        "mouse_capture": true,      // SDL relative mouse mode while the window has focus
+        "mouse_zoom": false,        // optional third-person wheel zoom; middle click resets by default
+        "mouse_camera_return": 0.2, // vertical auto-return: 0 off, 1 retail speed after mouse input stops
+        "mouse_release": [],       // keys that give the cursor back in a window; Escape is reserved for menus
+        "vibration": true,          // the gamepad's rumble
+        "bindings": {
+            "cross": ["Mouse1", "Space"], // an action: its keys and mouse buttons; replaces the defaults
+            "ry": "-MouseY*0.5",    // lx ly rx ry take MouseX or MouseY, with a sign and a scale: the mouse as that stick
+            "fps_toggle": "F3",     // the FPS counter on and off
+            "zoom_reset": "Mouse3"  // optional zoom: restore the camera's normal distance
+        }
+    },
+    "discord": {
+        "rich_presence": true       // Discord Rich Presence (never when headless)
+    }
+}
+```
+
+Discord Rich Presence (`port/src/presence.cpp`, `port/src/platform/discord.cpp`) speaks Discord's
+local IPC protocol over its Unix socket (a named pipe on Windows), so it needs no Discord library. It shows the character
+played and the town, or the dungeon and floor, and reconnects whenever Discord starts. Discord
+names the game after Chronicle's Discord application, whose id is `kDiscordClientId`
+(`platform/discord.hpp`); that application's Rich Presence art assets are `dark_cloud`, `chronicle` and one per character: `toan`, `xiao`, `goro`, `ruby`,
+`ungaga` and `osmond`.
+
+`video.detail_distance` is how far away town houses, villagers and dungeon
+monsters keep their full detail; past it the game's own distances apply, so a
+small value such as `1` is retail's behaviour. A town part within that
+distance of the eye draws its finest level of detail (retail steps down from
+300, 500 and 800 plus a share of the part's size). A villager within it of
+the player steps and draws (retail: the two nearest in front of the camera,
+within 150), but only the ones retail draws play their footsteps: every
+footstep on a ground is the same effect, and a new one cuts off the one still
+sounding, the player's too. A dungeon monster within it of the player draws and animates
+while still dormant: it wakes, acts, and shows on the map only at its own
+clip distance (300 unless its script sets one) and under retail's limit of
+four awake at once. The 1200 cull of far town parts is unchanged.
+
+Georama mode draws the town's parts at the levels of detail walking does, and
+the part on the cursor at its finest. Retail's `MainDraw`
+(`ps2/src/editloop.cpp:2125`) pinned every part and fixed part to level 3, its
+coarsest model, in georama mode, and `LoadObjectParts` made the cursor's part
+that level too. Every part's four levels are loaded in both modes.
+
+`video.shadow_distance` is how deep into the view a town part (a house, a
+tree, a fixed part) casts its shadow at full strength; past it the game's own
+distances apply, so a small value such as `1` is retail's behaviour. Retail
+sorts the parts into two bands by their depth from the eye
+(`ps2/src/editloop.cpp:2356`, `CEditGround::DrawShadow`): those nearer than
+the map's `shadow_near` (320 unless its `SHADOW_LEVEL` says otherwise) darken
+the ground by `shadow_mode` (0x34 of 0x80), those out to `shadow_far` (740) by
+the fainter `shadow_mode_2` (0x20), and a part past that casts none, so a
+shadow lightens and then goes as the camera backs away. A part deeper than
+300 also takes the cheaper volume program, and one with a `draw_distance`
+drops its shadow past it. A part within `shadow_distance` belongs to the near
+band with the precise program (`port/src/editground.cpp`). The characters'
+shadows have no such distances, the overhead view of georama mode keeps its
+own faint shadows, and a map whose `SHADOW_LEVEL` is 0 still has none.
+
+Retail draws the town's characters and shadows after its soft focus
+(`EdDrawDOF`, `ps2/src/editloop.cpp:2212`), so they are never softened, and
+it drew few of them far enough for that to show. The villagers that
+`detail_distance` keeps past retail's 150 from the player, with their
+shadows, and the part shadows that `shadow_distance` moves into the near band
+past `shadow_near` are drawn before the soft focus instead, which softens
+them with the scenery around them (`EdDrawBeyondRetailReach`,
+`port/src/editloop.cpp`). The player, the villagers retail draws and the
+shadows of its own bands keep retail's place after it.
+
+`video.vsync` is shorthand for `present_mode`: `true` is `fifo`, `false`
+`immediate`. A binding is one name or a list of names. The `bindings` shown
+are examples of the form (the defaults are in the table below); a
+`config.ini` from an earlier build is not read, and `darkcloud` says so when
+it finds one without a `config.json`.
+
+The file is read once, at start. The Options screen (below) changes the
+settings through `ConfigChange(config)` (`platform/config.hpp`): the settings
+are taken as the file would read them back (a bad value is reported and
+becomes its default), saved, and applied to the running game. The file is
+rewritten whole, as `ConfigSerialize` writes it, so comments in it are not
+kept; it is written to `config.json.tmp` and renamed over `config.json`, so a
+crash or a full disk leaves the old file or the new one, never part of one.
+Every setting applies at once except `game.debug_mode` (the initial value of
+`DebugMode`), which takes effect at the next start (`ConfigAppliesOnRestart`
+says which, for the screen to show):
+the master volume, the input section (bindings, mouse and stick), the tick
+rate, `interpolation`, `max_fps` and `show_fps`, the present mode (the
+swapchain is recreated), the window's size and fullscreen state, and `aspect`
+and `ui_scale` (at the next pump outside a frame: `gfx::SetFrameLayout`;
+while the Options screen is open the interface stays at 100%, and
+`ui_scale` takes over when it closes), and the `discord` section (Rich
+Presence stops or starts).
+`--width`, `--height` and `--show-fps` keep their hold over the file, and a
+headless window keeps its size. The render scale stays the one the window
+had at start, as after a resize by hand. Each part of the game that holds a
+setting applies its own through a hook (`ConfigAddChangeHook`); `main.cpp`'s
+is the host's. `ConfigChange` returns whether the file was saved, and the
+same settings again retry a failed save without applying them again. It and
+the hooks run on the main thread; a `ConfigChange` from inside a hook is
+refused, and a hook added or removed during a change takes part from the
+next one.
+
+### Keyboard and mouse
+
+The keyboard and the mouse drive pad 1 next to the first gamepad
+(`tools/kazarov/src/cpp/platform/input.cpp`, `mouse.cpp`); a second gamepad is pad 2.
+The defaults, and what the game does with each button (PAL, English: the
+dungeon's `PadInput_OK` is cross and `PadInput_NO` circle,
+`ps2/src/dun/gameloop.cpp:1666`):
+
+| Input | Pad | What the game does with it |
+|---|---|---|
+| WASD | left stick | walk (`dun/gameloop.cpp:3006`, the town's `EdMoveChara`); menus with `MenuModeOn` turn it into the d-pad; d-pad as well where nothing reads the stick (below) |
+| mouse motion | none | the camera, directly (see "Mouse look") |
+| left click, Space | cross | attack, open, talk (`dun/gameloop.cpp:3585`, `editloop.cpp:3885`); confirm |
+| F, X | R1 | held while locked on: guard (`dun/gameloop.cpp:3347`, `guard_mode = 5` at :3374); unlocked, turns the camera (:4338) |
+| right click | circle | lock on to the nearest enemy or let go; with none in range, swing the camera behind the character (`dun/gameloop.cpp:3243`); back in menus |
+| E | square | use the active item (`dun/gameloop.cpp:3775`); held, a feather's speed boost (:3745) |
+| Tab, Escape | triangle | open the triangle menu (`dun/gameloop.cpp:3134`, `editloop.cpp:1824`); Escape becomes Circle while a menu is open, to go back |
+| Z | L1 | next lock-on target while locked on (`dun/gameloop.cpp:3260`); otherwise turns the camera (:4342) |
+| Q | L2 | held, the camera behind the character (`dun/gameloop.cpp:4347`) |
+| R | R2 | first-person look (`dun/gameloop.cpp:4354`) |
+| C, Backspace | select | switch character (`dun/gameloop.cpp:3185`) |
+| Return | start | pause (`dun/gameloop.cpp:3045`); the title's prompts |
+| arrows | d-pad | left and right pick the active item in the dungeon (`dun/gameloop.cpp:3218`); up opens the element picker when `game.element_quick_select` is on and the weapon has more than one element to pick between (`port/src/menu_dungeon.cpp`); menus |
+| V; middle click, B | L3; R3 | debug and editor functions only |
+| IJKL | right stick | the camera from the keyboard |
+| F3 | none | the FPS counter on and off (see "The FPS counter") |
+| gamepad L4 (`paddle2`) | none | the developer menu, in debug mode |
+| gamepad R4 (`paddle1`) | none | the town or dungeon debug menu, in debug mode, without Select+L2 |
+| gamepad L5 (`paddle4`) | none | held, the gyroscope turns the camera (`gyro` set to `held`) |
+
+The pad's buttons are the DualShock 2's, whichever gamepad SDL reports
+(`platform/gamepad_map.hpp`). Back/View is Select on every pad but the
+PlayStation ones that have a touchpad: a DualShock 4 or DualSense presses
+Select with the touchpad click and leaves Share/Create unbound (issue #73),
+and a PS3, which has no touchpad, keeps its Select on Select.
+
+The square button is not a guard in this game: the guard is R1 held while
+locked on, so right click is R1. The follow camera sits at
+`follow + distance * (sin a, cos a)` (`camerafollow.cpp`) and the stick's
+right is the screen's right (`move_x = lx cos a + ly sin a`), so a positive
+RX, which lowers `a`, turns the view right, and a positive RY lowers the
+camera, which looks up. Mouse right turns the view right and mouse up looks
+up; `mouse_invert_y` flips the latter.
+
+The actions are `up down left right cross circle square triangle l1 r1 l2
+r2 l3 r3 start select lx- lx+ ly- ly+ rx- rx+ ry- ry+ lx ly rx ry`, and the
+port's own `fps_toggle`, `developer_menu`, `debug_menu` and `gyro_hold`, which press no pad button. `walk` (Left Shift)
+is Kazarov's held keyboard walk. Kazarov's Dark Cloud 2 actions `mode_debug_menu` and `quick_loadout` are not read and have no Options row. Keys are
+SDL names (any case, `_` for a space; `Grave`, `Backquote` or `Backtick` for
+the key left of 1); `Mouse1` to `Mouse5` are left, right,
+middle and the two side buttons. The port's own actions also take
+`Gamepad:<button>` with SDL's gamepad button names (`Gamepad:guide`,
+`Gamepad:misc1`), on any connected gamepad; the pad actions take a gamepad's
+buttons from the gamepad itself. A gamepad axis deflected past the game's
+dead zone wins over the keyboard and mouse on that axis; buttons add.
+Each key-down of a toggle's key counts once, however briefly it is held.
+
+- **Sticks.** A key is full deflection; two keys at right angles make a
+  diagonal of the same length. Values go through the inverse of the game's
+  `AxisCalibration` (a dead zone of 49 above and 50 below the centre, then
+  78 steps for 128), so a deflection reaches the game exactly and small
+  mouse motion is not lost in the dead zone.
+- **Gamepad sticks.** Each stick's deflection is scaled by `stick_sensitivity`
+  (1.33, PCSX2's default) and stretched from the circle a modern stick reports
+  onto the DualShock 2's square, keeping its direction: the game's dead zone
+  takes 38% of the travel and the town runs past 0.85, so an unscaled stick
+  only runs at over 90% tilt, and a round one never on a diagonal.
+- **Gyro.** When `gyro` says (always, only in first-person view, or while
+  `gyro_hold` is held), a gamepad's gyroscope turns the camera while the
+  right stick is centred. Turning the pad left or right turns the view and tilting it looks up
+  or down, `gyro_sensitivity` times the rate in radians per second; below 0.03
+  is ignored as drift. `gyro_invert_x`/`_y` flip it, and `stick_invert_x`/`_y`
+  flip the camera stick the same way.
+- **DualSense.** A DualSense works as any gamepad; with SDL's HID driver (not Steam Input or
+  DS4Windows, which present an Xbox pad) it also gets:
+  - **Touchpad as a mouse.** On the screens that take the mouse as a pointer (the Options
+    screen) one finger moves the game's hand, pressing the pad is Cross, the
+    Create button and a quick two-finger tap are Circle, and two fingers sliding scroll like the
+    wheel. A single-finger tap does not click, so a brush of the pad never confirms anything.
+    `touchpad` turns it off; `touchpad_sensitivity` sets the speed.
+  - **Lightbar.** In a dungeon it follows the active character's life, green when whole through
+    yellow to red; elsewhere it rests at blue. `lightbar` turns it off.
+  - **Player light.** The pad lights its player number (1 for the first pad).
+  - **Rumble.** `rumble_strength` scales both motors, for pads whose motors feel stronger than a
+    DualShock 2's.
+  Adaptive triggers are not used.
+- **First-person view.** R2's view, in a dungeon or outdoors in a town, reads
+  only the left stick, so while it is on, the right stick and the gyro drive the left stick whenever
+  the left stick itself is centred.
+- **Mouse.** The mouse turns the camera itself ("Mouse look"), not the
+  right stick. Binding `MouseX` or `MouseY` to `lx ly rx ry` makes it a
+  stick again on that axis and takes that axis from the mouse look: the
+  stick reads the motion since the previous read divided by the ticks
+  between them, at the deflection that would turn the dungeon's camera
+  (0.04 radians a tick at full deflection) as far as the mouse look does,
+  times the binding's scale, and full deflection at most.
+- **Capture.** With `mouse_capture`, SDL relative mode holds the cursor
+  while the window has focus. Fullscreen startup captures when focus arrives,
+  and focus regain restores capture. Losing focus releases it, and so does
+  a configured `mouse_release` key when the window is not fullscreen; a click in
+  the window captures again and does nothing else. While released, motion
+  and clicks do not reach the game. Without capture they always do, and
+  the motion is the cursor's, after the system's pointer acceleration;
+  captured, it is the mouse's raw counts (SDL's relative mode with
+  `SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE` forced off, including when an
+  environment variable requests system acceleration). Escape is reserved for
+  opening menus and going back, even if an older config lists it in `mouse_release`.
+- **WASD on the d-pad.** The developer menu (`MenuLoop`) and the dungeon
+  loader read only the d-pad and never call `MenuModeOn`; the dungeon reads
+  the d-pad to pick the active item while WASD walks. So the movement keys
+  also press the d-pad exactly when the game did not read pad 1's left
+  stick (`CGamePad::GetLX`/`GetLY`, also called by `GetLXf`, `AllOn` and
+  `UpDate`'s menu mode) between its last two pad reads.
+  `port/src/gamepad.cpp` replaces `pad_button_read` and `GetLX`/`GetLY`
+  with retail's bodies plus the notes the host needs, and routes pad 2
+  debug button reads to pad 1. Menus with
+  `MenuModeOn(120)` (the title, the language select, the save screens, the
+  dungeon and town menus) read the stick, so the game's own conversion
+  turns a full WASD deflection (128) into the d-pad; a diagonal (91 per
+  axis) stays under their threshold, as a gamepad's does.
+
+### First-person walking
+
+In towns, interiors and dungeons, the keyboard movement bindings (WASD by default)
+walk relative to the first-person view while the mouse looks around. A/D strafe;
+W/S move forward/backward, at the interior walking speed. Diagonals keep the same
+speed. Body collision, gravity, slopes, chests and Atla balls still constrain
+movement. Input locks, menus, freezing, actions and scripted fades block walking.
+Controller-only first-person look retains its retail controls.
+
+### Mouse look
+
+The mouse turns each camera the right stick turns, by the angle it moved:
+`mouse_sensitivity` degrees per count, with no dead zone, no steps and no
+full deflection to cap it (`port/src/camera_port.cpp`). The dungeon's,
+the interior's and the georama view's cameras and the first-person views
+read it in the stick's units, added to the stick's reading, so their own
+conditions see both alike; the town's walk camera takes it apart (below). A
+gamepad's stick is unchanged.
+
+A follow camera eases towards its angle and its eye towards its place
+(`CCameraFollow::Step`, `CCamera::Step`): a turn shows over a few tenths of
+a second, and one past half a turn would go the short way round, backwards.
+That suits the stick's small steady steps, not the mouse, so the mouse's
+share of a turn is applied at once: when the camera's next `AddAngle` in the
+same pad read is exactly the delta of the reading the mouse went into, the
+port's replacement (`port/src/camerafollow.cpp`) turns the angle and the eye
+about the point it looks at by that share immediately. Any other `AddAngle`
+on that camera, or the next pad read, ends the reading unused; mouse and
+stick that cancel turn nothing. The stick's share, the following of the
+character and the game's own camera moves still ease.
+
+The town's walk camera (`EdMoveChara`, walking and fishing) tests the walls
+from where the eye is before the stick turns it, which allows for a stick's
+small step but not for a mouse's whole turn: taken the same way, a fast turn
+put the eye past a wall, and the camera then swung round behind it. So the
+town's RX stays the stick's, and `EdGetRXf` records the mouse's turn in a
+request `EditLoop` opens around the walk. After the camera's step, if the
+same camera is still shown on the same ground, map and mode in the same pad
+read, `EditLoop` applies the safe prefix of the mouse turn immediately. A
+continuous clearance bound covers the look-ray fan and the eye's movement,
+including pending positions and the remaining follow-camera easing corridor.
+Intervals whose bound touches geometry are subdivided; clear endpoint samples
+alone never authorize a turn. The eye keeps 10 units of clearance and the
+floor query keeps 18 below it. An initially invalid corridor rejects the
+mouse turn until the game repairs it; refused motion is dropped.
+
+The port collector allocates a proven upper bound before calling each frame's
+collector and includes all grid cells crossed by the sweep. Unknown collision
+types, invalid dimensions, or work-budget exhaustion reject unvalidated motion.
+Collection is limited to 32,768 polygons and 4,096 frame visits; each turn has
+at most 4,096 interval checks and one million polygon checks. The camera can
+stop earlier than the stick,
+which may slide along a wall the town finds beside the eye. As RX no longer
+carries the mouse, the drift behind a walking character and R1 and L1, which
+wait for RX to rest, see only the stick: the camera can swing behind while
+the mouse turns it.
+
+Live motion is taken whole at each read of pad 1 (`InputLatchPad`, once per
+pass of the main loop), so each count reaches the camera at one read
+whatever the display's frames do between ticks; a pause in the reads longer
+than a quarter of a second (a load) drops what came during it. A script's
+`mouse:DX,DY` is the motion of each read.
+
+Third-person mouse pitch changes the follow camera's height while it keeps
+looking at the player. It does not rotate the view independently of the player.
+Height requests stay inside the gameplay limits. The return toward the baseline
+pauses while either mouse axis moves. **Vertical Return**, under Options >
+Controls, sets the idle return speed: Off, Very Slow, Slow (the default, one fifth
+of retail), Moderate or Retail. A custom `input.mouse_camera_return` from 0 to 1
+can be set in the configuration file and takes effect without a restart. Floor and
+wall correction and the automatic horizontal swing behind a walking player
+retain their retail behavior.
+
+Optional **Mouse Wheel Zoom**, under Options > Controls, changes the distance
+from the player: wheel up moves closer, wheel down farther. **Reset Zoom**
+defaults to middle mouse; Controls offers middle mouse, either side button,
+Home or Disabled. Other bindings can be set with `input.bindings.zoom_reset`.
+With zoom enabled its reset binding takes priority over conflicting pad
+bindings; disabling zoom restores normal input behavior. Reset restores the
+town's normal distance or the dungeon camera's starting distance, as far as
+geometry allows. Zoom is limited to 30–2000 world units, follows normal camera
+easing and validates the entire pending distance corridor. Dungeon zoom retains
+ten-unit wall clearance and five-unit floor clearance for its normally lower
+eye. Collision can limit the requested distance and restore it when clear.
+Menus, first-person views, Georama, fishing, lock-on and scripted cameras do
+not consume wheel zoom input. The feature is off by default.
+
+| View | Horizontal | Vertical |
+|---|---|---|
+| dungeon (`DunMoveChara`) | `AddAngle(0.04 * -turn)` | camera height, `AddHeight(-ry)`, at most 30 |
+| dungeon, first person (R2, `EyeCamera`) | heading, beside the left stick | pitch, inside retail's -1 to 0.65 |
+| town (`EdMoveChara`, `EdGetRXf`/`EdGetRYf`, `EditLoop`) | the eye turned after the step, as far as it stays clear of walls | camera height while under 30, the mouse raising it to 30 at most |
+| town, first person (R2, `EyeCamera`) | heading, beside the left stick | pitch, inside -1 to 0.65 |
+| interior (`MoveCamera`, `edit_in.cpp`) | `AddAngle(0.04 * -horizontal)` | camera height, at most 30 |
+| interior, first person (`EyeCamera`) | the character's heading, which the view follows, beside both sticks | pitch, inside -1 to 0.65 |
+| georama (`MoveCamera`, `editloop.cpp`) | `AddAngle(0.03 * -horizontal)` | none: the view sets its height each frame |
+
+Vertical motion on a follow camera, which has a height rather than a pitch,
+changes the height by what tilts the line from the eye to the point it
+circles by the mouse's angle (`MouseLookTiltHeight`). It changes only the
+height the camera is going to, as the stick does, and eases: the game's
+corrections bound that height afterwards (the dungeon at least 1.6, and 25
+over the floor under the eye; the town 18 over it where the floor is level
+enough), and the mouse raises it to 30 at most, the player's limit. It is not
+a free pitch: looking up from the default view moves the camera little, and
+the dungeon moves its height on its own (`autoCamTrial`), so a raised dungeon
+camera drifts back. A first-person view takes the mouse only while it is
+shown, and its heading stays within half a turn. The developer cameras (`EdDMoveCamera`,
+the item viewer) and the event script's `GET_APAD` read the stick alone.
+
+### Scripted input
+
+`--input FILE` (`tools/kazarov/src/cpp/platform/input_script.cpp`) replaces the pads with
+a script, through `InputSetOverride`. Each line is
+
+```
+<frame> [pad1|pad2] [button ...] [key:NAME ...] [mouseN ...] [mouse:DX,DY] [wheel:NOTCHES] [lx ly rx ry]
+```
+
+and holds the named buttons (`cross circle square triangle start select l1
+r1 l2 r2 l3 r3 up down left right`, any case) and the four stick bytes
+(0-255, centred at 128 when left out) on that pad, pad 1 unless the line
+says `pad2`, from that frame until the pad's next line. On pad 1 lines,
+`key:NAME` (an SDL key name, `_` for a space), `mouse1` to `mouse5` and
+`mouse:DX,DY` (counts per tick) go through the keyboard and mouse bindings
+and the mouse look as live input does, d-pad rule included, and reach
+`fps_toggle` too: a line that starts holding `key:F3` is one press of it. A line with no
+button releases everything. Frames count the game's main loop as
+`--frames` does; frame 0 also covers the 60-tick warm-up and the loading
+screens before the first frame. `#` starts a comment; a pad's frames must
+not decrease. Pad 1 is held released until its first line; pad 2 keeps its
+device unless a line names it. A bad script stops `darkcloud` with status 2
+before the window opens. `GamePad.Down` fires on a press edge, so a press
+needs a later line that releases it:
+
+```
+# language select (English; skipped when the data has one language), attract movie, title logo, menu
+0
+70 cross
+75
+90 cross
+95
+200 start
+205
+480 start
+485
+520 start
+525
+```
+
+reaches the title menu at frame 560.
+
+### Test hooks
+
+For tests and debugging only; nothing the game does depends on them.
+
+- `--jump MODE[:MAP]` (or `DC_JUMP`) sets `DebugMode`, skips the 60-tick warm-up
+  and the developer menu, and starts `RunGame` in the mode with the globals the
+  developer menu (and for a dungeon, the dungeon loader) would have left:
+  `edit:<map>` (the game's `MapNo`: 0-4 the five towns, 11 and up the sub maps,
+  99 the interior), `e01`, `e03` or `e04` (populated Norune, Queens or Muska Lacka developer presets),
+  `dungeon:<n>` (dungeon n, 0-6, as `MapJump(200 + n)`, at its
+  floor select), `title`, `rush` (the attract movie), `opening`, or `menu` (the
+  developer menu itself). A bad value exits with status 2.
+- `--fast-load` (or `DC_FAST_LOAD=1`) cuts the loading screen's start delay to
+  one tick, its fades to two or four ticks and its holds (PAL 120, 183 and 83
+  ticks) to two. The modes' own fades are untouched.
+- `--give ITEM,...` (or `DC_GIVE`) gives the party the items and weapons it
+  lacks, by their numbers in `ps2/include/itemdata.hpp` (`ITEM_*`), each time a
+  town or dungeon starts, through `CDngStatusData::GetItem` as an event's gift
+  would: an item into the dungeon inventory, a weapon to the character it
+  belongs to. One already held is skipped. `--give 210,211` gives the Sun and
+  Moon Signets. A bad list exits with status 2.
+
+`darkcloud --headless --jump dungeon:0 --fast-load --frames 60` shows the first
+dungeon's floor select after about five seconds on lavapipe.
+
+### Developer menu
+
+PAL retail's `main` sets `DebugMode` when pad 2 holds L1+R1+L2+R2 through
+the warm-up; the game then starts in `GAME_MODE_MENU`, the developer menu
+(`MenuLoop`, `ps2/src/main.cpp`), instead of the language select, and leaves
+pad 2 unlocked. The port takes `DebugMode` from `game.debug_mode` in
+`config.json`, which is off by default. The port starts at the language select
+(the attract movie when the data has one language) whether this flag is true or false. Setting it to true enables debug controls
+from startup; the debug toggle chord can also enable them during play.
+`darkcloud` prints `debug mode on` when the flag starts enabled. An explicit
+`--jump menu` opens the developer menu at startup.
+
+While `DebugMode` is set, Start and Select on pad 1 go to the developer menu
+at once from every mode: the language select, the attract movie, the
+title, the opening, a town or an interior, the dungeon loader, a dungeon
+and the save screen (`GameDeveloperMenuRequested`,
+`port/src/gameloop.cpp`, after every frame of the main loop). The frame the
+second of the two goes down ends the mode where it stands: there is no fade
+and the town is not saved back to the save data; sound stops, the pad is
+unlocked and a pending map jump or start event is dropped
+(`GameEnterDeveloperMenu`). The chord is read from the host's pad, past the
+game's pad lock, so it works in events and fades; the loading screen between
+two modes and the fades a town presents on its own run to their end first.
+Holding it into the next mode does nothing until it is pressed again.
+
+After start-up, retail PAL flips `DebugMode` after every frame of the main
+loop where pad 2 holds L1+R1+L2+R2 and R3 is pressed (`ps2/src/main.cpp:963`);
+the port reads the same combination on pad 1 instead (`GameCheckDebugToggle`,
+past the game's pad lock), printing
+`debug mode on` or `debug mode off`. It does not move the game anywhere:
+`DebugMode` is a flag the modes read. What it does once set:
+
+- The town (`EditLoop`, `ps2/src/editloop.cpp:2041`) and the dungeon
+  (`GameLoop`, `ps2/src/dun/gameloop.cpp:2087`) leave on Select held with
+  Start (in the town after a fade); their loop results send the game to
+  `GAME_MODE_MENU` (`GameApplyLoopResult`: the town's result 1, any dungeon
+  result), and the top of `main`'s loop runs the developer menu there only
+  while `DebugMode` is set (otherwise the attract movie, `ps2/src/main.cpp:571`).
+  These are retail's own ways back, which the port's Start and Select
+  (above) now takes ahead of: the interior's (`EditInLoop`) went to the
+  title, not the menu.
+- In the town Select+L2+L3 shows the editor's debug overlay and
+  Select+L2+R3 opens its debug menu (`editloop.cpp:1849`); in an interior
+  Select walks out of the door (`edit_in.cpp:1342`); in the dungeon
+  Select+L2+R3 opens the debug options outside an event
+  (`dun/gameloop.cpp:3109`); a town event pauses on Start and stops on
+  Select+L2+R3 (`editloop3.cpp:8678`); shops, menus and battles have their own, some
+  using the retail pad 2 button checks.
+- Nothing on the language select, the attract movie, the title or the
+  opening reads it; the port's Start and Select is the one thing that works
+  there.
+
+The PC port routes the game's `On2` and `Down2` button checks to pad 1 only
+while `DebugMode` is on and **Select+L2 are held**. Hold those two buttons, then
+press the shortcut shown below. Physical pad 2 buttons no longer activate
+these shortcuts. L3 and R3 editor/debug menu presses also require Select+L2.
+Ordinary button reads still use pad 1 without PAL's pad 2 Start/Select
+overrides. While Select+L2 is held, Cross and Circle presses go to debug
+shortcuts without triggering their ordinary menu actions. Other debug buttons
+may also perform their ordinary actions. The separate
+L1+R1+L2+R2 then R3 debug toggle and Start+Select developer menu shortcut
+retain their existing behavior.
+
+In the town and interior editor debug overlay, Cross activates the selected
+action, Circle closes the overlay, and Start performs secondary stop or clear
+actions where available. R3 can still toggle the overlay.
+
+| Screen or mode | Buttons after holding Select+L2 | Debug action |
+|---|---|---|
+| Town and interior | L3/R3 | Show the debug overlay or open/close its menu |
+| Dungeon | R3 | Open the debug options menu outside events |
+| Town event | R3 | Stop the event |
+| Town/editor | Square; D-pad Down/Up/Left/Right | Clear events; stop time, set the next hour, or move time backward/forward |
+| Town ground editor | Cross/Circle/Triangle | Clear, save, or load ground data |
+| Town event | Cross | Skip the paused event |
+| Interior | Square | Clear events |
+| Dungeon | Cross/Square | Toggle step hold or battle display clearing |
+| Dungeon entrance | R1; Cross/Circle held | Unlock all floors; raise/lower the selected floor's kill count |
+| Dungeon character change | Cross | Add a Stand-In Powder to the inventory |
+| Character menu | Cross/Circle | Add/remove a party member |
+| Weapon list | Cross; R1 or R2; Triangle; Circle; Square | Raise level; set weapon flags; max weapon stats; reset flags; cycle element and monster values |
+| Weapon stats | D-pad Right/Left; Cross/Circle; Triangle | Raise/lower the selected stat or durability; max selected stat |
+| Item/character status | Cross/Circle/Square/Triangle held | Adjust life, defense, water, or money according to the selected row |
+| Debug item list | Cross | Grant all eligible weapons |
+| World map | Cross | Mark the next unvisited place or dungeon as visited |
+| Shop boards | Triangle/Cross held; R1/R2 | Add/remove 1,000 Gilda; print board data with R1 (R2 has no visible result) |
+| Shop transaction | D-pad Up/Down held | Raise/lower the party's Gilda one point per frame |
+| Shop held item | D-pad Up | Print the selected item's data |
+| Fishing menus | Triangle; Cross/Circle held | Record a Mardan Garayan catch; raise/lower prize points |
+| Fishing records | Cross | Record a random catch |
+| Town parts board | Cross/Circle/R1/L1/Triangle; Cross+Circle; Cross+Down | Fill, empty, dump, or complete parts, including all parts and NPC flags |
+| Save screen | R1/Triangle/Cross/L3; Cross+Circle | Start card unformat, format, write test, or conversion; unformat selected card |
+| Opening book | Cross | Finish the opening book animation |
+| Item model viewer | Circle; Triangle/Square held | Close the viewer; enlarge/shrink its model |
+
+Where a debug button is also an ordinary menu button, actions other than
+Cross and Circle can still run alongside the debug shortcut.
+
+In the developer menu, up and down (pad 1) pick a row,
+left and right change its number, Cross enters it, and Circle returns to the
+previous mode (or the title when opened at startup). In the dungeon loader,
+Cross enters the selected dungeon and Circle returns to the developer menu:
+
+| Row | Goes to |
+|---|---|
+| game start | the attract movie (`MapNo` 801), then the title |
+| `e0N` | the town `N` (1-5; `main_select_menu_no` N-1, `GAME_MODE_EDIT`) |
+| `sN` | the sub map `N` (map number N+10, `GAME_MODE_EDIT`); R1/L1 step by ten |
+| interior | map 99, `GAME_MODE_EDIT` |
+| dungeon | the dungeon loader (`LoaderLoop`): up and down pick one of the seven dungeons, Cross or Start enters floor 1; Circle goes back |
+| opening | the opening (`GAME_MODE_OPENING`, scenes op_a to op_d) |
+| `eventN` | one of three story events (map 23 event 310, map 41 event 150, map 19 event 305) |
+| `memory card N` | the save screen in mode N |
+| `Language N` | sets `LanguageCode` (default: the data's one language when it has one, otherwise 2, British English) |
+
+```
+0 down
+2
+10 cross
+12
+```
+
+with `--jump menu` enters town 1 (Norune); `0 key:grave` with `1` releasing it
+does the same from the keyboard.
+
+## Start-up and the main loop
+
+`port/src/main.cpp` is the executable's `main`. In order: `PathsConsumeArgs`
+takes `--data`/`--save` out of argv; the other options are parsed; optional
+`--seed-save` copies a fixture into the explicit save root; the data
+directory is checked; `ConfigLoad` reads `config.json`; `WindowInit` opens the
+window (size and fullscreen from the config, offscreen when headless);
+`InputInit`; `gfx::RendererInit` with the config's present mode, the pipeline
+cache at `<save>/pipeline_cache.bin` and a progress callback that prints
+`compiling shaders n/total` at quarters; `AudioOutputStart` pulls
+`audio::DefaultMixer()` at its rate with the config's master gain; the clock
+gets the config's tick rate (unbounded when headless); a pump hook is
+installed that pumps window events (a close request stops the game) and
+samples input and applies a pending frame layout; the config change hook
+is added; then `RunGame`. After it returns: the screenshot, then
+`AudioOutputStop`, `InputShutdown`, `RendererShutdown`, `WindowShutdown`.
+`main.cpp` also forwards the names MWCC gives the calls in retail `main`
+(below).
+
+`RunGame` (`port/src/gameloop.cpp`) is retail `main` (`ps2/src/main.cpp`)
+with the hardware taken out, line for line otherwise:
+
+- `init_all` is reduced to `InitCDFile`, `MGInit`, `InitMemoryFile`,
+  `BufferAllClear`, `InitReadBG`: no IOP reboot or module loads, no
+  `sceCdInit`/`sceCdMmode`/`sceFsReset`, no `DevInit` DMA reset or channel
+  handles. `mwInit` is not called; the host has run the static constructors.
+- Every `sceGsSyncV` wait is `ClockSyncV()`; Timer 0, the DMA channel kick,
+  `sceGsSyncPath` and the `FlushCache` calls go.
+- The two uploads of `My_dma_start0` (the GS environment chain) and
+  `Vu_progmain` (VU1 microcode) around a mode's `Init` become `LoadDrawEnv`,
+  which sets the one register of `My_DrawEnv` the renderer still reads,
+  TEXA (TA0 0x80, AEM 1, TA1 0x80).
+- Per frame, `SetEnv` (replaced in `gameloop.cpp`) resets TEST, ZBUF and
+  ALPHA to mglib's shadows as retail's A+D packet did, and the window
+  rectangle to the full frame, which `sceGsSwapDBuff`'s draw environment did;
+  TEX1 is read where a texture is bound and CLAMP is the sampler's.
+  `sceVif1PkCall(Vu_prog0f)` goes.
+- `save_data` and `config_data` are static in retail's unit, so `RunGame` has
+  its own and reaches the rest through `SaveData`, as retail does.
+- Mode 12's loop reads a register nothing set; the port's zero keeps it
+  running.
+- The transitions are `GameApplyLoopResult` (what each mode's loop result
+  does) and `GameFollowMapJump` (`NextMapNo` into the next mode), exported for
+  the tests.
+- Data with one language starts at the attract movie, in that language.
+- The language select goes straight on to the attract movie: retail's memory
+  card check (`GAME_MODE_MEMORY_CHECK`, `MemCheckLoop`) is never entered, as
+  there is no card (see "Saves and host files").
+- Each pass of the loop is one logic tick, recorded and rendered as described
+  in "Ticks and display frames" below.
+- `--frames` counts frames of this loop (one per `MGEndFrame` it calls);
+  `RunGame` returns `kExitOk` at the top of the next frame once the budget
+  is spent or a stop was requested, outside any frame, so the last frame can
+  be read back. Presents a mode makes itself (`EditLoop`'s fades) and the
+  loading screen's are not counted.
+
+### Ticks and display frames
+
+The game logic runs at the fixed tick rate; the window is presented at its own
+rate, with motion interpolated between ticks (`tools/kazarov/src/cpp/gfx/README.md`,
+"Display lists"):
+
+1. `MGBeginFrame` starts recording the tick's display list: what the game draws,
+   copies and uploads is appended to the list rather than executed.
+2. `MGEndFrame` seals it and `GameRenderTick` (`gameloop.cpp`) renders it once,
+   in full, as the tick's canonical image. That image is what the next tick's
+   `MGGetFBuffBackTex` / `kPreviousFrame` samples and what frame copies and
+   `mgPickZBuff` read, and every copy, blit, texture or palette update in the
+   list (frame grabs into `frame_image` and `water`, texture animation,
+   `MGMoveImage`, `MGStretchMoveImage`) runs there, once per tick. The
+   previous-frame effects (the title's trail, water, depth of field) are
+   therefore tick-exact whatever the display rate.
+3. `MGEndFrame` then waits for the next tick as before (`mgWaitVSync`, the
+   count, the callbacks and every spin on the clock are unchanged), and while
+   it waits `GamePresentBetweenTicks` renders display frames from the last two
+   lists at alpha = the elapsed fraction of the tick and presents them, as fast
+   as `present_mode` and `max_fps` allow. A display frame replays the newest
+   list's drawing only, into its own image, with each `CFrame`'s model matrix
+   (`frame_draw.cpp` tags its draws with the frame's address; a visual drawn
+   outside one with its record) and the camera interpolated between the two
+   ticks. A frame drawn at several places in a tick (a town's tiles and parts
+   share theirs) is matched place by place, not in draw order. A tick that did not wait, or presented nothing, presents its
+   canonical image.
+
+A grab of the frame that the tick draws back (the depth of field's blur, the water)
+is taken again by each display frame from its own image, so it lines up with the
+interpolated scene; the game's texture keeps the tick's grab. Cloth draws use a
+rigid coordinate system attached to their frame, with scale retained in the
+vertices. Display frames interpolate that transform and the local deformation
+separately, so turns carry the poncho around the body instead of blending its
+world positions through it. A frame or local vertex movement over 10 units cuts
+interpolation. The simulation and its world-space collisions are unchanged.
+
+Animated MDT visuals use the first VU block's host mesh for both display
+buffers. The display list records each remake, including stationary poses, so
+body geometry matches between ticks and interpolates alongside attached cloth.
+Alternating host meshes would prevent the renderer from matching those poses.
+
+What a display frame does not interpolate: 2D (the HUD is tick-exact), 3D
+sprites (2D quads with depth), objects that moved more than
+`kDraw3DTeleportDistance` (200 units) in a tick, a camera that moved more than
+200 units or turned more than 45 degrees, and the first tick of every mode
+(`RunGame` cuts there). `interpolation = off` presents each canonical image once,
+which is the PS2's picture at the tick rate. Headless runs (unbounded clock)
+present one canonical image per tick, so screenshots are those images.
+
+The loading screen still presents from the idle hook as immediate frames; once
+it has, display frames stop until the next tick's canonical render.
+
+### The FPS counter
+
+With `video.show_fps` (on by default; `fps_toggle`, F3, flips it at any
+time), every presented frame carries one line at the window's top-left
+corner, in the game's own message font (white with a black edge, as the menus
+draw their text) while a mode has the font's textures loaded, and in the
+port's 5x7 font (`tools/kazarov/src/cpp/platform/overlay.cpp`, white on a translucent black
+backdrop, on whole pixels: one per logical unit, rounded) on the loading
+screens and between modes, where it has not:
+
+```
+FPS 143.9  TICK 60.0/60  DRAWS 412
+```
+
+(`video.fps_detail`, and Options > Display > FPS Info, choose how much of it: `fps` is `FPS 143.9`
+alone, `ticks` adds the tick rate, `all`, the default, adds the draws.)
+
+the frames presented per second and the logic ticks rendered per second,
+each over the last half second or so, the configured tick rate, and the
+newest tick's mesh and 2D draws. It is drawn into a
+display list of its own (`gfx::Draw2D` for the 5x7 font, the game's `ClsMes` text
+code for the message font, anchored to the top-left of what the window shows), recorded only when the text, the window's mapping or the message font
+changes, never into a tick's list: a display frame draws it after the tick's
+list and before the present (`gfx::RenderOptions::overlay`), and a tick
+presented as its canonical image is presented as a display render of the
+counter alone, which starts from that image. So the canonical image, which
+`kPreviousFrame`, frame copies, pick-Z and `--screenshot` read, never holds
+it, and screenshots are the same byte for byte with it on or off (`--screenshot-fps` is the one
+exception, asked for by name). The
+loading screen's own presents do not carry it. Headless runs leave it off
+unless `--show-fps` is given.
+
+A display frame costs what drawing the tick costs on the GPU, plus little on the
+CPU: in the opening's first scene (about 2,100 mesh draws and 100 2D draws per
+tick, all of them keyed), a release build spends 1.6 ms interpolating and 1.8 ms
+replaying a list, and lavapipe about 150 ms rasterising it at 1280x960. The
+canonical render is the frame the port drew before, and the only one that pays
+for copies and readbacks. The first dungeon's floor B1 draws about 265 mesh and 145 2D
+draws a tick (at most 666). `darkcloud --headless --display-per-tick 4` leaves
+every screenshot of the title, the attract movie, the opening and that floor
+byte for byte the same.
+
+Overlays are not re-initialised: `TITLE.BIN` and `DUN.BIN` are linked in
+once, where retail reloaded the overlay's data, zeroed its `.bss` and re-ran
+its static constructors on every switch between the title and the dungeon.
+`LoadOverlay` only rebuilds the title objects the port defines with host
+classes ("The title overlay's own class declarations"). A mode that relies
+on fresh overlay globals is a known gap (below).
+
+Each mode's loop result is applied by the mode that ran the loop
+(`GameApplyLoopResult(old_main_mode, result)`), as retail handles it inside
+that mode's `case`: the developer menu sets `mode` itself and returns 1.
+
+## Platform
+
+The host side is Kazarov's `tools/kazarov/src/cpp` (`gfx`, `audio`, `platform`, `sce`); `port/src/platform` keeps the game's config, firstrun, discord and save_state.
+They build as `dc_host` without `port.h` or the game's include paths, so no
+game header or SDK type reaches them. Game types meet them only in the
+replacement units.
+
+- **Window** (`platform/window`): SDL3 window, resizable, high pixel density,
+  optionally fullscreen; `WindowSetMode` changes its size and fullscreen
+  state as the config does at start. It leaves a window already in that
+  mode alone, asks a size only of a window out of fullscreen and not
+  maximized, and gives back the mode it asked for and the mode the window
+  then has, since SDL may refuse a step or not finish it before
+  `SDL_SyncWindow` gives up; `WindowTakeModeEvent` says the window entered or
+  left fullscreen or changed size since. `WindowPollEvents` pumps events,
+  reports a close, and forwards pixel-size changes to the renderer.
+  `WindowAddEventHook` lets input see every event.
+- **Input** (`platform/input`, `platform/mouse`, `sce/libpad.cpp`,
+  `gamepad.cpp`): two DualShock 2-shaped pads from SDL gamepads, the
+  keyboard and the mouse, with rumble. libpad's nine
+  functions read them: buttons active-low in bytes 2-3, sticks in 4-7,
+  `scePadGetState` stable, `scePadInfoMode` DualShock. `InputSetOverride`
+  replaces a pad for tests.
+- **Clock** (`platform/clock`): the stand-in for the VSync interrupt. One
+  tick is one VSync, the count is the number of tick periods since the
+  anchor, and the game's tick callback (`PlayTimeCount` or the loading
+  screen) runs inside `ClockPump`, once per elapsed tick. Every retail spin
+  on the interrupt pumps (`sceGsSyncV`, `WaitVSync`, `check_now_loading`,
+  `wait_now_loading_vsync`, `ReadBGSync`, `MGEndFrame`). After the ticks a
+  pump runs the pump hooks (the host's, added with `ClockAddPumpHook`: the
+  window and input) and then the single idle hook (the game side's,
+  `ClockSetIdleHook`: the loading screen's presenter), so spin-waits keep the
+  window alive and the pads fresh whatever the loading screen does.
+  `sceGsSyncV` returns the parity of the tick, as the interlaced field
+  alternated: `CGamePad::Init` and `main` spin until it reads 1. The tick
+  rate is a setting (60 Hz by default); presentation is not tied to it (below).
+  `ClockWaitNextTick(hook)` runs a hook over and over while it waits, with the
+  elapsed fraction of the tick; `MGEndFrame` presents display frames through it.
+- **Config** (`platform/config`) and **paths** (`platform/paths`): above.
+- **Overlay** (`platform/overlay`): the port's 5x7 font (the first-run screen
+  draws with it too), a line of text drawn with `gfx::Draw2D` on whole pixels
+  at the window's corner and recorded as a display list of its own, and the
+  rate meter behind the FPS counter ("The FPS counter").
+- **Audio output** (`platform/audio`): an SDL3 float stereo stream that pulls
+  frames from a render callback on SDL's audio thread; `DC_AUDIO=off` or no
+  device leaves the game silent.
+
+## Rendering
+
+`tools/kazarov/src/cpp/gfx` is a Vulkan 1.3+ renderer: one graphics queue that presents,
+two frames in flight, dynamic rendering, synchronization2, a bindless texture
+array, every pipeline created at start-up against the on-disk pipeline
+cache, reverse-Z D32 depth with stencil, an immediate 2D API in the game's 640x480 logical
+space (centred in the window) and a mesh API in 3D, named render targets,
+copies, blits, depth readback and screenshots. `tools/kazarov/src/cpp/gfx/README.md` is its
+contract: spaces, colour and alpha units, how the GS blend equation maps to
+Vulkan blending and where it does not.
+
+### Window aspect
+
+The logical 640x480 frame is centred in the window at `min(W / 640, H / 480)`
+pixels per unit, so the HUD keeps its place relative to the frame at any window
+shape. With `video.aspect` `auto` the rest of the window is not bars:
+
+- **3D.** `Draw3DEyeToClip` (`mglib.cpp`) maps the game's projection, logical
+  `(320 + 800 x / z, 240 + 800 y / z)` (`MGSetRenderInfo`'s scale over the
+  frame's 240 half-rows), through the target's logical mapping. The frame's rows
+  fill the window's height, so the vertical field of view is retail's
+  (2 atan(240 / 800), 33.4 degrees) and the horizontal one is
+  2 atan(240 W / H / 800): 16:9 shows 107 logical units more on each side. A
+  window narrower than 4:3 keeps the frame's width (retail's horizontal field of
+  view) and shows more above and below, so the HUD always fits.
+- **Culls.** `frame_draw.cpp`'s screen-bound test and `MGClipVertex` (so
+  `MGClipBox`) take their half extents from what the current target shows
+  (`Draw3DVisibleExtent`, from `gfx::VisibleLogicalRect`) instead of 320 by 240:
+  a model past the 4:3 edge is drawn at 16:9 and dropped at 4:3. The GS guard
+  band (2048 units about the centre) is far outside any window's extent and is
+  unchanged.
+- **2D** stays in logical space. Full-frame 2D (fades, the screen filter's
+  `MGFillBox`, the previous-frame feedback, frame grabs drawn back; the loading
+  screen clears the whole window) reaches the window's edges by the rule in
+  `tools/kazarov/src/cpp/gfx/README.md`, "Aspect": an untextured or frame-image rectangle that
+  reaches an edge of the frame from inside is carried to the window's edge. A
+  4:3 picture that covers the whole frame (the cutscenes' stills over the 3D
+  scene) is stretched to the window's edges instead, so it no longer leaves the
+  frame's sides bare; textured HUD pieces and 4:3 pictures that do not cover the
+  whole frame (the floor select's backdrop, 640x448 at y 16) are not.
+  Since Kazarov `5bec132` the flanks sample with clamped wrap whatever the
+  draw's wrap, so a full-frame draw of a repeating texture repeats its edge
+  texels past the frame instead of tiling there (no seam at the frame's
+  border); 4:3 windows are unchanged.
+  `video.ui_scale` scales the depthless 2D about the window's centre.
+- **HUD.** The pieces that sit by an edge of the frame keep their distance to
+  that edge of the window instead, at their own size (`gfx::UiAnchor`,
+  `tools/kazarov/src/cpp/gfx/README.md`, "Aspect"): the dungeon's status panel (life, weapon
+  and water to the top left, the quick items top centre, the floor plate and the
+  mini map to the top right, the weapon's portrait and gauge to the bottom left;
+  `DrawGame`, `port/src/dun/gameloop.cpp`) and the town's clock (top right;
+  `EdDrawClock`, `port/src/editloop.cpp`). Menus, message windows, the Georama
+  editor's panels and 2D placed from 3D projections stay in the frame.
+- **Frame grabs** (`frame_image`, `frame_buff` and the other `frame_*`
+  placeholders, and the water's `water` and `water_buff`; `MGPortFrameTarget`)
+  are as wide as the window, so what they hold and draw back includes the
+  sides; the canonical and display images are the window's size. The game's
+  other 640xN target (`blender`) keeps its size at the render
+  scale.
+- **Depth of field** (`DepthOfField`, `port/src/effectmacro.cpp`; the towns'
+  heat haze is its jittered second pass) is not retail's two shrunk copies of
+  the whole frame, which blurred whatever stood in front of a focus plane into
+  the scenery behind it and came back as blocks. Each pass blurs only what
+  lies beyond its own plane: the frame is drawn into a target sharing its
+  depth buffer under the plane's depth test (the rest stays transparent
+  black, so the image is premultiplied by its coverage). Ordinary depth of
+  field then uses half-size and quarter-size copies. Heat haze keeps both
+  images at the frame's full pixel resolution and moves their sampling
+  positions without a low-resolution copy. The images are laid back in
+  retail's bands, the frame first scaled down by the image's coverage and
+  the image then added. They are as wide as what the target shows, so the
+  blur and the haze reach the window's edges;
+  the two outermost haze columns do not wander, which on the PS2 left a
+  ragged strip of the sharp frame in the overscan. For heat haze, eight depth
+  samples build a gradual coverage mask; the wobble's planes run from the
+  camera's near clip to past the far focus plane, spaced in 1/z (what the
+  frame's rows are linear in), so the haze ramps up evenly from the foreground
+  to the horizon and every object takes up as much of the wobble as its depth
+  gives instead of the effect starting at a line partway up the view. The near
+  pass keeps its narrower range around the near focus plane. `frame_image` is no
+  longer written.
+- **Water** (`port/src/water_draw.cpp`) refracts the frame at its own
+  resolution instead of the game's field copy, and only from where water
+  shows: a ripple's sample that lands on a bank or a character in front of the
+  water gives way to the pixel's own colour. `MGMoveImage` takes a whole
+  picture of the frame beside the game's copy (`Draw3DFramePicture`); the
+  surface is drawn flat into a target sharing the frame's depth buffer (what
+  the water covers), the rippled samples of that are laid over a second flat
+  drawing by their coverage, and the frame takes the result with the game's
+  colour and blend. Every sample is taken where the vertex lands
+  (`gfx::kMeshScreenUv`), so it follows a display render's camera and reaches
+  the window's sides. A surface drawn with no frame copy to hand, or into
+  another target, samples the game's copy as before.
+- **The title's backdrops** are built for the frame's width: the title
+  screen's sky model, its cloud (whose animation parks spheres just outside
+  the frame's sides; it is spread across, not enlarged) and the attract
+  movie's turning title card are drawn larger by as much as the view is wider
+  (`TitlePortBackdropScale`, `port/src/title/title_port.cpp`).
+- **The FPS counter** is the host's and is never carried past the frame
+  (`gfx::RenderOptions::host`).
+- **Game logic** is unchanged: `MGRotTransPers*` answer in retail's GS and
+  logical coordinates, which land on the meshes through the same mapping (the
+  dungeon's lock-on corners, the town's edit cursor and name tags).
+
+`aspect = 4:3` letterboxes everything as before, byte for byte. Known
+differences at other aspects: game code that
+drops 2D it projects outside 0..640 (effects, name tags) still does; at a
+`ui_scale` other than 1 the 2D the game places from 3D projections moves with
+the HUD.
+
+The game's drawing reaches it through replacement units, in four groups that
+share small internal headers:
+
+- **`mglib_port.hpp`** (`mglib.cpp`, `mglib_port.cpp`, `mglib_math.cpp`):
+  every `MG*` function. The GS register shadows the game sets
+  (`MGSetGsTEST/ZBUF/ALPHA/TEXA`, `MGSetWindowRect`, and the clears, fills
+  and stretches that leave them set) become the current `gfx::DrawState`
+  (`MGPortDrawState`); GS 12.4 coordinates and 24-bit Z convert into logical
+  space and reverse-Z (`MGPortLogicalX/Y`, `MGPortDepth`); TBP0 0 and 0xFFF
+  stand for the frame and the previous frame. The VSync group (`MGInit`,
+  `MGInitVSyncCallBack`, `MGGetVSyncCount`, `MGBeginFrame`, `MGEndFrame`,
+  `MGFlipWaitVSync`) sits on the clock; `MGBeginFrame` starts recording a
+  tick, `MGEndFrame` renders it, presents between ticks and keeps retail's
+  "do not wait twice" rule. Pick-Z reads the canonical render's depth buffer.
+  `MGSetRenderInfo` keeps retail's matrices; the field squeeze is undone
+  where the game's rects reach the renderer.
+- **`texture_port.hpp`** (`texture.cpp`, `texture_port.cpp`,
+  `textureanime.cpp`, `nowload.cpp`): TIM2 (IDTEX4, IDTEX8, RGB16/24/32,
+  mip levels, the IM2 swizzle undone) decoded into renderer textures with
+  index textures and 256-entry palettes; a registry keyed by unique TBP0/CBP
+  values so any TEX0 the game hands around resolves to one image;
+  placeholder names (`#name#w#h#bpp`) become named render targets; texture
+  animation and CLUT swaps are copies. The loading screen draws from the
+  idle hook, never inside a frame the game has open.
+  `CleanUpTextureList` does not compact the table: a native visual holds a
+  table index where retail's packet holds a baked TEX0, so entries stay put
+  and a reloaded block fills the first available holes rather than being
+  appended after compaction. A name lookup across all blocks, which prefers
+  the highest entry, can therefore pick differently from retail when two
+  live blocks share a texture name.
+- **`draw2d_port.hpp`** (`snd.cpp`, `gameutil_sprite.cpp`, `clsmes.cpp`,
+  `spritetable.cpp`, `dispctrl.cpp`, `editloop_sprite.cpp`): the sprite
+  primitives, `SetClut`, message windows, sprite tables and the debug font
+  as glyph quads, mapped into the current target (render targets hold field
+  rows).
+- **`draw3d.hpp`** (`frame_draw.cpp`, `visualvu1.cpp`, `visualshadow.cpp`,
+  `cloth_draw.cpp`, `water_draw.cpp`, the `*_math.cpp` units): MDT data built
+  into meshes keyed by the game's vu_data block (the record dies with the
+  block), `DrawVu1` submitting meshes with the constants the VU1 header
+  carried (matrices, four lights, ambient, material, fog), shadow volumes
+  extruded to the shadow plane and counted into the main target's stencil
+  against the scene's depth (retail's `shadow_buf` colour count, saturating
+  alike), then composited by a full-frame quad where the stencil is non-zero;
+  a side shared with an opposite-side neighbour is not emitted, as the pair
+  would cancel in the count; cloth rebuilt per draw, water sampling the
+  last frame copy. The assembly functions (`MulMatrix`, `MotionProc2`,
+  `CCloth::Step`, the shadow CLIP builder and the rest) are C++ with the
+  lanes retail writes.
+- The long tail on top of those: `dun/gameloop.cpp` (`DunMainDraw`,
+  `LoaderLoop`), `effectmacro.cpp`, `runeffect.cpp`, `fireomni.cpp`,
+  `fishing.cpp`, `shot_freefuncs.cpp`, `battlemenu.cpp`, `clothread.cpp`,
+  `langset.cpp`, and `editloop_init.cpp` (`EditInit`, its town objects
+  carved out of `EtcDataBuffer` at host sizes where retail's quadword counts
+  are the PS2's).
+
+## Audio
+
+All music and effects are sequenced. `tools/kazarov/src/cpp/audio` decodes VAG ADPCM,
+parses HD banks and SQ sequences, and runs a sixteen-port MIDI player into a
+48-voice synth with envelopes and an approximated reverb (`audio::Mixer`).
+`port/src/sound.cpp` replaces `CSound` (bank and sequence transfers, play,
+stop, fades, volumes, effect messages) on that mixer, and
+`gameutil_midi.cpp` answers the EZMIDI RPC commands for anything that still
+sends them. `main` starts the output; `CSound::Init` starts it too if it is
+not running.
+
+The formats and the synth's arithmetic were checked against every bank and
+sequence on the PAL disc and against the IOP modules the game loads
+(`EZMIDI.IRX`, `MODMIDI.IRX`, `MODHSYN.IRX`):
+
+- **SQ** (`sq.cpp`): `SCEIVers`, `SCEISequ`, then `SCEIMidi` with a song table
+  (offsets from the chunk) whose blocks start with a 32-bit data offset (always
+  6) and a 16-bit division (always 480). The events are SMF-like with running
+  status, but a note-off carries only its note number, and bit 7 on a channel
+  message's last data byte means the next event has no delta. All 93
+  sequences parse to their end-of-track meta exactly at the chunk's end.
+- **Loops** (`sequencer.cpp`): NRPN 0 (`B0 63 00`) with data entry `n` opens loop
+  `n` just after that data entry; NRPN 1 with data entry `n` and data entry LSB
+  (controller 38) `c` jumps back `c` more times, forever for 0. Every sequence
+  on the disc has one endless loop.
+- **HD** (`hdbank.cpp`): the `SCEIHead` addresses, 36-byte programs, 20-byte
+  splits, 4+2n-byte sample sets, 42-byte samples and 8-byte VAG entries as
+  laid out there. Split bend ranges and every detune are in 128ths of a
+  semitone (most splits say 0x600, an octave). A sample set's first byte picks
+  a velocity curve (linear, inverse, squared and their mirrors). A sample's
+  last byte is its SPU attribute: bits 4-5 pin its voices to core 0 or 1 (or
+  either, whichever has more free voices), bits 0-3 are its dry left/right and
+  effect-send left/right switches, so only those samples feed the core's reverb.
+- **Volume**: a voice sounds at velocity (through the curve) x program x split
+  x sample volume, each a fraction of 128, x channel volume x expression, each
+  a fraction of 128, x port volume / 256 (`ezMidi(0xB0 + port)`, so the SE
+  ports' 256 is unity and a sequence plays at its `sqtbl.txt` volume over 256).
+  The pan law keeps the near side at full scale and fades the far side to
+  silence 63 steps from the centre.
+- **Pitch**: 4096 x rate / 48000 x 2^((note + transposes - base note + fine / 128
+  + bend x range / 8192 / 128) / 12), at most 0x3FFF, as the SPU2 pitch register.
+
+`DC_AUDIO_TRACE=1` prints every `CSound` call (bank and sequence loads with
+their names, `SQ_Play` with its table volume, `SetVol`, `SE_Play`, fades,
+reverb), every `ezMidi` command, every channel message a sequence sends with
+its output time, every key-on's resolved sample, pitch, gain and core, and the
+sequencer's tempo and loop events. `DC_AUDIO_WAV=<path>` opens no device and
+instead pulls the mixer on the game thread as the clock ticks, writing 16-bit
+stereo at 48 kHz: N ticks write N/50 s whatever the run's real speed, so
+`DC_AUDIO_WAV=title.wav darkcloud --headless --jump title --fast-load --frames
+600` records what the title would have played. `audio_real_title_*` render the
+title pack's music on the real data (`DC_DATA`); with `DC_AUDIO_TEST_WAV=<dir>`
+they also write what they rendered there.
+
+What still differs from the PS2: the reverb is a generic room, not the SPU2's
+effect programs and work area; core 0's output does not pass through core 1;
+the ADSR runs at the SPU's rate but key follow of the envelope, LFOs, velocity
+crossfades and per-key pan follow are not applied; effect messages resolve
+their tone by key range, then split index.
+
+## Saves and host files
+
+The port has no memory card. Its saves are in `<save>/saves/`, a folder for
+each save named after the number its board shows, from 1, with no 12-save
+cap (up to nine digits):
+
+```
+<save>/saves/
+    1/save.dat
+    2/save.dat
+    state.json
+```
+
+`save.dat` is retail's 0x136A7-byte image unchanged: `CSaveData` (0x131C0
+bytes), the version string (`darkcloudVer1.9`) in 0x20 bytes, and a checksum
+byte for every 64 bytes of save data, the bytes the game wrote to the card
+as `darkcloudN`, so a save copied out of a card export loads as it is. Board
+(and folder) N is the game's file N - 1. A folder holds what belongs to its
+save, so more files can join `save.dat` later.
+
+`state.json` is what the title needs before a save is loaded, which the
+card's configuration file held on the PS2: `last_save`, the folder of the
+last save loaded or written, where the save and load screens start (New
+Game keeps it whole, where retail's configuration copy keeps one byte), and
+`game_clear`, the clear flag from the current game (config word 14),
+which the title reads. It sits with the saves rather than in `config.json`
+because it is game progress and screen state, not a setting, and it is
+written with the saves. It contains only these two keys; `last_save` is 0
+when there is no remembered slot. `state.json` contains no options, and
+`save.dat` retains retail's image layout. Without `state.json`, or with one
+that is not a JSON object, the game keeps its own values. Unknown keys,
+invalid types and slot numbers outside 0..999999999 are ignored. Files
+larger than 64 KiB are rejected. A successful load remembers its slot without
+changing the persisted clear flag, falling back to the session's pre-load
+flag when state cannot supply one. If that state write fails, it reports the
+failure to stderr and still loads the valid save. Saving and the ending's
+state write explicitly record the current game's clear flag.
+
+The autosave is `<save>/saves/autosave/save.dat`, the same image as a
+numbered save. It is written over whenever a town starts without an event,
+the only place retail lets the game be saved, and never by the save screen.
+The load screen lists it first, its board reading "Auto"; loading it leaves
+`last_save` on the last numbered save. Headless and `--jump` runs do not
+write it.
+
+`port/src/memorycardaccess.cpp` replaces the operations of
+`CMemoryCardAccess` with plain reads and writes of these files
+(`port/src/save_slots.cpp` names and lists them, `port/src/platform/save_state.cpp`
+reads and writes `state.json`); each finishes in the step that starts it. Every write goes through `FilesWrite`
+(`tools/kazarov/src/cpp/platform/files.cpp`): a temporary file of its own beside the
+target, `<target>.<16 hex digits>.tmp`, created exclusively, written,
+flushed to the disk and closed, then moved onto the target. Until that move
+the target keeps what it held. Removing the temporary file after a failure
+is best effort: one left by a game that died during a write, or by a
+removal that failed, is ignored by the game and can be deleted by hand.
+
+- Windows flushes with `FlushFileBuffers` and moves with `MoveFileExW` and
+  write-through.
+- POSIX flushes with `fsync`; macOS, whose `fsync` stops at the drive's
+  cache, uses `F_FULLFSYNC`, and falls back to `fsync` only on a file
+  system that does not offer it (`ENOTSUP`, `EINVAL`, `ENOTTY` and the
+  like); any other error fails the write. The move is `rename`, or for a new
+  save an exclusive rename (`renameat2` with `RENAME_NOREPLACE` on Linux,
+  `renamex_np` with `RENAME_EXCL` on macOS), then a sync of the directory. A
+  file system without the exclusive rename gets a hard link and the
+  temporary name's removal instead; one with neither cannot take a new save.
+
+Saving over a save replaces its `save.dat`. A new save takes its folder by
+creating it (a unique temporary directory published with
+`MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows, or `mkdir` followed by a
+sync of `saves/` on POSIX),
+which fails when anything has that name, then writes `save.dat` into it
+without replacing; when its number has been taken since the list was read,
+by a second copy of the game or a folder copied in by hand, it goes to the
+next free number. A failed new save leaves its claimed numbered folder
+reserved, even when empty: the pathname could have been replaced by another
+actor since creation. A retry uses the next free number. Creating `saves/`
+also syncs its new name. Temporary
+directories use the same ignored `.tmp` suffix as temporary files. Only regular-file
+handles are read; other entries are skipped without reading their contents.
+The card the save screens still check is always there, formatted and with room,
+and so is its save directory; format, unformat, the write test and the
+conversion of NTSC 1.0 saves do nothing.
+
+The save screens (`port/src/memcard.cpp`, `port/src/menu_save.cpp`) keep
+retail's steps, less the card:
+
+- The card choice is gone: the screen opens on its list. In town, the pause
+  menu's Save entry (`SAVE/LOAD`) asks whether to save or load before opening
+  the screen; loading a save from town reloads the saved area, inventory, and
+  Georama state just as loading from the title screen does.
+- The boards are every readable save in file order, then, on the save
+  screen only, one "New file" board, which saves to the lowest free N. File
+  order keeps each board where it was from one visit to the next and matches
+  the number on it. Saving over a save asks first, as retail did; a new save
+  does not. With no saves the load screen shows no board, Cross is refused
+  and Circle goes back.
+- The chosen board sits where retail's did and the rest scroll past above
+  and below it. Up and down move one board (held, they repeat), L1 and R1
+  jump to the first and the last; Circle closes the screen.
+- The cursor starts on the last save used (config word 17, which a load and
+  a save set, and which follows a new save that moved on); when that file has
+  no board, on the New file board, or on the load screen the first save.
+- No message names the card. Checks and transfers finish within a frame and
+  show none; the save after the ending asks "Want to save?" (message 260 of
+  `allmenu.mes`) where retail asked to save the cleared data to the card
+  (298), and Cross after it closes the screen where retail went back to the
+  card choice; an alert only a card raised reads "Saving failed." (266) or
+  "Loading failed." (274).
+- The save after the ending writes `state.json` in its step. When that
+  fails, "Saving failed." shows; Cross asks again and Circle closes the
+  screen. Retail waited on the write for ever.
+- A save is listed only when its folder's name is a number from 1 with no
+  leading zero (`01` is not save 1) and its `save.dat` is at least a save
+  long, of this version and with every checksum right. Anything else under
+  such a name, a save of another version, a damaged one, a folder without a
+  save or a file in a folder's place, is left alone and keeps its number from
+  a new save. Retail deleted a save of another version once its message (299)
+  was dismissed.
+- A board names the save's map from a table of 62; a map number outside it
+  shows as the first.
+
+Saves in the card layout earlier builds wrote, or in a card export, are not
+moved by the game. By hand, from `<save>/mc0/BESCES-50295dkcloud/` (or the
+same folder of a card export):
+
+| File | Goes to |
+|---|---|
+| `darkcloudN` | `<save>/saves/<N + 1>/save.dat`: `darkcloud0` to `saves/1/save.dat` |
+| `BESCES-50295dkcloud`, the configuration | not used; the next save writes `state.json` |
+| `icon.sys`, `dkicon.ico`, `dkicon_c.ico`, `dkicon_d.ico` | not used |
+
+The flat `<save>/darkcloudN` and `<save>/sysconfig.bin` of earlier builds of
+this layout are not read either: `darkcloudN` moves to `saves/<N + 1>/save.dat`
+the same way.
+
+For example, to copy File 1 from an export on Windows, choose a free board
+number, create its folder and copy just the save payload, without replacing
+anything already there:
+
+```powershell
+$slot = '<save>/saves/1'
+if (Test-Path -LiteralPath $slot) { throw 'Choose an unused slot number' }
+New-Item -ItemType Directory -Path $slot -ErrorAction Stop
+[IO.File]::Copy('<export>/BESCES-50295dkcloud/darkcloud0', "$slot/save.dat", $false)
+```
+
+The folder number may differ from the exported file number. Keep the
+original export; no icons or configuration file need to accompany the copy.
+
+`sce/libmc.cpp` still implements libmc on `<save>/mc0/` and `<save>/mc1/`, a
+directory per card, every command finishing inside the call that issues it
+and the next `sceMcSync` reporting the function number and result. The game
+reaches none of it but `MemCheckInit`'s `sceMcInit`, in the boot card check
+the port skips; `tests/platform_mc_test.cpp` covers it. `sce/sifdev.cpp` implements `sceOpen`,
+`sceRead`, `sceWrite`, `sceLseek` and `sceClose` on `<save>/host0/` with the
+device prefix stripped (the debug dump `edit.cpp` writes to `host0:`), and
+`WriteFile` writes there too.
+
+## Game text
+
+`port/src/gametext.cpp` writes the port's own text in the game's message
+font, so menus the port adds can match the game's. A message is an s16 code
+per character ending in `MES_CODE_END` (-0xFF); a space is
+`MES_CODE_SPACE` (-0xFE) and a line break `MES_CODE_NEWLINE` (-0x100). The
+PAL font draws only the external characters from -0x300: -0x300 to -0x2E0
+are the pad buttons and icons; -0x2DF to -0x288 are the 88 cells of
+`gaiji.img`'s letter grid in order (`A`-`Z`, `a`-`z`,
+`'="!?#&+-*/%()@|<>{}[]:,.$` and `0`-`9`); -0x287 to -0x254 are `œ ¡ ¿ ß Œ
+Ç ç` and the letters `DrawGaijiFont` draws an accent over (`ÀÁÂÄÈÉÊËÌÍÎÏÑ
+ÒÓÔÖÙÚÛÜàáâäèéêëìíîïñòóôöùúûü`). -0x263 to -0x261, -0x253 and -0x252
+draw a bare `?`. There is no `;`, `_`, `~`, `^`, backquote or backslash.
+The table was read off the `gaiji.img` of every `meswin/mes_tex_N.pak` (all
+seven draw these characters in the same cells; only the pixels differ) and
+checked by decoding every `.mes` on the disc: each language uses only
+characters in it, and its own accents only.
+
+`GameTextEncode` turns UTF-8 into codes. Curly quotes and dashes become the
+font's own; any other character the font lacks, and any byte that is not
+UTF-8, becomes `?` and is counted. A control code or icon is written in braces by its name (`{page}`, `{cyan}`, `{L1}`,
+`{value3}`; the list is in LOCALIZATION.md) or by its number, `{N}`, and `{{` is a `{`;
+`GameTextDecode` writes the name where there is one, else the number, so
+any message reads back and encodes to the same codes. `GameTextFile` lays
+texts out as a message file for `ClsMes::SetBuff`. `GameText` is one piece of
+text drawn as the menus draw their help line (`InitMenuMesSet`'s
+`CommonMenuMes2`: the menu font, white with a black edge, shown whole): `Set`
+the text, `SetColour` a `FontColor`, then `Draw(x, y, alpha)` from a menu's
+draw function; `Width` gives its width for aligning a value.
+
+Both have retail's fixed sizes. A window lays out at most `MES_WIN_LINE_MAX`
+(720) characters, counting the end and what a `{name1}`, `{value}` or `{insert1}` name, value or system
+message code expands to; retail's `SetMesWinTbl` writes on past the table, so
+the port's (`port/src/clsmes.cpp`) takes no more, and `GameText::Set` gives back
+-1, draws nothing and has a width of 0 for a text that did not fit. A line past
+the window's ten `line_pos` entries draws in the block layout, as a line
+without one does. A message file is s16 throughout: an id is -0x8000 to
+0x7FFF. Every message must start within 0x7FFF codes of `&buff[1 + count]`;
+the last message by id may extend beyond that range. `GameTextFile::Set`
+gives back -1 and leaves the file as it was where either would not hold.
+
+The text of retail's message files can be replaced from JSON, one file per language, with the
+disc's text as the fallback: see `docs/LOCALIZATION.md`.
+
+## The Options screen
+
+The game's Options screen, from the title, the town menu and the dungeon menu,
+is the port's settings screen (`port/src/menu_option.cpp` replaces
+`InitMenuOption`, `MenuOptionKey`, `DrawMenuOption` and
+`OptionMenuFadeOutStart` and hands them to `port/src/options/`: `rows` defines
+the pages and their rows, `screen` runs input and help, `draw` lays it out). It keeps the game's frame, cursor, sounds, EXIT
+button and help window, and draws its rows in the game's message font ("Game
+text"). Seven pages, Game, Display, Audio, Controls, Text, Accessibility and Bindings,
+are named on a help window's plate with L1 and R1 at its ends; the names
+scroll along it, with `<` and `>` where more lie past an end. L1 and L2, R1
+and R2 turn the page, and so do left and right on the page names. Each row is a label and a value:
+left and right change the value at once, cross goes round its choices, and a
+value whose setting `ConfigAppliesOnRestart` names ends in ` *`. Every change
+goes through `ConfigChange`, so it applies at once and rewrites `config.json`.
+On EXIT, cross closes. From anywhere, square puts the page's defaults back,
+triangle undoes every change since the screen opened, and circle closes. The
+three shortcuts stay visible below EXIT. If saving fails, the help window
+says the changes apply now but could not be saved; another change or closing
+retries the write. The game's own options keep their help from `allmenu.mes`;
+the port's rows have English
+help. Retail's screen-position row is gone: `MGAdjustScreen` moves nothing on PC.
+
+| Page | Rows |
+|---|---|
+| Game | save cursor position, clock, time speed, dungeon map, enemy damage, party damage, enemy HP, names, Discord Rich Presence, element quick select, swap keeps lock-on |
+| Display | window mode, resolution (the monitor's own and the sizes that fit it), V-Sync (`fifo`, `mailbox`, `immediate`), frame limit, aspect ratio, interface size (`ui_scale`), smooth motion (`interpolation`), FPS counter, FPS info (`fps_detail`), anisotropic filter (`anisotropy`), soft focus |
+| Audio | volume, sound (mono, stereo or surround), soundtrack (PS2 or custom) |
+| Controls | vibration, mouse sensitivity (in hundredths below 1 and tenths above, whatever its unit), invert mouse Y, vertical return, mouse wheel zoom, reset zoom (its binding), stick sensitivity, invert stick X and Y, gyro, gyro sensitivity, invert gyro X and Y |
+| Text | language, message speed, button symbols (original or new), symbols shown (glyph device), text font (sharp or original), text shadow, symbol shadow, area name shadow, floor label shadow, boss name shadow |
+| Accessibility | always win QTEs |
+| Bindings | keyboard and mouse button bindings for game actions |
+
+Resolution choices are the sizes that fit the display (its usable area less
+the window's borders when windowed) and follow changes of mode. Desktop is
+fullscreen at the monitor's size, so Window Mode reads Fullscreen there;
+choosing Windowed from it gives the largest listed size that fits. In
+fullscreen an explicit resolution is kept for the window. Headless runs keep
+the standard size list.
+
+The display fields reach the window through the host's change hook
+(`DisplayChanged`, `platform/display`, which also applies `--width` and
+`--height`). SDL may refuse a change of mode or finish it late, so the window
+is read back: where it is not in the mode asked for, the display fields, in
+`config.json` too, become the mode it is in, and the help window says so
+until a later display change takes. While that stands, or while a fullscreen
+change SDL took is unfinished, the host's pump (`DisplayPump`) follows the
+window, open or closed; otherwise a window resized by hand changes no
+setting. A fullscreen change that finishes after SDL's timeout is not
+cancelled by choosing the mode still shown or by Undo; the settings follow it
+when it finishes. If reading the window back fails while following, the
+fields wait for the next fullscreen or resize event.
+
+Interface size (`ui_scale`) scales the HUD and the game's menus. The
+Options screen itself stays at 100% while it is open (`MenuOptionOpen`, read
+by `main.cpp`'s frame layout), so no size can take its tabs, EXIT or
+shortcuts off the window; the new size shows once it closes.
+
+The screen times its own auto-repeat from the pad as held (`InputGetPad`, the
+left stick read as `MenuModeOn(120)` reads it): a direction fires when pressed,
+then after 30 frames every 5, retail's menu rate, whichever menu opened it.
+
+While the screen is open the mouse is its pointer (`InputSetMenuMouse`): its
+motion and buttons stop pressing pad 1's buttons and turning its stick and
+reach `InputTakeMenuMouse` instead. Capture works as everywhere else, so the
+pointer is the game's own hand, moved by the mouse's relative motion; a
+released cursor (when a release key is configured) is taken back by a click. That
+keeps one pointer whether the window is windowed, fullscreen or headless, and
+maps relative motion through the window's logical scale to the
+2D screen. The hand appears when the mouse moves and goes when a key moves the
+cursor. Hovering a row, a page name or EXIT selects it, and hovering L1, R1
+or a scroll arrow puts the brackets round it; a click on a page name
+or on L1 or R1 turns the page, on a value's `<` or `>` steps it, on the value
+goes round its choices, and on EXIT closes; the right button closes; the
+wheel scrolls a long list under the pointer, and the chosen row moves with
+the list as it scrolls. Mouse buttons already held when the screen opens act
+only once let go and pressed again. Eight rows fit at once; a scroll
+bar at the right appears on cursor movement and fades after 75 idle ticks
+(the last 15 ticks fade). The arrow buttons at its ends scroll too. A script's
+`mouse:DX,DY` and `mouseN` drive the pointer as they would the mouse.
+
+The game's own options are global, not per save. Retail keeps them in each
+save (`CSaveData::config`, the dungeon status's `minimap_status` and the menu
+cursors' `reset_pos`), so loading a save brought its own. Here `config.json`
+holds them, and `GameOptionsApply` puts them in the running save before every
+mode starts (`RunGame`, before `ModeInit`), after a new game, and whenever they
+change. `CMemoryCardAccess::SetBuff` zeroes them in the copy it writes, so
+`save.dat` carries no options; its layout is retail's, so their bytes remain,
+as zeros.
+
+## The Register Name screen
+
+While the name-entry screen is open (from the read of its textures until
+the game closes it) the mouse is a pointer there as well, taken with
+`InputSetMenuMouse` as the Options screen takes it: its motion and buttons stop
+pressing pad 1's buttons and reach `InputTakeMenuMouse`. The game's own hand
+follows the pointer freely across the screen, as the Options screen's does
+(`NameMouseHand`, through `DrawMenu2DSprite`), while the orange brackets stay on
+the control it is over. The pointer is a point in the
+640x480 space that the mouse's relative motion moves, through the mapping the 2D is
+drawn with (`gfx::GetUiMapping`, so `video.aspect` and `ui_scale` both hold, and a
+window whose size differs from its target's, as on a high-DPI display); a
+script's `mouse:DX,DY` counts main-target pixels. It starts at the hand's
+fingertip, appears on the first motion, click or wheel notch and goes back to
+the pad when a pad button or the left stick is used.
+
+- **Hover.** A key, a tab (ALPHABET, SYMBOL/NUMBERS, DEFAULT, DECIDE, the two
+  arrows, DEL., INS., PROFILE) puts the cursor on it, with the cursor
+  sound, by setting `NameSelect.area`, `cursor` and `side_row` as the pad would.
+  Nothing else moves; the name's slots are not hover targets, since they lie on the way
+  to the tabs.
+- **Left click** is Cross. On a key or tab it presses `PAD_CROSS` for the
+  tick, which `CGamePad::Down` reports from `NameMouseSyntheticDown`, so the game
+  types the character, switches the tab, deletes, inserts, moves the text cursor,
+  opens the PROFILE message or asks to confirm (DECIDE) with its own code and
+  sounds. On a slot of the name it moves the text cursor there. In the "Accept?"
+  dialog the Yes line is Cross and the No line Circle; a click on the message
+  of PROFILE or of the default-name notice closes it. A click on nothing does
+  nothing.
+- **Right click** is Circle, as on the pad: it blanks a character on the keyboard
+  and tabs, answers No in "Accept?" and closes a message.
+- **Wheel.** Away from the user goes left or back, toward the user right or
+  forward. Over the name it moves the text cursor, as L1 and R1 do; anywhere
+  else it cycles the keyboard tabs (ALPHABET and SYMBOL/NUMBERS), as L2 and R2 do.
+- Clicks are ignored while the screen fades in and out, and a button still held
+  when it closes (or as it opens, from the book before it) acts only once
+  released, so no click reaches the next screen.
+
+The hit areas (`port/src/name_mouse_layout.cpp`) are the places
+`DrawNameTemplete`, `DrawCharaName` and `NameEnterDraw` draw at, for PAL's
+languages: the alphabet keyboard with the accented rows of French, German,
+Italian and Spanish, the symbol keyboard without its blank keys, and each
+language's tabs. The kana keyboards are Japanese-only and not offered.
+`name_mouse.cpp` is called from `pad_button_read`, ahead of the game's read of
+the pad, so no function of `ps2/src` is replaced for it.
+
+## The title menu, Exit and Quit
+
+The title's menu has a fourth row, Exit, which asks "Return to desktop?" and closes the game on Yes.
+Retail's three rows are painted pictures (`start.img` and its French, German, Italian and Spanish
+copies) with no Exit among them, so all four are drawn through the UI framework
+(`port/src/title/title_menu.cpp`) in Chronicle Title, whose capitals are the painted rows' own letters
+fitted into the font, with retail's words as the `title.menu.*` keys, and coloured as the GS drew the painting:
+the selected row the painting's cream, the rest that cream at half opacity (see "Matching retail's
+2D look" in `docs/UI_FRAMEWORK.md`). The rows stand 28
+pixels apart from 284, so the fourth clears the trademark lines; they keep retail's hand, blink and
+sounds. Exit's row shares its number with the attract movie's,
+which retail only sets on the way out, so `TitleLoop`'s handling of the other rows is retail's.
+
+Quit in the pause menu, in a town or a dungeon, asks "Return to the title?" and on Yes goes back to
+the title screen instead of the desktop. The main loop leaves the mode where it stands, as the
+developer menu does (`TakeBattleMenuTitleRequest`, `port/src/gameloop.cpp`): it waits for loads in
+flight, stops the sound and jumps to map 800, so the title starts as it does at start-up. Nothing is
+saved on the way.
+
+## The mouse in the pause menu
+
+The pause menu (the ring of pages in a dungeon, and the same ring in town) takes the mouse as a
+pointer the way the Register Name screen does, through `MenuPointer` (`port/src/menu_pointer.cpp`):
+its relative motion, mapped through the 2D's own mapping, drives the game's hand, which
+`DrawMenuObjectVibe` now draws at the pointer while it is in use, brackets and all staying on the
+control the pointer is over. A hover moves the game's own cursor (state the pad would set, and the
+cursor sound); a left click presses Cross for the tick, a right click Circle, so the game's code does
+what it would for the pad; a held button acts only once let go, so no click reaches the next page. A page
+without a handler (Save, Manual, the world map, and the rarer modes of the pages below) leaves the
+mouse to the pad's buttons as before.
+
+| Page | Hover and click | Wheel |
+|---|---|---|
+| Ring | an icon's row moves the selection; click opens the page | |
+| Item | a quick slot, the weapon and defense squares, the portrait, a cell of the board or the trash can; a tab or arrow turns the board's page; a party arrow changes member | over the board scrolls it, elsewhere changes page or member |
+| Weapon | a click left or right of the weapon in the middle steps the list and in the middle opens the actions; a face at the top brings that member round; the action rows, the element rows, Yes and No; on the attachment screen a socket, a cell of the board or the trash can | steps the list or the rows |
+| Allies | a face on the turntable turns to it (one place a tick, as held d-pad does); the card in front selects | turns one place |
+| Georama Parts | the part, one of its chips, or a cell of the board; the arrows turn to the next town's parts | scrolls the list or the board |
+| Leave Dungeon | Yes or No | |
+
+An item picked up rides the hand: click it and click where it goes, or press, drag and let go over the
+target. Let go over empty ground and the game asks "Throw this item away?"; Yes sends it through the
+trash can, as the pad does. The scroll bar beside a board takes clicks on its arrows and can be
+dragged. On the attachment screen the three tabs of the tag board turn its pages and its rows follow
+the pointer.
+
+The hit areas are the places the pages draw their brackets at (`ItemMenuModeDraw`, `WeaponMenuDraw`,
+`DrawCharaSelect`, `DrawAtoraSelect`, `DrawMenuMove`), so they follow the interface size and aspect.
+
+## Arenas
+
+`CDataAlloc2<1>::Alloc/Alloc64/Align64` and the carving in
+`InitializeDataBuffer`, `BufferAllClear`, `SetDataBuffer` and
+`SetPacketReadBuffer` (`dataset.cpp`, `dataalloc2_1.cpp`) give each arena its
+own block, an ordinary anonymous mapping wherever the system puts it
+(`tools/kazarov/include/platform/memory.hpp`), sized at four times the quadwords retail
+asked for (`kArenaHeadroom`, `tools/kazarov/include/platform/arena.hpp`, shared with Dark Chronicle), because the game sizes
+allocations with the host's larger `sizeof`s. A guard page follows each
+block, and an overflow aborts naming the arena instead of retail's endless
+loop. A debug build stops when no block lies above 4 GiB, so a mapping that
+drifted low cannot hide a pointer the game truncates (below).
+
+Retail places objects in runs whose quadword counts it wrote by hand
+(`new ((u_long128 *) alloc->Alloc(4)) CCollisionMDT`), and the host's object is
+larger wherever it holds a pointer or a vtable: the collision is five
+quadwords, the cloth, its bounds, the fish and the visuals outgrow theirs too.
+The placement operators (`dataalloc2_1.cpp`) therefore grow the run they are
+handed to the object's size while it is still the arena's last, so nothing
+allocated afterwards lies under the object's tail. At retail's four quadwords
+the collision's `mesh_count` landed on the x of the first triangle built
+behind it, which opened holes in dungeon floors. An allocation that is cast
+rather than placed has no size to go by and is sized in `port/src` instead
+(`Quadwords<T>` in `editloop_init.cpp`).
+
+## Pointers and 32-bit integers
+
+The game was written for a 32-bit ABI and casts pointers to `int` and back.
+`darkcloud` is position-independent (`-pie -z separate-code`) and its arenas
+lie above 4 GiB, as on arm64 macOS, whose low 4 GiB are a hard page zero, so
+such a round trip faults where it happens instead of working by luck.
+`scripts/port/truncations.py` finds every cast of a pointer to a narrower
+integer with libclang, follows the value to where it becomes a pointer
+again, and says whether the function holding it runs in the linked
+executable; `docs/port/truncations.md` is its output. CI runs it with
+`--check`, which fails while the file is stale or lists a round trip that
+can run.
+
+Each retail function holding such a round trip is replaced by a copy of its
+body with the cast widened (a `uintptr_t` for an address formed from an
+integer, the pointer itself where retail kept it in an `int`) and nothing
+else changed:
+
+| Function | Unit | Change |
+|---|---|---|
+| `DunMoveChara`, `BtCheckDamageProc` | `dun/movechara.cpp` | addresses of `NowDngMap`'s parts and of the active item counters on a `uintptr_t` |
+| `CDungeonMap::BuildCharaSpecialParts`, `SetCharaDoor` | `dungeonmap.cpp` | the key door's cell on a `uintptr_t` |
+| `BtGetTreasureboxBig_Init`/`_Loop`, `BtGetTreasureboxSmall_Init`/`_Loop`, `BtGetGateKey_Init`/`_Loop`, `BtEscape_Init`/`_Loop` | `btitem.cpp` | the files read between the two halves kept as pointers, not in `itemOpenItemMds`, `itemOpenItemImg` and `escape_chr` |
+| `_ITEM_USE_WINDOW`, `BtMiniItemSelect_Loop` | `btsysscript.cpp`, `btitem.cpp` | the script slot the choice goes to kept as a pointer (`btitem_port.hpp`) and written through the host's `RS_STACKDATA`, whose value is at byte 8 |
+| `BtSystemScriptLoad`, `BtSystemScriptRun` | `btsysscript.cpp` | the event script kept as a pointer, not in `BtEventData` |
+| `PortWorldMapCommand`, `PortEdEventMenuMode` | `editloop3.cpp` | the world-map result destination stays a native-width script pointer until the town menu finishes |
+| `EditInit`, `InitWorkBuffer` | `editloop_init.cpp` | arena starts rounded on the whole pointer |
+| `CommandWATER_SHAKE` | `editmapscript.cpp` | the wave slot on a `uintptr_t` |
+| `CEditGround::DrawPartsCursor` | `editground.cpp` | the preview frame `LoadObjectParts` keeps in an `s32` matched against the part's own frames |
+| `FishingExchangeKey` | `shop.cpp` | the attachment slots on a `uintptr_t` |
+| `EnterWeaponModel`, `WeaponModelBuildFunc`, `DngWeaponEquipModelBuild` | `menu_misc.cpp` | the weapons' files in a table of pointers; retail's `int` table read back as `u_int *` at a 4-byte stride |
+
+Records read from the disc with pointer-sized fields are decoded into host
+records rather than used in place: `.pts` part definitions
+(`eparts_port.cpp`, for `LoadPTS` in `editloop_parts.cpp` and `GetFuncPoint`
+in `edit_in_parts.cpp`; `EdInitToEPInfo`, `editloop3.cpp`, lays its own out
+past the host header) and the event scripts' function records and stacks
+(`runscript.cpp`). The wind a title scene stores in `CCharacter::wind`, an
+`int`, is recovered by `CCharacter::ClothStep` with `PortImagePointer`, which
+widens it against the image's own address.
+
+## What is still a stub
+
+`tools/kazarov/src/cpp/sce/stubs/` holds the remaining SDK stubs: libdma, libgraph (all but
+`sceGsSyncV`, which is `tools/kazarov/src/cpp/sce/libgraph.cpp`) and libpkt. Each calls
+`PS2_UNIMPLEMENTED()` (`port/include/port.h`), which prints the function,
+file and line and aborts. They stay stubs by design: the port does not
+emulate DMA chains, VIF/GIF packets or the GS, so a call that reaches one
+is a drawing path no replacement unit covers yet.
+
+Everything else from the SDK is implemented in `tools/kazarov/src/cpp/sce/`: libvu0 in
+C++ (static constructors call it before `main`), libpad, libmc, sifdev,
+eekernel (`FlushCache` and friends do nothing, `Exit` exits), libcdvd's
+`sceCdInit`/`sceCdMmode` and sifrpc's IOP boot and module loads (no-ops).
+The Metrowerks runtime calls are in `port/src/runtime.cpp`: `mwInit` does
+nothing; `LoadOverlay` reconstructs selected title objects when switching to
+the title overlay; `mwLoadOverlay` succeeds, `__assert` prints and exits with
+status 4, `exit__2` exits. The same file replaces the stand-ins in `ps2/src`
+for what the PS2 runtime generated that use names only the PS2 link defines:
+four constructors and `__unexpected` become functions that call
+`PS2_UNIMPLEMENTED()`, and `std::exception`'s virtual table and the overlay
+address table become empty tables. Nothing in the port reaches them, but a
+COFF link wants every name an object uses defined.
+
+None of the 44 aborting stub functions is linked into `darkcloud`, and neither is
+`Ps2Unimplemented` itself: `--gc-sections` keeps only what `main` reaches,
+and no function it reaches calls a stub. To check after a change,
+disassemble `port/build/pc/darkcloud` (`llvm-objdump -d`), collect the functions
+with a `call` to a stub's address and map them to their source with
+`llvm-addr2line`; static helpers inlined into a caller show under that
+caller.
+
+At the last count `port/src` tagged 330 definitions `PORT_OVERRIDE`, each
+replacing one of `ps2/src`'s, and the final link held 4,145 of the game's own
+(`llvm-nm` of the `dc_ps2` objects' external definitions against the
+executable's symbols).
+
+## Known gaps
+
+- **Rendering approximations.** DATE/DATM (destination alpha test,
+  `MakeFukidashi`'s mask) is not emulated. TEX1 LOD (L, K) is ignored in
+  favour of standard trilinear filtering. The GS blends that need a factor
+  above 1 or a destination scaled past 1 are approximated
+  (`tools/kazarov/src/cpp/gfx/README.md`, "Blending" and "Not done here").
+- **Overlay re-initialisation.** Retail reloads `TITLE.BIN` or `DUN.BIN` and
+  re-runs its constructors on every switch; the port links both once and
+  runs nothing again but the title objects it lays out with host classes
+  (below). Other globals a mode expects fresh keep the previous visit's
+  values.
+- **Arena headroom** is four times retail's request across the board, a
+  stopgap rather than measured peaks.
+- **Retail statics of the title units.** The title units' own static
+  constructors still build their file-local `CFireOmni`, `CMapObject`,
+  `CEffectGroup` and `OBJ_ANIME_SEQ` objects at PS2 sizes with the host
+  constructors, which write up to 16 bytes past each. Every such object is
+  dead in the port (its users are the port's copies, with their own
+  statics), and what the writes reach is another dead title static or
+  padding, but the bytes are written.
+
+## How far the game runs
+
+With the PAL data extracted and no input, `darkcloud --headless --frames 120`
+boots, compiles the pipelines, runs the 60-tick warm-up and the loading
+screen, draws the language select (English highlighted) and exits 0 with
+that frame in the screenshot. Scripted (above), it plays the attract movie,
+the title screen and its menu, and START opens the opening book. Through the
+developer menu, the opening's scenes play, the dungeon loader lists the
+seven dungeons, floor 1 of the first starts through its name card and Toan
+walks it until the Mayor's event script takes over, and the town `e01`
+(Norune) loads its parts and is walked. No stub is reached on the way.
+
+## The title overlay's own class declarations
+
+The title units (`ps2/src/title/*.cpp`) declare other units' classes
+themselves, with only the members they touch named and the PS2 extents
+padded out, and the PS2 link binds them to the main executable's code. On
+the host the main executable's code uses the real classes, with 8-byte
+pointers:
+
+| Class | Title units' size | Host size | Declared by |
+|---|---|---|---|
+| `OBJ_ANIME_SEQ` | 144 | 192 | op_a, op_b, op_c, opening, rushmovi, title |
+| `CMap` | 2800 | 3120 | op_a, opening, rushmovi, title, titleloop |
+| `CMapObject` | 240 (op_a), 256 | 272 | all but sprite |
+| `CObjectFrame` | 176 | 224 | op_b, op_c, op_d, opening, rushmovi, title, titleloop |
+| `CWater` | 816 | 848 | op_c, rushmovi, title, titleloop |
+| `CFireOmni` | 64 | 80 | op_a, op_b, op_c, rushmovi, title, titleloop |
+| `CEffectParam` | 240 | 256 | op_a, op_c |
+| `CEffectGroup` | 8 | 16 | op_a, op_c |
+| `CategoryAttr` (`CMapCategoryAttr`) | 24 | 24 | op_a, opening |
+| `CRunEffect` | 208 | 208 | rushmovi, title, titleloop |
+| `CRect<int>` (`CRect_i_`), `RECT` | 16 | 16 | all |
+| `SND_INFO` (op_c's own table row, unrelated to `snd.hpp`'s) | 24 | 16 | op_c |
+
+The port defines every shared object of a mismatched class with the real
+one: op_a's `OP_GroundMap`, `OP_BuildingMap`, `OP_BuildingMap2`,
+`OP_AnimeSeq[32]` and `CFire`, op_b's `OP_NornMapObj[76]` and
+`OP_NornMapObj2[87]`, op_c's `Water`, rushmovi's `Water__2` and `CFire__4`.
+Every function that indexes or sizes them is the port's, compiled against
+the real headers: the long-tail copies of op_a, op_b, op_c, opening and
+rushmovi, `port/src/title/title.cpp` (all of title.cpp's scene set-ups and
+draws), `opening_mds.cpp` (`OPAnalyz`, `OPMdsLoad` and the definition
+reader's state) and op_d's `OpD_InitProcess`, `OpD_InitProcess2` and
+`OpD_DrawProcess`, which reach op_d's statics through names its stub header
+gives them. The smoke pools are sized from the host `CEffect` (288 bytes,
+where retail asked for fifty 256-byte ones).
+
+The port's definitions of those objects are tagged `PORT_OVERRIDE`, so the
+title units' own are left out and only the port's constructors run over them
+at start-up, never the title units' at the PS2 strides. `LoadOverlay`
+(`port/src/runtime.cpp`) does what retail's overlay loader did when a mode
+needs TITLE.BIN and DUN.BIN (or nothing) was loaded before:
+`TitleOverlayConstruct` zeroes those objects and constructs them again (and
+initialises the maps, as op_a's constructor did).
+
+## Layout
+
+The root `CMakeLists.txt` only picks the platform:
+
+- `ps2/src` is the game's code, exactly as the PS2 build compiles it, and
+  nothing else. Port accommodations never live in `ps2/src` or `ps2/include`;
+  the one exception is the `#ifndef PORT` around functions written in
+  assembly (below).
+  `ps2/CMakeLists.txt` (with `ps2/cmake/`) is the PS2 build.
+- `port/src` is code only the port compiles. `port/CMakeLists.txt` is the
+  port's build. `main.cpp` and `gameloop.cpp` start the game;
+  `platform/`, `gfx/` and `audio/` are the host side; `sce/` implements the
+  SDK; `stubs/sce/` holds the stubs left; `<unit>.cpp` (and `dun/`) replace
+  functions of `ps2/src/<unit>.cpp`, sometimes split as `<unit>_math.cpp`,
+  `<unit>_draw.cpp` or `<unit>_port.cpp`; `linknames.cpp` supplies link-time
+  names (below); `tests/` is `darkcloud_tests`, GoogleTest cases that ctest
+  runs one process each.
+- `tools/dcdata` is the data extraction tool.
+- `ps2/include` holds the game's headers and, under `ps2/include/sce` and
+  `ps2/include/std`, the SDK and standard headers MWCC compiles against. Both
+  builds use them.
+- `port/include` holds headers only the port uses: `port.h`, included ahead
+  of every unit it compiles, and `stubs/` (below).
+
+## How `port/src` takes precedence
+
+`port/src` tags every definition that replaces one of `ps2/src`'s with
+`PORT_OVERRIDE`, which `port/include/port.h` defines as nothing:
+
+```cpp
+PORT_OVERRIDE void MGClearScreen(u_char r) {
+```
+
+`ps2/src` carries no mark of it. `port/CMakeLists.txt` builds the two halves
+like this, on every platform:
+
+1. `tools/kazarov/scripts/port_override.py list` reads the tags in `port/src` and writes
+   the name each tagged definition links under to
+   `port/build/pc/port_overrides.txt`: a function's qualified name and
+   parameter types, or the name alone for a variable and for a function with
+   C linkage.
+2. `port_override.py strip` writes a copy of every unit in `ps2/src` under
+   `port/build/pc/ps2_src` without its definitions of those names. A function
+   becomes its declaration, a member function is removed (its class declares
+   it; an explicit specialization keeps its declaration) and a variable
+   becomes an `extern` declaration. Lines keep their numbers and a `#line`
+   directive names the original, so diagnostics and debug information point
+   into `ps2/src`.
+3. `port_override.py check` stops the build if a listed name is defined by no
+   unit of `ps2/src`.
+4. The copies are compiled, with `PORT` defined.
+5. The units in `port/src` are compiled and linked with them.
+
+Each name then has one definition. A replacement without a tag leaves the
+`ps2/src` definition in, and the link fails on the duplicate symbol, unless
+that definition is `inline` or Apple's linker drops it as dead code first. A tag
+whose signature `ps2/src` does not have fails the check: the two would be
+different symbols, both would link, and the game would go on calling
+`ps2/src`'s.
+
+To replace a function, define it in `port/src` with `PORT_OVERRIDE` in front and
+the signature `ps2/src` gives it: the parameter types are compared as they are
+spelled, names and default arguments aside. By convention it goes in the file
+that mirrors its unit: `port/src/mglib.cpp` holds the replacements for
+`ps2/src/mglib.cpp`. A name the unit's stub header renames (below) is tagged
+under its new name. What is replaced has to be a function with its body or a
+variable without constructor arguments (a pointer to a function, or an array
+of them, by the name inside its declarator), at file scope of a unit, with no
+preprocessor directive before its body, and an `#if` block in its body has to
+lie wholly inside it with every branch leaving the same braces open. It has to
+be one the port compiles: under `#ifdef` or `#ifndef` of `PORT` or `PAL`, in
+the branch the port takes; under any other condition, in every branch. The
+script stops the build on a definition it cannot take out whole, on an
+`inline` one it cannot read, which the link would not catch, and on a unit
+with a line continued by a backslash outside a preprocessor directive. A
+`static` function cannot be replaced this way; it keeps the body `ps2/src`
+gives it. Nor can one defined in a class body, a namespace or a header: the
+check finds nothing to replace. A variable takes one name per declaration,
+and its declaration has no comma outside `()`, `[]` and `{}`: angle brackets do not
+count, so a template type with a comma (`std::pair<int, int>`, or
+`make<int, int>()` in its initialiser) needs a `using` alias, and the script
+stops on one rather than guess. A replaced definition has to spell out its own
+boundaries: a macro that expands to a comma or a semicolon in it is not
+supported, and the script does not notice one.
+
+
+## Per-unit adjustments
+
+`port/include/stubs/<unit>.hpp`, if it exists, is included ahead of
+`ps2/src/<unit>.cpp`, after `port.h`, and nothing else. Only the port's build
+sees `port/include`; the PS2 build compiles nothing differently. It declares
+what the port defines in place of code `PORT` leaves out, and supplies or
+renames what the unit takes from MWCC or from the PS2 link alone:
+
+- `bound`, `cloth`, `collisionmdt`, `frame`, `gameutil`, `mglib`, `visualvu1`
+  and `water` get declarations of their `static` assembly functions, which
+  the port defines.
+- `battlemenu` and `editground` pass each temporary `CRect_i_` as an lvalue
+  (`Ps2Lvalue`, `port/include/port.h`): MWCC binds a temporary to the non-const
+  references of `DrawMenuColorGradation` and `CEditGround::CheckPartsRect`.
+- `editloop3` gives its static `EdSetVillagerNextPos` a global forwarder,
+  `PortEdSetVillagerNextPos`, for the port's `EdMoveVillager`, and declares
+  its static `EdEventScript` `extern` first, for the port's `EdRunEvent`
+  (`port/src/runscript.cpp`): retail's has no return statement and leaves
+  `CRunScript::run`'s result in `v0` for `EdEventInit`. Walking villagers in
+  Muska Racka use its fixed ground model's collision, so their feet follow
+  the sculpted terrain instead of the editable grid's flat polygons. It also
+  declares its static `p_use_item` `extern`, for the port's bait fix
+  (`ListBaitForScript`, `port/src/fish_port.hpp`): the towns' bait-changing
+  events in PAL retail attach only the eight baits they list, so Carrot,
+  Potato Cake, Minon, Battan and Petite Fish were taken from the bag and never
+  put on the hook. When the bait picker closes, a bait the list lacks is put on
+  it, and the script attaches it as it does the others.
+- `main` gets an overload of `LoadFileMenuData` for a `const char *`: one call
+  names its file with a comma expression ending in a string literal.
+- `mathutil` gets the Metrowerks runtime's own `std::exception` and
+  `std::bad_exception` renamed apart from the host library's, and
+  `__exception_magic`, which MWCC provides inside an exception handler.
+- `menu_dungeon` renames its `CharaChangeLoop` to `CharaChangeLoopRetail`. The
+  port's `CharaChangeLoop` (`port/src/menu_dungeon.cpp`) runs the dungeon's
+  quick-change menu as an element picker when D-pad Up opened it, and this
+  unit's loop when SELECT did.
+- `menu_save` and `memcard` export statics the other calls: memcard's
+  `SaveMenuFunc` table names menu_save's eighteen `SaveMenuKey*` steps and
+  menu_save calls memcard's `ExitSaveSelect`. The port's `SaveMenuFunc`
+  (`port/src/memcard.cpp`) names six of memcard's own steps as well. Each
+  header defines a global forwarder under the external name (an asm label),
+  which also keeps clang from dropping the unused static.
+- `title/rushmovi` declares title.cpp's `DataLoad`, `DrawProcA`..`I` and
+  `DrawProcTitle` static; its header defines those statics as forwarders to
+  the global ones.
+- `mapparts` has its `CMapParts::DrawLOD` replaced (`port/src/mapparts.cpp`):
+  retail lifts a part off the ground by its own distance from the eye, which
+  leaves neighbouring road tiles at different heights and the ground showing
+  through the step between them at any resolution above the PS2's; the port
+  lifts other parts by the height retail gives one 100 units away and roads by
+  a shared 0.5-unit height so the uneven ground cannot intermittently cover
+  their surface as the camera follows the player.
+- `title/op_d` declares the state and the helpers `OpD_InitProcess`,
+  `OpD_InitProcess2` and `OpD_DrawProcess` share with the rest of the unit
+  `extern` under `OpD_*` names before the unit declares them `static`, and
+  gives the static helpers global forwarders, so the port's copies of those
+  three reach them.
+- The per-object renames below.
+
+## Names the PS2 build renames
+
+`main.cpp` calls other units through the names MWCC gives them
+(`init_all__Fv`) and calls the overlays' entry points through their retail
+addresses (`func_01DAC1C0`). `port/src/main.cpp` forwards each one to the real
+function.
+
+The PS2 link binds some names through `ps2/config/pal/object_fixups.json` and the
+linker script rather than through the source. The port reproduces each:
+
+- **Per-object renames**, by `#define` in the unit's header: the opening
+  scenes' four `FaceChange(int)` become op_b's `FaceChange`, op_c's
+  `FaceChangeC`, op_d's `FaceChangeD` and rushmovi's `FaceChangeMovie`, the
+  names their neighbours call them by; the dungeon's `MainDraw` and
+  `MoveChara` become `DunMainDraw` and `DunMoveChara`, apart from editloop's
+  (`port/src/dun/gameloop.cpp` replaces `DunMainDraw`); edit_in's `Chara`,
+  `MainCamera`, `NowCamera`, `TalkCamera`, `NowTime`, `TexAnimeData`,
+  `camera_dist_mode`, `door_open_cnt`, `fix_chara_pos`, `fix_chara_rot`,
+  `goto_menu`, `goto_return_menu`, `key_counter` and `loop_counter`, which it
+  redeclares `static` after a header declares them `extern` (MWCC makes them
+  file-local, clang's `-fms-extensions` keeps them global), become
+  `EditIn_*`.
+- **Pooled literals under extern names** (`BtAtraShortCharaFile`,
+  `MdsExtension`, `gamemode_empty_string`, `allmenu_mes` and six more) and
+  **the title overlay's own `CRect<int>`** spelling of the rectangle in
+  `MGFillBox`, `MGMoveImage`, `MGStretchMoveImage`, `MoveImageTest` and the
+  `set2DSprite` overloads, plus op_c's `CWater::DrawVu1` and main's
+  `MAP_NPC_MODEL::operator=`: weak definitions and forwarders in
+  `port/src/linknames.cpp`.
+- **Aliases**, by `--defsym` (ld64's `-alias` on macOS) in
+  `port/CMakeLists.txt`: `draw_rect` = `draw_rect_store` and
+  `WorkBuffer__2` = `WorkBuffer`. `ItemPutListTbl12_bytes` is not an alias:
+  `port/include/stubs/dngstatusdata.hpp` turns `GetItem`'s folded PS2 byte
+  index into a typed `WeaponList` owner lookup.
+  `EditGaijiTbl` is `GaijiDataTbl + 0x601C` on the PS2 link. The linker
+  script places it inside `EditPartsData`, but the codes `clsmes.cpp`
+  indexes it with (-0x300 and up) only ever land on the last word of a
+  `GaijiDataTbl` entry, and `GaijiDataTbl` keeps its layout on the host
+  where `EditPartsData`'s pointers grow. ld64 cannot alias with an offset,
+  so `linknames.cpp` defines it on every platform: storage for the 0x300
+  entries below it, filled from `GaijiDataTbl` before `main`, with
+  `EditGaijiTbl` an assembler alias of the storage's end.
+
+Data the title overlay's units type themselves with PS2 layouts: see "The
+title overlay's own class declarations".
+
+## Game headers
+
+`port/include/port.h` adjusts two game headers for the host, from outside:
+
+- `types.h` defines the PS2's `size_t` and `NULL`. `port.h` includes it with
+  `size_t` renamed and `NULL` saved, so the host's stay in force, and
+  `#pragma once` keeps the game from including it again.
+- `common.h` defines `STATIC_ASSERT`, which checks the PS2's layouts. `port.h`
+  includes it and redefines the macro to check nothing.
+
+
+## Keeping the PS2 build matching
+
+Edits to `ps2/src` or `ps2/include` that help clang must leave both PS2 builds
+byte-identical. They are corrections that are standard C++ either way, never
+code for the port:
+
+- **Initialisations a `switch` jumps over.** They are split into a declaration
+  and an assignment.
+- **Language linkage.** `BtEnemyLayoutList` and `BtUraEnemyLayoutList` are
+  declared `extern "C"` to match their definitions.
+- **Exception specifications.** `__dl` is declared `throw()`, as it is
+  defined.
+- **Sizes spelled as `sizeof`.** `MotionParam::storage`, where a character
+  builds each motion set beyond its first, is `sizeof(tagMOTION_TYPE)` bytes
+  rather than 128, and `CCharacter::Initialize` clears it by its `sizeof`.
+  Both are 0x80 on the PS2; on the host a `tagMOTION_TYPE` is 0xB0, and with
+  128 bytes a set's `frame_info` and `motion_info` lay in the next set's
+  storage.
+- **`#ifndef PORT` around assembly functions**, the one exception: clang
+  cannot parse them. It replaces blank lines, so no line number moves. The
+  generic `CDataAlloc<Kind, Size>::Align64()` in `ps2/include/dataalloc.hpp`
+  is guarded too; nothing instantiates it, since both arenas specialise it.
+
+Retail's own mistakes stay in `ps2/src`, because the match reproduces them:
+locals read before anything sets them (`SaveToMc`'s `status`, `main`'s
+`idle_result` and six more), non-void functions that fall off the end,
+format strings that do not fit their arguments. Initialising any of the
+locals changes what MWCC emits. The port gives them defined behaviour
+instead:
+
+- `-ftrivial-auto-var-init=zero`: locals start at zero.
+- `-fno-strict-return`: falling off the end returns an unspecified value
+  instead of being undefined.
+- `-fno-strict-aliasing` and `-fwrapv`: the type punning and wraparound the
+  code assumes.
+
+`ps2/src` is compiled with `-Wall`. The warnings left on are the porting
+work: uninitialised reads, missing returns, format strings, copies over
+objects with a vtable and the like. Those that only describe how MWCC-era
+code is spelled -- string literals as `char *`, MWCC's pragmas, 32-bit pointer
+casts, the unused names and expressions matching leaves behind -- are off.
+
+Clang also needs a few flags to accept code MWCC accepts:
+
+- `-fms-extensions`: pointers truncated to `int`.
+- `-Wno-c++11-narrowing`: narrowing in braced initialisers.
+- `-Wno-register`: the `register` keyword.
+- `-Wno-return-mismatch`: a bare `return;` in a non-void function.
+
+The casts themselves compile; where one's value comes back as a pointer,
+the function is the port's ("Pointers and 32-bit integers").
+
+## Checking the PS2 build
+
+An edit to `ps2/src` or `ps2/include` made for the port is checked by building
+both regions (`./build.sh ps2-ntsc` and `./build.sh ps2-pal`),
+which verifies every image byte for byte.
+
+## Game data
+
+The game reads extracted files from a plain directory or a sibling `data.zip` archive, not from the disc.
+`port/build/pc/dcdata` (`tools/dcdata`) makes it:
+
+```sh
+port/build/pc/dcdata extract "rom/pal/Dark Cloud (PAL).iso" data
+port/build/pc/dcdata pack data
+port/build/pc/dcdata list "rom/pal/Dark Cloud (PAL).iso"
+```
+
+`pack` takes an existing extracted directory and writes a ZIP archive beside it by default; a second output path is optional. It stores files without compression so the port can read them on Switch without a decompression cost. The runtime also reads standard deflated ZIP entries. ZIP64, encrypted and multi-disk archives are unsupported. The game gives `data.zip` priority over loose files when both exist. Do not modify an archive while the game is running.
+
+Extraction runs the disc's asset classes side by side. `dcdata::ClassOf` sorts the files by extension into textures, models, audio, movies, scripts, packs and the rest; `dcdata::Extract` cuts each class into slices of about 32 MiB and hands them to a `JobRunner`. The `dcdata` tool passes Kazarov's shared scheduler (`kazarov::job_set_run`, the one `dc2data` runs its conversion jobs on), which starts the largest slice of each class first and stops at the first failure; without a runner, as in the first-run window and the host tests, `dcdata::RunOnThreads` interleaves the same slices on plain threads. `dcdata pack` checksums the files on all cores through `kazarov::pack_directory_stored`, which writes the same stored classic ZIP byte for byte.
+
+The source is a disc image, read through its ISO 9660 tree, or a directory
+that holds `DATA.DAT` and `DATA.HD2` (such as `rom/pal/extracted/iso`).
+`extract` writes every file `DATA.HD2` indexes to `<data>/<path>`, the path
+lowercased with `/` separators and no leading separator, at its exact size,
+and copies the index itself to `<data>/data.hd2`. A file already present at
+its size is kept, so a rerun only repairs what is missing. When a path is
+listed twice, only the first is written, as the game only ever finds the
+first. `list` prints each file's sector, size and path.
+
+The layout of `data/` or the root of `data.zip` is the disc archive's own: `dun/pack/maindat.pac`,
+`commenu/a_eng/savetex.pak`, `sound/bgm/...` and so on. Lookups fold case,
+as the game's `strcasecmp` does, so the case on disk does not matter.
+
+`tools/kazarov/src/cpp/platform/paths.cpp` finds the data directory from `--data <dir>`,
+then `DC_DATA`, then `data/` in the working directory, then `data/` beside
+the executable, and failing all of those `$XDG_DATA_HOME/chronicle/data`
+(`~/.local/share/chronicle/data` when `XDG_DATA_HOME` is unset or relative),
+where an installed copy keeps it. The save directory comes from `--save`,
+`DC_SAVE`, or `save/` in the same two places; without one, saves go beside a
+local `data/` if there is one, so a checkout or an unpacked copy stays
+self-contained, and otherwise to `$XDG_DATA_HOME/chronicle/save`. It is
+created when first used.
+
+When the data directory is missing or holds no file and the run is not
+headless, `FirstRunIfNoData` (`port/src/platform/firstrun.cpp`) opens the
+window and asks for the disc: a disc image through SDL's file dialog (the
+file-chooser portal under Flatpak, zenity elsewhere), or a folder holding
+`DATA.DAT` and `DATA.HD2`. It extracts with `dcdata`'s core on a worker
+thread into `<data>.partial`, drawing the file and byte counts through
+`gfx::Draw2D` while the main thread pumps events, checks every file and
+renames the directory into place, then closes its window and `main` goes
+on. Closing the window stops it (a later start resumes from the
+partial directory); a failed extraction shows the extractor's message in a
+message box and exits with status 1. `FirstRunSetChooser` replaces the
+dialog, which is how the tests drive the flow headless. Declined, or
+headless, `main` stops with status 3 and one line naming the directory and
+the `dcdata` command, before anything else starts; `InitCDFile` would abort
+on the same conditions. `InitCDFile` warns
+when `data.hd2` lists a file that is missing or the wrong size. Files the
+game looks for and does not find behave as on the disc: `LoadFile2` returns
+0 and `LoadFile` asserts, naming the file (status 4).
+
+## Packaging
+
+`cmake --install port/build/pc --prefix <dir>` installs `darkcloud` and `dcdata`
+to `<dir>/bin`; an installed copy finds its data and saves under
+`$XDG_DATA_HOME/chronicle` (above). The Linux release is a Flatpak,
+`org.themoonpeople.Chronicle`, built from `port/flatpak/` by
+`.github/workflows/pc.yml`; `docs/FLATPAK.md` covers building,
+installing, the first start and where the data and saves live.
+
+
+## Renderer performance and threading
+
+The Kazarov dependency is pinned at `726b1ee`. It includes
+ChronicleTwo's renderer work: cached camera re-basing, bone palettes stored separately
+from draw constants, shared storage-buffer records, deduplicated uploads and descriptor
+bindings, cached display-list rewrites, full-cover grabs without a redundant copy, and
+device-local host-visible transient memory when the device supports it. Bone palettes
+apply to prog0 draws; Chronicle's own animated MDTs still use its CPU skinning path.
+`KZ_TRANSIENT_MEMORY=host` selects the host-memory fallback.
+
+`video.render_thread` selects `async` (the desktop default), `lockstep`, or `off`.
+`DC_RENDER_THREAD` overrides the setting; `KZ_RENDER_THREAD` overrides both.
+Headless and screenshot runs force `off`, and Android always uses `off`.
+Changing the config key requires a restart. Async publishes immutable scene, previous
+scene and FPS-overlay lists. The worker presents while the game records the next tick;
+canonical rendering and depth readback hold a render lease. Shutdown parks the worker
+before reading screenshots or releasing the renderer. Input and game state remain on
+the game thread, so input is sampled at the game tick rate in async mode.
+
+Chronicle combines only adjacent strips with identical materials, texture state and
+terrain flags, preserving triangle order. Remaking a mesh uploads vertices only when
+their bytes change; material-only animation still updates its draw constants.
+Transient visuals are released every frame; persistent visual tables are swept every
+sixteen frames, with immediate tag validation on lookup.
+
+Archive loading uses slicing-by-eight IEEE CRC32 without weakening integrity checks.
+ZIP directory entries are parsed sequentially; directories up to 16 MiB are read in
+one bounded operation, while larger directories retain the streaming parser. Stored
+and deflated entries retain their existing validation and extraction behavior.
+
+Texture-container metadata reads share immutable source bytes for archive-backed
+files. The main-thread cache holds at most four files and 16 MiB; it does not cache
+decoded pixels, palettes, loose files or general file reads. Resetting the data root
+or reinitializing CD-file state clears future lookups. Existing readers retain their
+own immutable snapshot until they finish.
+
+These loading paths are enabled on all native platforms. For comparisons, set
+`DC_ARCHIVE_CRC_SLICE8`, `DC_ARCHIVE_SEQUENTIAL_INDEX`, `DC_ARCHIVE_BULK_INDEX` or
+`DC_TEXTURE_SOURCE_CACHE` to `0` before launch. An unset variable or exactly `1`
+enables its path; other values disable it. `DC_PERF_LOAD=1` adds archive and source-read
+timings and byte counts; it is disabled by default.
+
+Desktop startup leaves translation-template generation to the explicit
+`--export-text DIR` command. A fresh save root no longer scans every message
+container to create translator files before the game starts. Translation loading
+and the export command are unchanged; see [Localization](LOCALIZATION.md).
+
+Loading traces separate baked-texture JSON parsing/schema checks and PNG decoding
+from their file-read API spans. Those outer spans include lookup and diagnostic
+output costs and should not be reported as storage throughput or parsing CPU time.
+A populated Norune console trace measured 27.8 ms in JSON parse/schema calls and
+356.8 ms in PNG decode calls across 113 texture loads and 141 distinct PNGs. The
+largest remaining measured software stage is image decoding; a repeated-image
+cache has no demonstrated opportunity in this fixture. Model conversion and upload
+costs still need separate measurement.
+
+Chronicle reads the retail HD/BD/SQ audio formats through Kazarov's raw audio parser
+(`tools/kazarov/src/cpp/audio/raw_audio.cpp`), which normalizes retail events once when a
+sequence loads; playback uses Kazarov's event player. Dark Cloud's SQ note-offs carry only a
+note number, so `LoadSequence` passes `SqRawOptions::short_note_off`. This does not require
+re-extracting disc data.
+
+
+Verification on Windows x64 (2026-10-26): the release game and test executables
+build against this pin. The native and GPU suites passed 651 tests, with eight skips
+for unavailable fixtures or test-environment features and one disabled latency benchmark.
+Coverage includes alpha-tested and fogged meshes, depth copies and planes,
+display-list lifetimes, draw order, archive integrity and source-cache invalidation.
+A populated Norune replay matched the pre-cleanup raw RGBA image exactly and
+retained all 34 shadow-geometry hash batches. See [Switch](SWITCH.md) for the scope
+of physical hardware checks; Android and interactive resize/fullscreen transitions
+are not qualified by these runs.

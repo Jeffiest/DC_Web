@@ -1,0 +1,10 @@
+*
+!.gitignore
+!/ntsc/
+!/pal/
+/ntsc/*
+/pal/*
+!/ntsc/checksum.sha256
+!/ntsc/extracted.sha256
+!/pal/checksum.sha256
+!/pal/extracted.sha256

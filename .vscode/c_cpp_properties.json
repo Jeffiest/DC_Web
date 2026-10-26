@@ -1,0 +1,25 @@
+{
+    "version": 4,
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/ps2/include",
+                "${workspaceFolder}/ps2/build/ntsc/generated/asm"
+            ],
+            "defines": [],
+            "cStandard": "c99",
+            "cppStandard": "c++98",
+            "compilerPath": "",
+            "intelliSenseMode": "linux-clang-x86",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/ps2/include",
+                    "${workspaceFolder}/ps2/src",
+                    "${workspaceFolder}/ps2/build/ntsc/generated/asm"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ]
+}

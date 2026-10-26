@@ -1,0 +1,274 @@
+# The native PC port (docs/PC.md): builds PLATFORM=PC with clang 22 and runs
+# its tests, the headless smoke runs of darkcloud among them, on Mesa's
+# lavapipe software Vulkan driver. Every library comes from Ubuntu's packages.
+# No game data is needed: the smoke tests build their own fixtures.
+#
+# The macOS job (docs/MACOS.md) runs the tests and then darkcloud on MoltenVK,
+# the driver the game uses there. The Windows job (docs/WINDOWS.md) builds with
+# tools/windows' scripts and runs the cases that need no Vulkan device.
+# The Flatpak job (docs/FLATPAK.md) packages the Linux build in Flathub's
+# freedesktop 26.08 image. Its manifest uses the commit under test as a git
+# source, and its smoke run checks that the packaged binary reaches its data
+# check. All three downloadable builds belong to the same workflow run.
+name: PC builds
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # The Flatpak configures without network, so its manifest has to stage every file Kazarov's CMake
+      # downloads; this fails on the pull request that pins a Kazarov with one the manifest lacks.
+      - name: Check the Flatpak stages Kazarov's downloads
+        run: python3 scripts/port/flatpak_sources.py
+
+      - name: Install the toolchain and libraries
+        run: |
+          sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          sudo apt-get install -y clang-22 lld-22 llvm-22 libclang1-22 python3-clang-22 cmake ninja-build glslang-tools \
+            mesa-vulkan-drivers vulkan-validationlayers libsdl3-dev libvulkan-dev libgtest-dev nlohmann-json3-dev
+          # ld.lld and llvm-readobj under their plain names.
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+          # dcdata links Kazarov's Rust bridge; FFmpeg uses Kazarov's pinned build configuration and cxxbridge-cmd is a
+          # prebuilt release asset.
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+          tools/ci/prebuilt-deps.sh linux-x64
+
+      # lavapipe takes seconds to start each renderer, and some of Kazarov's GfxGpu cases start several.
+      - name: Configure
+        run: |
+          cmake -S . -B port/build/pc -G Ninja -DPLATFORM=PC -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++-22 -DDC_TEST_TIMEOUT=60 -DDC_GPU_TEST_TIMEOUT=300
+
+      - name: Build
+        run: cmake --build port/build/pc
+
+      # darkcloud is PIE and its arenas lie above 4 GiB (a debug build checks), so a pointer the game
+      # truncates to 32 bits faults here. The real-data cases skip without DC_DATA.
+      - name: Test
+        working-directory: port/build/pc
+        run: |
+          llvm-readobj --file-headers darkcloud | grep -q 'Type: SharedObject'
+          env -u DC_DATA ctest --output-on-failure -j4
+
+      - name: Audit pointer truncations
+        run: /usr/bin/python3 scripts/port/truncations.py --build port/build/pc --check
+
+  macos:
+    name: Build and test (macOS arm64)
+    runs-on: macos-26
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install the toolchain and libraries
+        run: |
+          brew install llvm lld cmake ninja python glslang sdl3 vulkan-headers vulkan-loader vulkan-tools molten-vk \
+            googletest nlohmann-json
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+          tools/ci/prebuilt-deps.sh macos-arm64
+          # SDL loads the Vulkan loader by name, and dyld does not search Homebrew's prefix.
+          echo "SDL_VULKAN_LIBRARY=$(brew --prefix vulkan-loader)/lib/libvulkan.1.dylib" >> "$GITHUB_ENV"
+          echo "VK_DRIVER_FILES=$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+
+      - name: Describe the Vulkan driver
+        run: |
+          mkdir -p artifacts
+          vulkaninfo --summary > artifacts/vulkaninfo.txt 2>&1 || true
+          cat artifacts/vulkaninfo.txt
+
+      - name: Configure
+        run: cmake --preset macos-arm64 -DDC_TEST_TIMEOUT=60
+
+      - name: Build
+        run: cmake --build --preset macos-arm64
+
+      # The runner's Apple Paravirtual GPU draws black for two of Kazarov's prog0 cases that pass on
+      # Apple silicon.
+      - name: Test
+        run: ctest --preset macos-arm64 -E '^GfxGpuMeshDc2[.](RefSphere|Prog0CullModeFollowsFlagAndMirror)$'
+
+      # No game data: one stand-in file gets darkcloud through renderer start-up and pipeline compilation to the
+      # game's first asset load, which fails with status 4 naming the file.
+      - name: Run darkcloud headless
+        run: |
+          mkdir -p artifacts run/data/unrelated run/save
+          echo x > run/data/unrelated/file.bin
+          set +e
+          DC_AUDIO=off port/build/macos-arm64/darkcloud --headless --frames 3 --screenshot artifacts/shot-headless.png \
+            --data run/data --save run/save > artifacts/darkcloud-headless.txt 2>&1
+          status=$?
+          cat artifacts/darkcloud-headless.txt
+          echo "darkcloud exited $status"
+          [ "$status" -eq 0 ] || [ "$status" -eq 4 ]
+
+      - name: Run darkcloud in a window
+        run: |
+          set +e
+          DC_AUDIO=off port/build/macos-arm64/darkcloud --frames 3 --screenshot artifacts/shot-window.png \
+            --data run/data --save run/save > artifacts/darkcloud-window.txt 2>&1
+          status=$?
+          cat artifacts/darkcloud-window.txt
+          echo "darkcloud exited $status"
+          [ "$status" -eq 0 ] || [ "$status" -eq 4 ]
+
+      - name: Package the macOS build
+        run: tar -czf artifacts/chronicle-macos-arm64.tar.gz -C port/build/macos-arm64 darkcloud dcdata lang glyphs
+
+      - name: Upload the macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: chronicle-macos-arm64
+          path: artifacts/chronicle-macos-arm64.tar.gz
+          if-no-files-found: error
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: |
+            artifacts/vulkaninfo.txt
+            artifacts/darkcloud-headless.txt
+            artifacts/darkcloud-window.txt
+            artifacts/shot-headless.png
+            artifacts/shot-window.png
+          if-no-files-found: warn
+
+  windows:
+    name: Build and test (Windows x64)
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # The runner has no GPU and may have no Vulkan loader; the tests need the loader to start.
+      - name: Install the toolchain and libraries
+        run: |
+          ./tools/windows/acquire.ps1 -Root $env:RUNNER_TEMP -VulkanLoader
+          "VULKAN_RUNTIME=$env:RUNNER_TEMP/deps/vulkan-runtime/VulkanRT-X64-1.4.363.0-Components/x64" >> $env:GITHUB_ENV
+
+      - name: Configure
+        run: |
+          ./tools/windows/configure.ps1 -Root $env:RUNNER_TEMP -BuildDirectory $env:GITHUB_WORKSPACE/port/build/windows -Tests `
+            -VulkanLibrary $env:VULKAN_RUNTIME/vulkan-1.dll
+
+      # Beside the executables, the downloaded loader is found before any in System32.
+      - name: Build
+        run: |
+          ./tools/windows/build.ps1 -Root $env:RUNNER_TEMP -BuildDirectory $env:GITHUB_WORKSPACE/port/build/windows -Tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item $env:VULKAN_RUNTIME/vulkan-1.dll port/build/windows
+
+      # The renderer's cases run on Linux and macOS: this runner has a Vulkan loader but no driver, so the cases that
+      # need a device, labeled gpu (port/src/tests/CMakeLists.txt), cannot start here.
+      - name: Test
+        run: ctest --test-dir port/build/windows --output-on-failure -j4 -LE gpu
+
+      - name: Package the Windows build
+        run: |
+          $files = @('darkcloud.exe', 'dcdata.exe', 'libc++.dll', 'libunwind.dll', 'libwinpthread-1.dll', 'SDL3.dll', 'vulkan-1.dll', 'lang', 'glyphs')
+          $files += Get-ChildItem 'port/build/windows' -Filter '*.dll' | Where-Object Name -Match '^(avcodec|avformat|avutil|swresample|swscale)-' | ForEach-Object Name
+          $paths = $files | ForEach-Object { Join-Path 'port/build/windows' $_ }
+          Compress-Archive -LiteralPath $paths -DestinationPath chronicle-windows-x64.zip
+
+      - name: Upload the Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: chronicle-windows-x64
+          path: chronicle-windows-x64.zip
+          if-no-files-found: error
+
+  flatpak:
+    name: Build the Flatpak (Linux x86_64)
+    runs-on: ubuntu-26.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    env:
+      MANIFEST: port/flatpak/ci.yml
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Point the manifest at this commit
+        run: |
+          # flatpak-builder clones the workspace, which belongs to another user in the container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          awk -v commit="$GITHUB_SHA" '
+            /# chronicle-source:/ {
+              print
+              print "      - type: git"
+              print "        path: ../.."
+              print "        commit: " commit
+              skip = 1
+              next
+            }
+            /# chronicle-source-end/ { skip = 0 }
+            !skip { print }
+          ' port/flatpak/org.themoonpeople.Chronicle.yml > "$MANIFEST"
+          sed -n '/name: chronicle$/,$p' "$MANIFEST"
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: ${{ env.MANIFEST }}
+          bundle: chronicle.flatpak
+          artifact-name: chronicle-x86_64.flatpak
+          cache-key: flatpak-builder-${{ hashFiles('port/flatpak/org.themoonpeople.Chronicle.yml') }}
+
+      - name: Start darkcloud without data
+        run: |
+          set +e
+          flatpak build --env=XDG_DATA_HOME=/tmp/xdg flatpak_app darkcloud --headless --frames 1 > run.txt 2>&1
+          status=$?
+          cat run.txt
+          echo "darkcloud exited $status"
+          [ "$status" -eq 3 ] && grep -q 'no game data: /tmp/xdg/chronicle/data' run.txt
+
+  switch:
+    if: github.event_name == 'workflow_dispatch'
+    name: Build Nintendo Switch homebrew
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Build the Switch NRO
+        run: ./build.sh switch
+
+      - name: Upload the Switch build
+        uses: actions/upload-artifact@v7
+        with:
+          name: chronicle-switch
+          path: |
+            port/build/switch/darkcloud.nro
+            port/build/switch/lang/**
+            port/build/switch/glyphs/**
+          if-no-files-found: error

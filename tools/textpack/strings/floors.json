@@ -1,0 +1,18 @@
+{
+ "_doc": "Dungeon floor-label sheets dname00..06. row1[lang][n] = the word(s) on sheet n, left to right (a list = several separate words). row3 = left label and 'back', identical on every sheet. The digit row is kept from the original.",
+ "_lang_dirs": {"us": "us", "fr": "fr", "de": "gr", "it": "it", "es": "sp"},
+ "row1": {
+  "us": ["B", "TERRITORY", "LAYER", "LEVEL", ["NO.", "CRATERS"], "YEARS AGO", "FLOOR"],
+  "fr": ["N", "SECTEUR", "ÉTAGE", "NIVEAU", ["NOMBRE", "CRATÈRES"], "ANS AVANT", "NIVEAU"],
+  "de": ["HÖHLE", "REVIER", "SCHIFFSDECK", "EBENE", "KRATER", "JAHRE ZURÜCK"],
+  "it": ["P", "TERRITORIO", "STIVA", "LIVELLO", ["CRATERE", "N°"], "ANNI FA", "PIANO"],
+  "es": ["B", "TERRITORIO", "CAPA", "NIVEL", ["SIN", "CRÁTERES"], ["HACE", "AÑOS"], "NIVEL"]
+ },
+ "row3": {
+  "us": ["LIMITED ZONE", "BACK."],
+  "fr": ["RESTRICTION", "PRÉC"],
+  "de": ["EINGESCHRÄNKTE ZONE", "HINTEN"],
+  "it": ["ZONA  RISERV.", "POST."],
+  "es": ["ZONA  LIMITADA", "ATRÁS"]
+ }
+}

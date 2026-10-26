@@ -1,0 +1,123 @@
+# The PC port (docs/PC.md) as a Flatpak. docs/FLATPAK.md has the commands to build, install and run
+# it and to put the game's data where it looks.
+id: org.themoonpeople.Chronicle
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm22
+command: darkcloud
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  # X11 shared memory, which fallback-x11 needs to be usable.
+  - --share=ipc
+  # The GPU, for Vulkan.
+  - --device=dri
+  # Playback through PipeWire's or PulseAudio's PulseAudio socket.
+  - --socket=pulseaudio
+  # hidraw, for the 2026 Steam Controller.
+  - --device=all
+  # Discord Rich Presence.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+
+modules:
+  # Header only, for the build alone: the network is off while chronicle configures.
+  - name: nlohmann-json
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DJSON_BuildTests=OFF
+    cleanup:
+      - '*'
+    sources:
+      - type: archive
+        url: https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+        sha256: 42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+
+  - name: chronicle
+    buildsystem: cmake-ninja
+    builddir: true
+    build-options:
+      append-path: /usr/lib/sdk/llvm22/bin
+      prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
+      env:
+        CC: clang
+        CXX: clang++
+        LD: ld.lld
+      # The SDK's default flags turn on _GLIBCXX_ASSERTIONS, -Werror=format-security and -g, none of
+      # which the game's code is built with anywhere else; Release supplies the optimisation.
+      cflags: ''
+      cflags-override: true
+      cxxflags: ''
+      cxxflags-override: true
+    config-opts:
+      - -DPLATFORM=PC
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
+      - -DCMAKE_PREFIX_PATH=/app
+      - -DCMAKE_CXX_COMPILER=/usr/lib/sdk/llvm22/bin/clang++
+      - -DDC_BUILD_TESTS=OFF
+      # The sandbox has no network: a library left out of the sources below stops the configure at once,
+      # naming it, rather than after FetchContent's download retries.
+      - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+    # post-install runs in the build directory, not the source.
+    post-install:
+      - install -Dm644 -t ${FLATPAK_DEST}/share/applications ${FLATPAK_BUILDER_BUILDDIR}/port/flatpak/${FLATPAK_ID}.desktop
+      - install -Dm644 -t ${FLATPAK_DEST}/share/metainfo ${FLATPAK_BUILDER_BUILDDIR}/port/flatpak/${FLATPAK_ID}.metainfo.xml
+      - install -Dm644 ${FLATPAK_BUILDER_BUILDDIR}/port/icon/chronicle-512.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+    sources:
+      # chronicle-source: the CI job swaps this for a git source at the commit under test.
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .flatpak-builder
+          - .kazarov
+          - build
+          - ps2/build
+          - port/build
+          - build-dir
+          - repo
+          - rom
+          - data
+          - save
+          - ps2/asm
+          - .private
+          - chronicle.flatpak
+      # chronicle-source-end
+      # flatpak-builder downloads these before entering its network-restricted build sandbox. They are
+      # what Kazarov's CMake would download, at the same hashes: a library its FetchContent_Declare
+      # names goes to flatpak-deps/<name>, which port/CMakeLists.txt hands FetchContent, and a single
+      # file _kz_port_vendor takes goes to a KZ_PORT_VENDOR_DIRS directory. A Kazarov pin that adds or
+      # bumps one needs it here too; scripts/port/flatpak_sources.py (CI) checks, and prints the entry.
+      - type: archive
+        url: https://codeload.github.com/simdjson/simdjson/tar.gz/refs/tags/v4.6.11
+        sha256: 61d948fc24f0d793829ad658058e7597d064988a89b4607ea02e401a82df98ff
+        archive-type: tar-gzip
+        dest: flatpak-deps/simdjson
+      - type: archive
+        url: https://codeload.github.com/spnda/fastgltf/tar.gz/refs/tags/v0.9.1
+        sha256: d8705a496deb2831775baeef5009be36d24bf3d10f8d29ab016e977d0119c872
+        archive-type: tar-gzip
+        dest: flatpak-deps/fastgltf
+      - type: file
+        url: https://raw.githubusercontent.com/mackron/dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_wav.h
+        sha256: 03e70c1a2d9787cd7ed3e966c075bea7bac6373f759db9cd7ca9ccdfc4ec4493
+        dest: audio_decoders
+      - type: file
+        url: https://raw.githubusercontent.com/mackron/dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_flac.h
+        sha256: 111144e778f55738db6851cb226015c419e00d04b916a09506d4856d9cff945c
+        dest: audio_decoders
+      - type: file
+        url: https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_vorbis.c
+        sha256: 4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636
+        dest: audio_decoders
+      - type: file
+        url: https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_truetype.h
+        sha256: ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab
+        dest: stb_truetype
+      - type: file
+        url: https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_image.h
+        sha256: 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3
+        dest: stb_truetype

@@ -1,0 +1,81 @@
+{
+ "_doc": "Per-area overrides. fill/glow/edge are sampled from the original card automatically; these keys change the look. glow_amount 0 = no glow (silhouette cards). outline = outline thickness. drips = hanging drops under the underline. plate=black replaces the backdrop with black (cards whose backdrop is only the old text's glow).",
+ "default": {
+  "bold": 0,
+  "outline": 4,
+  "glow_amount": 1.0
+ },
+ "mt01": {
+  "glow_amount": 0,
+  "outline": 6,
+  "edge": [
+   0,
+   0,
+   0
+  ]
+ },
+ "mt02": {
+  "glow_amount": 0,
+  "outline": 6,
+  "edge": [
+   0,
+   0,
+   0
+  ]
+ },
+ "mt03": {
+  "glow_amount": 0,
+  "outline": 6,
+  "edge": [
+   0,
+   0,
+   0
+  ]
+ },
+ "mt04": {
+  "glow_amount": 0,
+  "outline": 6,
+  "edge": [
+   0,
+   0,
+   0
+  ]
+ },
+ "mt05": {
+  "glow_amount": 0,
+  "outline": 6,
+  "edge": [
+   0,
+   0,
+   0
+  ]
+ },
+ "mt40": {
+  "drips": 1,
+  "plate": "black"
+ },
+ "mt101": {
+  "plate": "black"
+ },
+ "mt102": {
+  "plate": "black"
+ },
+ "mt103": {
+  "plate": "black"
+ },
+ "mt104": {
+  "plate": "black"
+ },
+ "mt105": {
+  "plate": "black"
+ },
+ "mt106": {
+  "plate": "black"
+ },
+ "mt107": {
+  "plate": "black"
+ },
+ "mt301": {
+  "plate": "black","fill":[238,226,253],"edge":[22,6,44],"glow":[100,62,160]
+ }
+}

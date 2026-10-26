@@ -1,0 +1,20 @@
+{
+	"name": "Dev",
+	"build": {
+		"context": "../tools/kazarov/image",
+		"dockerfile": "../tools/kazarov/image/Dockerfile"
+	},
+	"workspaceMount": "source=${localWorkspaceFolder},target=/work/chronicle,type=bind",
+	"workspaceFolder": "/work/chronicle",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"llvm-vs-code-extensions.vscode-clangd",
+				"ms-python.black-formatter",
+				"cschlosser.doxdocgen",
+				"edwinhuish.better-comments-next",
+				"twxs.cmake"
+			]
+		}
+	}
+}

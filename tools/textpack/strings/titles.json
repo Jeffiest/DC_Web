@@ -1,0 +1,131 @@
+{
+ "_doc": "Area title cards (img_N/mtXX.tm2). One string per language; a missing language falls back to 'uk'. Latin languages only: the Japanese card (dir 'img') keeps the game's own kanji lettering and is not generated.",
+ "_lang_dirs": {
+  "us": "img_1",
+  "uk": "img_2",
+  "fr": "img_3",
+  "de": "img_4",
+  "it": "img_5",
+  "es": "img_6"
+ },
+ "_notes": [
+  "img_N is LanguageCode N: img_1 = en_us ('us'), img_2 = en_gb ('uk'). A language with no entry falls back to 'us', then 'uk'.",
+  "mt14 US/ES: original US card reads BROWNBO (typo), corrected here to BROWNBOO.",
+  "mt102 IT: original reads SELVA DEL GVFO (stylised U), written GUFO.",
+  "mt01 ES reads NOLUM in the original; kept as is."
+ ],
+ "mt01": {
+  "us": "NORUNE VILLAGE",
+  "uk": "NOLUN VILLAGE",
+  "fr": "NOLAN",
+  "de": "DAS DORF NOLUN",
+  "it": "NOLUN",
+  "es": "NOLUM"
+ },
+ "mt02": {
+  "us": "MATATAKI VILLAGE",
+  "fr": "VILLAGE DU TIREUR",
+  "de": "DAS DORF POACHER",
+  "it": "BRACCONIRIA",
+  "es": "PUEBLO CAZADOR"
+ },
+ "mt03": {
+  "us": "QUEENS",
+  "fr": "VILLE DU PALAIS",
+  "de": "QUEENS",
+  "it": "REGINIA",
+  "es": "REINAS"
+ },
+ "mt04": {
+  "us": "MUSKA RACKA",
+  "fr": "MUSKA LACKA",
+  "de": "MUSKA LACKA",
+  "it": "MUSKA LACKA",
+  "es": "MUSKA LACKA"
+ },
+ "mt05": {
+  "us": "MOON FACTORY",
+  "fr": "USINE DE LUNE",
+  "de": "MONDFABRIK",
+  "it": "FABBRICA LUNARE",
+  "es": "FABBRICA LUNARE"
+ },
+ "mt101": {
+  "us": "DIVINE BEAST CAVE",
+  "fr": "GROTTE DE DRAN",
+  "de": "GÖTTERBIEST-HÖHLE",
+  "it": "CAVERNA DIV. DRAN",
+  "es": "GUARIDA DE LA BESTIA DIVINA"
+ },
+ "mt102": {
+  "us": "WISE OWL FOREST",
+  "fr": "FORÊT DU HIBOU",
+  "de": "EULENWALD",
+  "it": "SELVA DEL GUFO",
+  "es": "BOSQUE DEL BÚHO SABIO"
+ },
+ "mt103": {
+  "us": "SHIPWRECK",
+  "fr": "ÉPAVE",
+  "de": "WRACK",
+  "it": "RELITTO",
+  "es": "BARCO HUNDIDO"
+ },
+ "mt104": {
+  "us": "SUN&MOON TEMPLE",
+  "uk": "SUN/MOON TEMPLE",
+  "fr": "TEMPLE SACRÉ",
+  "de": "SONNEN- UND MONDTEMPEL",
+  "it": "TEMPIO SOLE/LUNA",
+  "es": "TEMPLO SOL/LUNA"
+ },
+ "mt105": {
+  "us": "MOON SEA",
+  "fr": "MER DE LUNE",
+  "de": "MONDMEER",
+  "it": "MARE LUNARE",
+  "es": "MAR LUNA"
+ },
+ "mt106": {
+  "us": "GALLERY OF TIME",
+  "fr": "GALERIE DU TEMPS",
+  "de": "GALERIE DER ZEIT",
+  "it": "GALLERIE DEL TEMPO",
+  "es": "PASAJE DEL TIEMPO"
+ },
+ "mt107": {
+  "us": "DEMON SHAFT",
+  "fr": "TROU DU DÉMON",
+  "de": "DÄMONENSCHACHT",
+  "it": "ANTRO DEL DEMONIO",
+  "es": "VARA DEL DIABLO"
+ },
+ "mt14": {
+  "us": "BROWNBOO VILLAGE",
+  "fr": "VILLAGE DU CIEL",
+  "de": "DAS DORF BROWNBOO",
+  "it": "POLIPONIA",
+  "es": "BROWN BOO"
+ },
+ "mt23": {
+  "us": "YELLOW DROPS",
+  "fr": "VILLAGE JAUNE",
+  "de": "GELBSTEIN",
+  "it": "GOCCIA D'ORO",
+  "es": "GOTAS AMARILLAS"
+ },
+ "mt301": {
+  "us": "DARK SHRINE",
+  "fr": "TOMBEAU NOIR",
+  "de": "DUNKLER SCHREIN",
+  "it": "ALTARE OSCURO",
+  "es": "SANTUARIO OSCURO"
+ },
+ "mt40": {
+  "us": "DARK HEAVEN CASTLE",
+  "fr": "CHÂTEAU NOIR",
+  "de": "BURG DÜSTERHIMMEL",
+  "it": "CASTELLO OSCURO",
+  "es": "CASTILLO GLORIOSO OSCURO"
+ }
+}

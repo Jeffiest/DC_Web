@@ -1,0 +1,9 @@
+{
+ "_doc": "Boss name captions (gedit/sNN/chara/boss*.pak). Each entry is a list of lines, top to bottom. 'uk' is the unsuffixed boss.pak (English); the others are boss_N_<f|g|i|s>.pak.",
+ "_files": {"uk": "boss.pak", "fr": "boss_%d_f.pak", "de": "boss_%d_g.pak", "it": "boss_%d_i.pak", "es": "boss_%d_s.pak"},
+ "s34_boss_3": {"uk": ["ICE QUEEN", "LA SAIA"], "fr": ["REINE DE GLACE", "LA SAIA"], "de": ["EISKÖNIGIN", "LA SAIA"], "it": ["LA REG. DI GHIACCIO", "LA SAIA"], "es": ["REINA DEL HIELO", "LA SAIA"]},
+ "s78_boss_7": {"uk": ["BLACK KNIGHT", "PENDRAGON"], "fr": ["CHEVALIER NOIR", "PENDRAGON"], "de": ["SCHWARZER RITTER", "PENDRAGON"], "it": ["IL CAVALIERE NERO", "PENDRAGON"], "es": ["CABALLERO NEGRO", "PENDRAGON"]},
+ "s88_boss_6": {"uk": ["DARK GENIE"], "fr": ["GÉNIE"], "de": ["DSCHINN"], "it": ["IL GENIO"], "es": ["EL GENIO"]},
+ "s92_boss_4": {"uk": ["KING'S CURSE"], "fr": ["ROI MAUDIT"], "de": ["KÖNIGSFLUCH"], "it": ["MALED. DEL RE"], "es": ["LA MALDICIÓN DEL REY"]},
+ "s98_boss_1": {"uk": ["DIVINE BEAST", "DRAN"], "fr": ["LA BÊTE", "DRAN"], "de": ["GÖTTERBIEST", "DRAN"], "it": ["IL DIVINO", "DRAN"], "es": ["DRAN DE LA", "BESTIA DIVINA"]}
+}

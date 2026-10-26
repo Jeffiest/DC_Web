@@ -1,0 +1,968 @@
+#include <SDL3/SDL_stdinc.h>
+#if defined(__SWITCH__)
+#include <SDL3/SDL.h>
+
+#include "switch_main.hpp"
+#endif
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <thread>
+#include <vector>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define DC_ANDROID_TRACE(message) __android_log_write(ANDROID_LOG_INFO, "Chronicle", message)
+#else
+#define DC_ANDROID_TRACE(message) ((void) 0)
+#endif
+
+#if defined(__ANDROID__)
+void TouchOverlaySetOpacity(float opacity);
+void TouchOverlayPoll();
+#endif
+
+#include "audio/mixer.hpp"
+#include "audio/soundtrack.hpp"
+#include "battle_globals.hpp"
+#include "dataalloc.hpp"
+#include "dataread.hpp"
+#include "dun/gameloop.hpp"
+#include "exitcodes.hpp"
+#include "gameloop.hpp"
+#include "gamemode.hpp"
+#include "gfx/gfx.hpp"
+#include "identity.hpp"
+#include "langset.hpp"
+#include "localize.hpp"
+#include "menu_option.hpp"
+#include "menu_save.hpp"
+#include "mglib.hpp"
+#include "nowload.hpp"
+#include "platform/arena.hpp"
+#include "platform/audio.hpp"
+#include "platform/clock.hpp"
+#include "platform/config.hpp"
+#include "platform/data_archive.hpp"
+#include "platform/discord.hpp"
+#include "platform/display.hpp"
+#include "platform/firstrun.hpp"
+#include "platform/input.hpp"
+#include "platform/input_script.hpp"
+#include "platform/paths.hpp"
+#include "platform/save_state.hpp"
+#include "platform/settings.hpp"
+#include "platform/window.hpp"
+#include "screen.hpp"
+#include "snd.hpp"
+#include "title/opening.hpp"
+#include "title/rushmovi.hpp"
+#include "title/title.hpp"
+#include "title/title_port.hpp"
+
+int  EditInit(void *param);
+int  EditLoop();
+void SndInit();
+
+namespace fs = std::filesystem;
+
+namespace {
+
+struct Options {
+    bool         headless = false;
+    bool         offscreen = false;
+    std::int64_t frames = -1;
+    const char  *screenshot = nullptr;
+    const char  *input = nullptr;
+    int          width = 0;
+    int          height = 0;
+    int          display_per_tick = 0;
+    const char  *jump = nullptr;
+    const char  *give = nullptr;
+    bool         fast_load = false;
+    bool         show_fps = false;
+    bool         screenshot_fps = false;
+    bool         perf_log = false;
+    const char  *export_text = nullptr;
+    const char  *font = nullptr;
+    const char  *seed_save = nullptr;
+#if defined(__SWITCH__)
+    bool switch_core_affinity = true;
+#endif
+};
+
+Options g_options;
+#if defined(__SWITCH__)
+float g_switch_render_scale = 0.0f;
+#endif
+
+[[noreturn]] void Usage(const char *program) {
+    std::fprintf(stderr,
+                 "usage: %s [--data DIR] [--save DIR] [--headless] [--frames N] [--screenshot PATH]\n"
+                 "          [--input FILE]"
+#if !defined(__SWITCH__)
+                 " [--width W] [--height H]"
+#endif
+                 " [--offscreen]\n"
+#if !defined(__SWITCH__)
+                 "          [--display-per-tick N]"
+#endif
+                 " [--show-fps] [--jump MODE[:MAP]] [--fast-load]\n"
+                 "          [--give ITEM,...]\n"
+                 "  --data DIR         extracted game data or its sibling data.zip (default: DC_DATA,\n"
+                 "                     then ./data, then data/ beside the executable)\n"
+                 "  --save DIR         saves, config.json and the pipeline cache (default: DC_SAVE, then\n"
+                 "                     ./save, then save/ beside the executable)\n"
+                 "  --seed-save DIR    copy a save-root fixture before startup; requires explicit --save\n"
+                 "                     pointing to a new or empty directory (omit on subsequent runs)\n"
+                 "  --headless         render offscreen (SDL offscreen driver, VK_EXT_headless_surface),\n"
+                 "                     no audio device, the game clock unbounded\n"
+                 "  --offscreen        --headless without a Vulkan surface: render to an image only (what\n"
+                 "                     --headless does when there is no VK_EXT_headless_surface)\n"
+                 "  --frames N         stop after N frames of the game's main loop\n"
+                 "  --screenshot PATH  write the last tick's image (no FPS counter) to PATH on exit\n"
+                 "  --input FILE       drive pad 1 from a script (default: DC_INPUT); see docs/PC.md\n"
+#if !defined(__SWITCH__)
+                 "  --width, --height  window size in pixels (default: config.json, then the monitor's)\n"
+#endif
+                 "  --screenshot-fps   with --screenshot and --show-fps: the image as a window shows it, the\n"
+                 "                     FPS counter over it\n"
+#if !defined(__SWITCH__)
+                 "  --display-per-tick N  headless: also render N interpolated display frames per tick\n"
+#endif
+                 "  --export-text DIR  write the game's message files to DIR as language JSON (docs/LOCALIZATION.md)\n"
+                 "  --font FILE        draw message text from this TrueType font (else lang/font.ttf)\n"
+                 "  --show-fps         draw the FPS counter on presented frames when headless too\n"
+                 "  --perf-log         log tick, render and GPU timings once a second\n"
+                 "test hooks:\n"
+                 "  --jump MODE[:MAP]  start in edit:<map>, e01/e03/e04 (populated presets), dungeon:<0-6>, title, rush, opening or menu,\n"
+                 "                     skipping the warm-up (DC_JUMP); see docs/PC.md\n"
+                 "  --fast-load        loading-screen holds and fades of a few ticks (DC_FAST_LOAD=1)\n"
+                 "  --give ITEM,...    give the party these item and weapon numbers when a town or dungeon\n"
+                 "                     starts, unless it holds them (DC_GIVE); see docs/PC.md\n",
+                 program);
+#if defined(__SWITCH__)
+    std::fprintf(stderr, "  --switch-core-affinity separate|auto  pin game and render to separate cores "
+                         "(default: separate)\n");
+#endif
+    std::exit(kExitUsage);
+}
+
+Options ParseOptions(int argc, const char **argv) {
+    Options options;
+    for (int i = 1; i < argc; i++) {
+        std::string_view arg = argv[i];
+        auto             value = [&]() {
+            if (i + 1 >= argc) {
+                Usage(argv[0]);
+            }
+            return argv[++i];
+        };
+        auto number = [&]() {
+            char *end = nullptr;
+            long  result = std::strtol(value(), &end, 10);
+            if (end == nullptr || *end != '\0' || result < 0) {
+                Usage(argv[0]);
+            }
+            return result;
+        };
+        if (arg == "--headless") {
+            options.headless = true;
+        } else if (arg == "--offscreen") {
+            options.headless = true;
+            options.offscreen = true;
+        } else if (arg == "--frames") {
+            options.frames = number();
+        } else if (arg == "--screenshot") {
+            options.screenshot = value();
+        } else if (arg == "--input") {
+            options.input = value();
+        } else if (arg == "--seed-save") {
+            options.seed_save = value();
+#if !defined(__SWITCH__)
+        } else if (arg == "--width") {
+            options.width = static_cast<int>(number());
+        } else if (arg == "--height") {
+            options.height = static_cast<int>(number());
+#endif
+        } else if (arg == "--jump") {
+            options.jump = value();
+        } else if (arg == "--give") {
+            options.give = value();
+        } else if (arg == "--fast-load") {
+            options.fast_load = true;
+        } else if (arg == "--export-text") {
+            options.export_text = value();
+        } else if (arg == "--font") {
+            options.font = value();
+        } else if (arg == "--show-fps") {
+            options.show_fps = true;
+        } else if (arg == "--screenshot-fps") {
+            options.screenshot_fps = true;
+        } else if (arg == "--perf-log") {
+            options.perf_log = true;
+#if !defined(__SWITCH__)
+        } else if (arg == "--display-per-tick") {
+            options.display_per_tick = static_cast<int>(number());
+#endif
+#if defined(__SWITCH__)
+        } else if (arg == "--switch-core-affinity") {
+            std::string_view mode = value();
+            if (mode != "separate" && mode != "auto") {
+                Usage(argv[0]);
+            }
+            options.switch_core_affinity = mode == "separate";
+#endif
+        } else {
+            Usage(argv[0]);
+        }
+    }
+    return options;
+}
+
+// InitCDFile stops on the same conditions, but checking first gives the one-line message and its
+// own exit status before a window or a Vulkan device exists.
+void RequireData() {
+    const fs::path &root = PathsDataRoot();
+    if (DataArchivePresent(root)) {
+        return;
+    }
+    std::error_code error;
+    const char     *why = nullptr;
+    if (!fs::is_directory(root, error)) {
+        why = "is not a directory";
+    } else {
+        why = "is empty";
+        auto options = fs::directory_options::follow_directory_symlink |
+                       fs::directory_options::skip_permission_denied;
+        for (fs::recursive_directory_iterator it(root, options, error), end; !error && it != end;
+             it.increment(error)) {
+            std::error_code entry_error;
+            if (it->is_regular_file(entry_error)) {
+                why = nullptr;
+                break;
+            }
+        }
+    }
+    if (why != nullptr) {
+        std::fprintf(stderr,
+                     "no game data: %s %s; extract the disc with `dcdata extract <disc image> %s` "
+                     "or place data.zip beside it\n",
+                     PathsDisplay(root).c_str(), why, PathsDisplay(root).c_str());
+#if defined(__SWITCH__)
+        SwitchShowMissingData();
+#endif
+        std::exit(kExitNoData);
+    }
+}
+
+// The Options screen keeps the interface at 100%, so a size that takes the HUD past the window
+// cannot take the screen's own controls with it.
+gfx::FrameLayout Layout(const Config &config) {
+#if defined(__SWITCH__)
+    return {gfx::AspectMode::Fill, MenuOptionOpen() ? 1.0f : config.ui_scale};
+#else
+    return {config.aspect == ConfigAspect::Auto ? gfx::AspectMode::Fill : gfx::AspectMode::Letterbox,
+            MenuOptionOpen() ? 1.0f : config.ui_scale};
+#endif
+}
+
+#if defined(__SWITCH__)
+void UpdateSwitchRenderScale() {
+    if (gfx::InFrame()) {
+        return;
+    }
+    int width = 0;
+    int height = 0;
+    SwitchDisplaySize(width, height);
+    if (height <= 0) {
+        return;
+    }
+    const float scale = static_cast<float>(height) / static_cast<float>(kScreenHeight);
+    if (scale != g_switch_render_scale) {
+        if (!SDL_SetWindowSize(WindowHandle(), width, height)) {
+            std::fprintf(stderr, "switch: cannot set SDL output size to %dx%d: %s\n", width, height,
+                         SDL_GetError());
+        }
+        gfx::RendererResize();
+        int window_width = 0;
+        int window_height = 0;
+        if (!SDL_GetWindowSizeInPixels(WindowHandle(), &window_width, &window_height)) {
+            std::fprintf(stderr, "switch: cannot query SDL output size: %s\n", SDL_GetError());
+        }
+        std::fprintf(stderr, "switch: mode target=%dx%d, SDL=%dx%d, render scale=%.2f\n", width, height,
+                     window_width, window_height, static_cast<double>(scale));
+        gfx::SetRenderScale(scale);
+        g_switch_render_scale = scale;
+    }
+}
+#endif
+
+// DC_BGM_TEST=<set>:<track>: a test aid. From frame 150 of the run (the title has started) the music
+// stops and sound set <set> plays its sequence number <track> on the music port, so DC_AUDIO_WAV
+// records what that sequence sounds like. Run it with --jump menu, which is silent.
+void BgmTestPump() {
+    static const char *spec = std::getenv("DC_BGM_TEST");
+    static bool        done = false;
+    if (spec == nullptr || done || GameFrameCount() < 150) {
+        return;
+    }
+    done = true;
+    int set = 0;
+    int track = 0;
+    if (std::sscanf(spec, "%d:%d", &set, &track) < 1) {
+        return;
+    }
+    for (int port = 0; port < audio::kPorts; ++port) {
+        audio::DefaultMixer().Stop(port);
+    }
+    SndBgmInit();
+    SndBgmLoad(set);
+    SndBgmPlay(track);
+}
+
+void PumpHost() {
+    BgmTestPump();
+    if (!WindowPollEvents()) {
+        GameRequestStop();
+    }
+    DisplayPump();
+#if defined(__SWITCH__)
+    UpdateSwitchRenderScale();
+#endif
+    // A change of video.aspect or video.ui_scale, or the Options screen opening or closing, waits
+    // for a pump outside a frame.
+    if (!gfx::InFrame()) {
+        gfx::FrameLayout layout = Layout(ConfigGet());
+        gfx::FrameLayout current = gfx::CurrentFrameLayout();
+        if (layout.aspect != current.aspect || layout.ui_scale != current.ui_scale) {
+            gfx::SetFrameLayout(layout);
+        }
+    }
+#if defined(__ANDROID__)
+    TouchOverlayPoll();
+#endif
+    InputPoll();
+    InputScriptApply(GameFrameCount());
+}
+
+void LoadInputScript(const char *path) {
+#ifdef _WIN32
+    std::string environment;
+#endif
+    if (path == nullptr) {
+#ifdef _WIN32
+        if (const wchar_t *value = ::_wgetenv(L"DC_INPUT")) {
+            environment = PathsDisplay(fs::path(value));
+            path = environment.c_str();
+        }
+#else
+        path = std::getenv("DC_INPUT");
+#endif
+    }
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    InputScript script;
+    std::string error;
+    if (!InputScriptLoad(PathsFromUtf8(path), script, error)) {
+        std::fprintf(stderr, "bad input script: %s\n", error.c_str());
+        std::exit(kExitUsage);
+    }
+    InputScriptInstall(std::move(script));
+}
+
+void RenderAudio(void *, float *out, int frames) {
+    audio::DefaultMixer().Render(out, frames);
+}
+
+void ReportShaderProgress(uint32_t done, uint32_t total) {
+    static uint32_t    reported = 0;
+    constexpr uint32_t kSteps = 4;
+    if (total == 0) {
+        return;
+    }
+    uint32_t step = done * kSteps / total;
+    if (done == 0 || step > reported) {
+        reported = step;
+        std::fprintf(stderr, "compiling shaders %u/%u\n", done, total);
+    }
+}
+
+gfx::PresentMode PresentMode(ConfigPresentMode mode) {
+#if defined(__SWITCH__)
+    static_cast<void>(mode);
+    return gfx::PresentMode::Fifo;
+#else
+    switch (mode) {
+        case ConfigPresentMode::Mailbox:
+            return gfx::PresentMode::Mailbox;
+        case ConfigPresentMode::Immediate:
+            return gfx::PresentMode::Immediate;
+        default:
+            return gfx::PresentMode::Fifo;
+    }
+#endif
+}
+
+GamePresentSettings PresentSettings(const Config &config) {
+#if defined(__SWITCH__)
+    return {.interpolation = false,
+            .max_fps = 60.0,
+            .display_per_tick = 0,
+            .show_fps = g_options.show_fps || (config.show_fps && !g_options.headless),
+            .fps_detail = config.fps_detail};
+#else
+    return {.interpolation = config.interpolation,
+            .max_fps = config.max_fps,
+            .display_per_tick = g_options.display_per_tick,
+            .show_fps = g_options.show_fps || (config.show_fps && !g_options.headless),
+            .fps_detail = config.fps_detail};
+#endif
+}
+
+void ApplyDiscord(const Config &config) {
+    DiscordStop();
+    if (config.discord_rich_presence && !g_options.headless) {
+        DiscordStart(kDiscordClientId);
+    }
+}
+
+// Called mid-tick, from a settings screen: what cannot change inside a frame (the frame layout)
+// waits for PumpHost.
+void ApplyConfigChange(const Config &before, const Config &after) {
+    audio::DefaultMixer().SetMasterGain(after.master_volume);
+    AudioSetSurround(after.surround);
+    InputApplyConfig(after);
+#if defined(__SWITCH__)
+    ClockSetTickRate(60.0);
+#else
+    if (after.tick_rate != before.tick_rate) {
+        ClockSetTickRate(after.tick_rate);
+    }
+#endif
+    if (after.interpolation != before.interpolation || after.max_fps != before.max_fps ||
+        after.show_fps != before.show_fps || after.fps_detail != before.fps_detail) {
+        GameSetPresentSettings(PresentSettings(after));
+    }
+    gfx::SetPresentMode(PresentMode(after.present_mode));
+    gfx::SetAnisotropy(after.anisotropy);
+#if defined(__ANDROID__)
+    if (after.render_scale != before.render_scale) {
+        gfx::SetRenderScale(after.render_scale);
+    }
+#endif
+#if defined(__ANDROID__)
+    if (after.touch_overlay_opacity != before.touch_overlay_opacity) {
+        TouchOverlaySetOpacity(after.touch_overlay_opacity / 100.0f);
+    }
+#endif
+    if (after.discord_rich_presence != before.discord_rich_presence) {
+        ApplyDiscord(after);
+    }
+}
+
+// DC_PRESENT_STATS=1: what the ticks drew and what rendering them cost.
+void ReportPresentStats() {
+    const char *setting = std::getenv("DC_PRESENT_STATS");
+    if (setting == nullptr || *setting == '\0' || *setting == '0') {
+        return;
+    }
+    GamePresentStats stats = GamePresentStatistics();
+    if (stats.ticks == 0) {
+        return;
+    }
+    double ticks = static_cast<double>(stats.ticks);
+    double displays = static_cast<double>(std::max<std::uint64_t>(stats.display_frames, 1));
+    std::fprintf(stderr,
+                 "present: %.0f ticks, per tick %.1f mesh draws (%.1f keyed), %.1f 2D draws, %.1f stateful, "
+                 "at most %.0f draws; canonical %.2f ms per tick; %.0f display frames, %.2f ms each\n",
+                 ticks, static_cast<double>(stats.mesh_draws) / ticks,
+                 static_cast<double>(stats.keyed_mesh_draws) / ticks, static_cast<double>(stats.draws_2d) / ticks,
+                 static_cast<double>(stats.stateful) / ticks, static_cast<double>(stats.max_draws),
+                 stats.canonical_seconds * 1000.0 / ticks, static_cast<double>(stats.display_frames),
+                 stats.display_seconds * 1000.0 / displays);
+    if (GameShowingFps()) {
+        std::fprintf(stderr, "fps counter: %s\n", GameFpsText().c_str());
+    }
+}
+
+int Screenshot(const char *path) {
+    std::vector<uint8_t> pixels;
+    uint32_t             width = 0;
+    uint32_t             height = 0;
+    bool                 grabbed = g_options.screenshot_fps ? GameScreenshotWithFps(pixels, width, height)
+                                                            : GameScreenshot(pixels, width, height);
+    if (!grabbed || !gfx::WritePng(PathsFromUtf8(path), pixels.data(), width, height)) {
+        std::fprintf(stderr, "cannot write the screenshot to %s\n", path);
+        return kExitFailure;
+    }
+    const char *rgba = std::getenv("DC_SCREENSHOT_RGBA");
+    if (rgba != nullptr && std::string_view(rgba) == "1") {
+        auto raw_path = PathsFromUtf8(path);
+        raw_path += ".rgba";
+        std::ofstream raw(raw_path, std::ios::binary);
+        raw.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+        raw.close();
+        if (!raw) {
+            std::fprintf(stderr, "cannot write screenshot RGBA to %s.rgba\n", path);
+            return kExitFailure;
+        }
+    }
+    return kExitOk;
+}
+
+int Run(int argc, const char **argv) {
+    DC_ANDROID_TRACE("Run: enter");
+    GameSetIdentity();
+    DC_ANDROID_TRACE("Run: identity set");
+    const char *explicit_save = nullptr;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--save" && i + 1 < argc) {
+            explicit_save = argv[++i];
+        } else if (arg.starts_with("--save=")) {
+            explicit_save = argv[i] + std::string_view("--save=").size();
+        }
+    }
+    argc = PathsConsumeArgs(argc, argv);
+    g_options = ParseOptions(argc, argv);
+    GameLoadTraceLaunch();
+    Options &options = g_options;
+    if (options.seed_save != nullptr) {
+        if (explicit_save == nullptr || *explicit_save == '\0') {
+            std::fprintf(stderr, "--seed-save requires an explicit nonempty --save directory\n");
+            return kExitUsage;
+        }
+        std::string error;
+        if (!SaveStateSeed(PathsFromUtf8(options.seed_save), PathsFromUtf8(explicit_save), error)) {
+            std::fprintf(stderr, "cannot seed --save %s: %s\n", explicit_save, error.c_str());
+            return kExitFailure;
+        }
+        std::fprintf(stderr, "seeded --save %s from %s\n", explicit_save, options.seed_save);
+    }
+    FirstRunIfNoData(options.headless);
+    DC_ANDROID_TRACE("Run: first-run check passed");
+    if (options.jump == nullptr) {
+        options.jump = std::getenv("DC_JUMP");
+    }
+    if (options.give == nullptr) {
+        options.give = std::getenv("DC_GIVE");
+    }
+    if (options.give != nullptr && *options.give != '\0' && !GameSetGive(options.give)) {
+        std::fprintf(stderr, "bad --give: %s\n", options.give);
+        std::exit(kExitUsage);
+    }
+    if (options.jump != nullptr && *options.jump != '\0' && !GameSetJump(options.jump)) {
+        std::fprintf(stderr, "bad --jump: %s\n", options.jump);
+        std::exit(kExitUsage);
+    }
+    GameSetAutosave(!options.headless && (options.jump == nullptr || *options.jump == '\0'));
+    const char *fast_load = std::getenv("DC_FAST_LOAD");
+    GameSetFastLoad(options.fast_load || (fast_load != nullptr && *fast_load != '\0' && *fast_load != '0'));
+    RequireData();
+    GameLoadTraceCheckpoint("data_ready");
+    DC_ANDROID_TRACE("Run: data available");
+    if (!options.headless) {
+        GameSetDataIcon();
+    }
+    if (options.font != nullptr) {
+        LocalizeSetFontPath(PathsFromUtf8(options.font));
+    }
+    if (options.export_text != nullptr) {
+        // The game's message files as language JSON for translators; no window, no game.
+        return LocalizeExport(options.export_text, true) >= 0 ? kExitOk : kExitUsage;
+    }
+    LoadInputScript(options.input);
+
+    ConfigLoad();
+    audio::SoundtrackEnsure();
+    const Config &config = ConfigGet();
+
+#if defined(__SWITCH__)
+    DisplaySetOverrides(0, 0, options.headless);
+#else
+    DisplaySetOverrides(options.width, options.height, options.headless);
+#endif
+    WindowConfig window = DisplayWindowConfig(config);
+#if defined(__SWITCH__)
+    SwitchDisplaySize(window.width, window.height);
+    window.fullscreen = false;
+#endif
+    bool offscreen = options.offscreen || (options.headless && !gfx::HeadlessSurfaceAvailable());
+    window.vulkan = !offscreen;
+    WindowInit(window);
+    DC_ANDROID_TRACE("Run: window initialized");
+    InputInit();
+#if defined(__ANDROID__)
+    TouchOverlaySetOpacity(config.touch_overlay_opacity / 100.0f);
+#endif
+
+    gfx::RendererConfig renderer;
+    renderer.app_name = "Chronicle: Dark Cloud";
+    renderer.logical_width = kScreenWidth;
+    renderer.logical_height = kScreenHeight;
+    renderer.display_aspect = 4.0f / 3.0f;
+    renderer.present_mode = PresentMode(config.present_mode);
+    renderer.pipeline_cache = PathsSaveRoot() / "pipeline_cache.bin";
+#if defined(__SWITCH__)
+    SwitchConfigureRenderer(renderer);
+    g_switch_render_scale = renderer.render_scale;
+#endif
+    renderer.progress = ReportShaderProgress;
+    renderer.offscreen = offscreen;
+    renderer.render_thread = config.render_thread;
+    if (const char *mode = SettingsEnv("RENDER_THREAD")) {
+        if (const auto parsed = gfx::ParseRenderThreadMode(mode)) {
+            renderer.render_thread = *parsed;
+        }
+    }
+    if (options.headless || options.screenshot != nullptr) {
+        renderer.render_thread = gfx::RenderThreadMode::Off;
+        // The renderer also reads this override; deterministic runs take precedence over it.
+        SDL_setenv_unsafe("KZ_RENDER_THREAD", "off", 1);
+    }
+    renderer.layout = Layout(config);
+#if defined(__ANDROID__)
+    renderer.render_scale = config.render_scale;
+#endif
+    renderer.validation = renderer.validation || SettingsEnv("VULKAN_VALIDATION") != nullptr;
+    gfx::RendererInit(WindowHandle(), renderer);
+    GameLoadTraceCheckpoint("renderer_ready");
+    DC_ANDROID_TRACE("Run: renderer initialized");
+#if defined(__SWITCH__)
+    if (options.switch_core_affinity) {
+        SwitchConfigureThreads();
+    }
+#endif
+    gfx::SetAnisotropy(config.anisotropy);
+#if defined(__ANDROID__)
+    gfx::SetRenderScale(config.render_scale);
+#endif
+
+    audio::DefaultMixer().SetMasterGain(config.master_volume);
+    AudioSetSurround(config.surround);
+    AudioOutputStart(audio::DefaultMixer().Rate(), RenderAudio, nullptr);
+
+#if defined(__SWITCH__)
+    ClockSetTickRate(60.0);
+#else
+    ClockSetTickRate(config.tick_rate);
+#endif
+    const char *bounded_headless = std::getenv("DC_HEADLESS_BOUNDED");
+    ClockSetUnbounded(options.headless && !(bounded_headless != nullptr && std::strcmp(bounded_headless, "1") == 0));
+    ClockAddPumpHook(PumpHost);
+    GameSetFrameBudget(options.frames);
+    GameSetPerfLog(options.perf_log);
+    if (options.perf_log) {
+        std::fprintf(stderr,
+                     "perf config: layout %d scale %.3f thread %d interpolation %d detail %.3f shadow %.3f "
+                     "anisotropy %d soft_focus %d\n",
+                     static_cast<int>(renderer.layout.aspect), gfx::RenderScale(),
+                     static_cast<int>(gfx::ActiveRenderThreadMode()), PresentSettings(config).interpolation,
+                     ConfigDetailDistance(), ConfigShadowDistance(), config.anisotropy, config.options.soft_focus);
+    }
+    ApplyDiscord(config);
+    GameSetPresentSettings(PresentSettings(config));
+    ConfigAddChangeHook(ApplyConfigChange);
+    ConfigAddChangeHook(ConfigDisplayChanged);
+    ConfigAddChangeHook(GameOptionsChanged);
+    ConfigAddChangeHook(LocalizeConfigChanged);
+
+    int status = RunGame(argc, const_cast<char **>(argv));
+    GameStopPresentation();
+    if (status == kExitOk && options.screenshot != nullptr) {
+        status = Screenshot(options.screenshot);
+    }
+    ReportPresentStats();
+#if defined(__SWITCH__)
+    if (options.perf_log && std::getenv("DC_PERF_HOLD") != nullptr) {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+#endif
+
+    ConfigRemoveChangeHook(LocalizeConfigChanged);
+    ConfigRemoveChangeHook(GameOptionsChanged);
+    ConfigRemoveChangeHook(ConfigDisplayChanged);
+    ConfigRemoveChangeHook(ApplyConfigChange);
+    ClockRemovePumpHook(PumpHost);
+    DiscordStop();
+    AudioOutputStop();
+    InputShutdown();
+    gfx::RendererShutdown();
+    WindowShutdown();
+    return status;
+}
+
+} // namespace
+
+extern "C" {
+void init_all__Fv() {
+    init_all();
+}
+
+void initialize_data__Fv() {
+    initialize_data();
+}
+
+void GlobalNameInit__Fv() {
+    GlobalNameInit();
+}
+
+void InitReadBG__Fv() {
+    InitReadBG();
+}
+
+void SndInit__Fv() {
+    SndInit();
+}
+
+void LoadOverlay__Fi(int mode) {
+    LoadOverlay(mode);
+}
+
+void MGSetRenderInfo__Ffff(float scale, float near_z, float far_z) {
+    MGSetRenderInfo(scale, near_z, far_z);
+}
+
+void init_now_loading__Fi(int title_number) {
+    init_now_loading(title_number);
+}
+
+void LoadSystemMessage__Fv() {
+    LoadSystemMessage();
+}
+
+void SndInitialize__Fiiii(int unused0, int unused1, int unused2, int unused3) {
+    SndInitialize(unused0, unused1, unused2, unused3);
+}
+
+int InitExistData__Fv() {
+    return InitExistData();
+}
+
+void MapJump__Fii(int map_no, int event_no) {
+    MapJump(map_no, event_no);
+}
+
+void EditInit__FPv(void *param) {
+    EditInit(param);
+}
+
+void MenuInit__Fv(int mode) {
+    MenuInit();
+}
+
+void MemCheckInit__Fv(int mode) {
+    MemCheckInit();
+}
+
+void TrialEndInit__Fv(int mode) {
+    TrialEndInit();
+}
+
+void InitSave__Fv(int mode) {
+    InitSave();
+}
+
+void LangsetInit__Fv(int mode) {
+    LangsetInit();
+}
+
+int check_now_loading__Fv() {
+    return check_now_loading();
+}
+
+void MGInitVSyncCallBack__FPFi_i(int (*callback)(int)) {
+    MGInitVSyncCallBack(callback);
+}
+
+void PlayTimeCount__Fi(int add) {
+    PlayTimeCount(add);
+}
+
+void MGBeginFrame__Fv() {
+    MGBeginFrame();
+}
+
+void SetEnv__FP13sceVif1Packet(sceVif1Packet *vif1_packet) {
+    SetEnv(vif1_packet);
+}
+
+int EditLoop__Fv() {
+    return EditLoop();
+}
+
+int MenuLoop__Fv() {
+    return MenuLoop();
+}
+
+int MemCheckLoop__Fv() {
+    return MemCheckLoop();
+}
+
+int TrialEndLoop__Fv() {
+    return TrialEndLoop();
+}
+
+int LoopSave__Fv() {
+    return LoopSave();
+}
+
+int LangsetLoop__Fv() {
+    return LangsetLoop();
+}
+
+void MGEndFrame__Fv() {
+    MGEndFrame();
+}
+
+int CheckTrialEnd__Fv() {
+    return CheckTrialEnd();
+}
+
+int ReadBGSync__Fv() {
+    return ReadBGSync();
+}
+
+void TrialStart__Fv() {
+    TrialStart();
+}
+
+void func_01DAC1C0() {
+    GameInit();
+}
+
+int func_01DAD980(int mode) {
+    return GameLoop();
+}
+
+void func_01DAF1C0() {
+    OpeningInit();
+}
+
+int func_01DAF970() {
+    return OpeningLoop();
+}
+
+void func_01DC1420(int mode) {
+    LoaderInit();
+}
+
+int func_01DC1510() {
+    return LoaderLoop();
+}
+
+void func_01DC8C50() {
+    RushInit();
+}
+
+int func_01DC8EB0() {
+    return RushLoop();
+}
+
+void func_01DD1AB0(int inited) {
+    TitleInit(inited);
+}
+
+int func_01DD2220() {
+    return TitleLoop();
+}
+}
+
+#ifndef DC_NO_ENTRYPOINT
+PORT_OVERRIDE int main(int argc, const char **argv, const char **envp) {
+#if defined(__SWITCH__)
+    return SwitchMain(argc, argv, Run);
+#else
+    return Run(argc, argv);
+#endif
+}
+
+#if defined(__ANDROID__)
+// SDLActivity resolves SDL_main from the native application library.
+extern "C" int SDL_main(int argc, char **argv) {
+    DC_ANDROID_TRACE("SDL_main: entry");
+    return Run(argc, const_cast<const char **>(argv));
+}
+#endif
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t **wide_argv) {
+    std::vector<std::string>  args;
+    std::vector<const char *> argv;
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(PathsDisplay(fs::path(wide_argv[i])));
+    }
+    for (const std::string &arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    argv.push_back(nullptr);
+    return Run(argc, argv.data());
+}
+#endif
+#endif
+
+PORT_OVERRIDE extern "C" void *__ct__10CCharacterFv(void *self) {
+    PS2_UNIMPLEMENTED();
+}
+
+PORT_OVERRIDE extern "C" void *__ct__13CTextureAnimeFv(void *self) {
+    PS2_UNIMPLEMENTED();
+}
+
+PORT_OVERRIDE extern "C" void *__ct__7CObjectFv(void *self) {
+    PS2_UNIMPLEMENTED();
+}
+
+PORT_OVERRIDE extern "C" void *__ct__8CHitMarkFv(void *self) {
+    PS2_UNIMPLEMENTED();
+}
+
+PORT_OVERRIDE void LoadOverlay(int mode) {
+    enum class Overlay {
+        None,
+        Title,
+        Dungeon
+    };
+    constexpr Overlay overlay_modes[] = {Overlay::Title, Overlay::Title, Overlay::None, Overlay::Dungeon, Overlay::Dungeon,
+                                         Overlay::Title, Overlay::None, Overlay::None, Overlay::Dungeon, Overlay::Dungeon,
+                                         Overlay::None, Overlay::None, Overlay::None, Overlay::None, Overlay::None};
+    static Overlay    loaded = Overlay::None;
+    if (mode < 0 || mode >= static_cast<int>(std::size(overlay_modes)) || overlay_modes[mode] == Overlay::None ||
+        overlay_modes[mode] == loaded) {
+        return;
+    }
+    loaded = overlay_modes[mode];
+    if (loaded == Overlay::Title) {
+        TitleOverlayConstruct();
+    }
+}
+
+PORT_OVERRIDE u_char *CDataAlloc<1, 6000>::Alloc(int quads) {
+    if (quads < 0 || used < 0 || used > 6000 || quads > 6000 - used) {
+        ArenaOverflow(this, -1, 6000);
+    }
+    u_char *run = reinterpret_cast<u_char *>(block) + used * 16;
+    used += quads;
+    return run;
+}
+
+PORT_OVERRIDE void SetEnv(sceVif1Packet *packet) {
+    MGSetGsTEST(nullptr);
+    MGSetGsZBUF(nullptr);
+    MGSetGsALPHA(nullptr);
+    MGSetWindowRect();
+}
