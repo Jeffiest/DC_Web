@@ -27,6 +27,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 #include <vector>
 
 #include "wgsl.hpp"
@@ -277,11 +278,18 @@ void ForgetDirty(Buffer *buffer);
 void UploadDirty();
 
 struct Swapchain {
+    struct Pending {
+        Image   *image;
+        uint64_t serial; // the last submission when it was presented
+    };
     std::vector<Image *> images;
     uint32_t             width = 0;
     uint32_t             height = 0;
     uint32_t             next = 0;
     int32_t              acquired = -1;
+    // With present_finished: the frames presented and not yet known finished, oldest first, and the one shown.
+    std::deque<Pending> pending;
+    Image              *shown = nullptr;
 };
 
 struct Context {
@@ -297,6 +305,9 @@ struct Context {
     bool              clip_distances = false;
     // Whether a submission waits for the GPU to finish the ones before it (vkQueueSubmit2).
     bool              one_frame_on_gpu = false;
+    // Whether the canvas gets the newest frame the GPU has finished rather than the one just presented
+    // (vkQueuePresentKHR).
+    bool              present_finished = false;
     WGPULimits        limits = {};
     char              adapter_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {};
 };
