@@ -40,6 +40,8 @@ public:
     static std::unique_ptr<DataArchive> OpenDisc(const std::filesystem::path &disc,
                                                  const std::filesystem::path &overlay);
 
+    ~DataArchive();
+
     /**
      * Returns the number of files listed by the archive.
      */
@@ -79,7 +81,19 @@ private:
     mutable std::mutex          stream_mutex_;
     mutable std::ifstream       stream_;
     std::uint64_t               central_directory_offset_ = 0;
+    int                         disc_file_ = -1; /**< DATA.DAT's descriptor, read with pread. */
 };
+
+/**
+ * Reads size bytes at offset with as few system calls as the file system allows. An ifstream reads in its
+ * buffer's small steps, each a round trip to the browser's storage on the web.
+ */
+bool DataArchiveReadAt(int file, std::uint64_t offset, void *output, std::size_t size);
+
+/**
+ * Reads a whole file the same way; false if it cannot be opened or is not size bytes.
+ */
+bool DataArchiveReadFile(const std::filesystem::path &path, void *output, std::size_t size);
 
 /**
  * Reports whether the data root has a sibling data.zip archive or, on the web, a disc
