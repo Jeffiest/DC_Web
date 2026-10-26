@@ -262,8 +262,8 @@ emscripten_fiber_t draw_fiber;
 
 void FiberEntry(void *arg) {
     auto *job = static_cast<FiberJob *>(arg);
-    DrawFrames(job->frames);
     Readback("readback in a fiber");
+    DrawFrames(job->frames);
     job->done = true;
     emscripten_fiber_swap(&draw_fiber, &main_fiber);
 }
@@ -277,12 +277,9 @@ int main(int argc, char **argv) {
         std::printf("probe: done, %d failed\n", failures + 1);
         return 1;
     }
-    ConfigureSurface();
+    // Readbacks before the canvas: headless Chromium on SwiftShader loses the device once a canvas presents.
     Readback("readback");
-    if (surface != nullptr) {
-        DrawFrames(frames / 2);
-    }
-    Readback("readback after frames");
+    ConfigureSurface();
 
     // The rest from a fiber, as the game's PS2 threads run.
     static char main_asyncify[256 * 1024];
@@ -294,6 +291,9 @@ int main(int argc, char **argv) {
                           sizeof(fiber_asyncify));
     emscripten_fiber_swap(&main_fiber, &draw_fiber);
     Report("fiber", job.done);
+    if (surface != nullptr) {
+        DrawFrames(frames / 2);
+    }
 
     char detail[32];
     std::snprintf(detail, sizeof(detail), "%d drawn", frames_drawn);

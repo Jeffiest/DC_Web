@@ -9,6 +9,12 @@
 #include "gfx/profile.hpp"
 #include "kazarov/log.hpp"
 
+#ifdef __EMSCRIPTEN__
+// The web build's Vulkan runs on WebGPU, which shares no memory with the CPU: what a span holds is uploaded
+// at the next submit (port/web/vulkan).
+extern "C" void vkWebGpuMarkWritten(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
+#endif
+
 namespace gfx::detail {
 
 namespace {
@@ -377,6 +383,9 @@ TransientSpan AllocateFromChunks(std::vector<TransientChunk> &chunks, uint32_t &
         VkDeviceSize    offset = AlignUp(chunk.used, align);
         if (offset + size <= chunk.buffer.size) {
             chunk.used = offset + size;
+#ifdef __EMSCRIPTEN__
+            vkWebGpuMarkWritten(chunk.buffer.buffer, offset, size);
+#endif
             return TransientSpan{chunk.buffer.buffer, offset, chunk.buffer.memory.mapped + offset};
         }
     }
@@ -391,6 +400,9 @@ TransientSpan AllocateFromChunks(std::vector<TransientChunk> &chunks, uint32_t &
         chunk.buffer = CreateBuffer(bytes, usage, true);
     }
     chunk.used = size;
+#ifdef __EMSCRIPTEN__
+    vkWebGpuMarkWritten(chunk.buffer.buffer, 0, size);
+#endif
     chunks.push_back(chunk);
     current = static_cast<uint32_t>(chunks.size() - 1);
     return TransientSpan{chunk.buffer.buffer, 0, chunk.buffer.memory.mapped};

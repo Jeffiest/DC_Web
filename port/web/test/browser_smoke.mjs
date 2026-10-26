@@ -14,7 +14,12 @@ const note = (text) => {
     console.log(text);
 };
 
-const browser = await chromium.launch();
+// WebGPU on SwiftShader's Vulkan, so the renderer runs without a GPU. Here a presented canvas loses the
+// device, so the game runs --offscreen.
+const browser = await chromium.launch({
+    args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
+        '--use-webgpu-adapter=swiftshader', '--disable-vulkan-surface'],
+});
 try {
     const page = await browser.newPage();
     page.on('console', (message) => note(`[${message.type()}] ${message.text()}`));

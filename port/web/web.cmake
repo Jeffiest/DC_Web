@@ -1,9 +1,10 @@
 # The browser build (PLATFORM WEB), included by port/CMakeLists.txt with Emscripten's toolchain.
 #
-# This first stage builds the game and Kazarov's host code to WebAssembly unchanged where it can:
+# The game and Kazarov's host code build to WebAssembly unchanged where they can:
 # - SDL3 is built from source for Emscripten.
-# - Browsers have no Vulkan. The renderer compiles against Vulkan's headers and links stubs that fail
-#   (gen_vk_stubs.py), until it gets a WebGPU backend; RendererInit cannot start yet.
+# - Browsers have no Vulkan. The renderer compiles against Vulkan's headers, and vulkan/ implements the
+#   commands it uses on WebGPU (Emscripten's emdawnwebgpu port); weak stubs that fail stand for the rest
+#   (gen_vk_stubs.py).
 # - The PS2 threads are Emscripten fibers (sce/eekernel_threads.cpp), which need Asyncify.
 # - The game runs on a pthread (PROXY_TO_PTHREAD), so its blocking waits do not stall the page.
 
@@ -48,10 +49,25 @@ target_compile_options(dc_vk_stubs PRIVATE -Wno-unused-parameter)
 add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
 set_target_properties(Vulkan::Vulkan PROPERTIES INTERFACE_LINK_LIBRARIES dc_vk_stubs)
 
-# Kazarov's host library with the arena memory replaced: Emscripten's mmap has no reservations or guard pages.
+# The renderer's shaders in WGSL, for Vulkan on WebGPU.
+set(DC_WGSL ${CMAKE_BINARY_DIR}/web/wgsl.cpp)
+file(GLOB DC_WGSL_SOURCES CONFIGURE_DEPENDS ${DC_WEB_DIR}/vulkan/shaders/*.wgsl)
+add_custom_command(OUTPUT ${DC_WGSL}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/web
+    COMMAND ${Python3_EXECUTABLE} ${DC_WEB_DIR}/vulkan/embed_wgsl.py ${DC_WEB_DIR}/vulkan/shaders ${DC_WGSL}
+    DEPENDS ${DC_WEB_DIR}/vulkan/embed_wgsl.py ${DC_WGSL_SOURCES}
+    COMMENT "Embedding the WGSL shaders"
+    VERBATIM)
+
+# Kazarov's host library with the arena memory replaced (Emscripten's mmap has no reservations or guard
+# pages) and Vulkan on WebGPU added.
 function(dc_web_host target)
     set_source_files_properties(${KZ_PORT_ROOT}/platform/memory.cpp PROPERTIES HEADER_FILE_ONLY ON)
-    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/memory.cpp)
+    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/memory.cpp
+        ${DC_WEB_DIR}/vulkan/device.cpp ${DC_WEB_DIR}/vulkan/objects.cpp ${DC_WEB_DIR}/vulkan/commands.cpp
+        ${DC_WGSL})
+    target_include_directories(${target} PRIVATE ${DC_WEB_DIR}/vulkan)
+    target_compile_options(${target} PRIVATE --use-port=emdawnwebgpu)
 endfunction()
 
 # The desktop-only units, replaced.
@@ -82,10 +98,14 @@ add_custom_target(dc_web_site
     COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_SITE} ${CMAKE_BINARY_DIR}
     COMMENT "Copying the web page")
 
-# What the page loads. The game runs on a pthread; the main thread keeps the page responsive. WasmFS
-# mounts the browser's storage (src/storage.cpp). lang/ and glyphs/, which the game reads beside its
-# executable, are preloaded into the root: the executable is ./this.program there.
+# What the page loads. The game runs on a pthread; the main thread keeps the page responsive, and the canvas
+# is handed to the game's thread, where WebGPU draws to it. WasmFS mounts the browser's storage
+# (src/storage.cpp). lang/ and glyphs/, which the game reads beside its executable, are preloaded into the
+# root: the executable is ./this.program there.
 set(DC_WEB_LINK_OPTIONS
+    --use-port=emdawnwebgpu
+    -sOFFSCREENCANVAS_SUPPORT=1
+    "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas"
     -sWASMFS=1
     "SHELL:--preload-file ${CMAKE_BINARY_DIR}/lang@/lang"
     "SHELL:--preload-file ${CMAKE_BINARY_DIR}/glyphs@/glyphs"

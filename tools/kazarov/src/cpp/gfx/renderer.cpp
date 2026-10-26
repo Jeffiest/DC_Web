@@ -27,6 +27,11 @@
 #include "gfx/profile.hpp"
 #include "kazarov/log.hpp"
 
+#ifdef __EMSCRIPTEN__
+// The page's canvas as a surface, from the web build's Vulkan on WebGPU (port/web/vulkan).
+extern "C" VkResult vkCreateCanvasSurfaceWEB(VkInstance instance, VkSurfaceKHR *surface);
+#endif
+
 namespace gfx {
 
 namespace detail {
@@ -260,6 +265,12 @@ void CreateInstance() {
     }
 
     std::vector<const char *> extensions;
+#ifdef __EMSCRIPTEN__
+    // The web build's Vulkan draws to the page's canvas (port/web/vulkan); SDL has no Vulkan there.
+    if (!g.config.offscreen) {
+        extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+    }
+#else
     if (!g.config.offscreen) {
         uint32_t           sdl_count = 0;
         const char *const *sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_count);
@@ -268,6 +279,7 @@ void CreateInstance() {
         }
         extensions.assign(sdl_extensions, sdl_extensions + sdl_count);
     }
+#endif
     // Drivers that implement Vulkan on another API (MoltenVK on Metal) are only
     // enumerated for an instance that says it handles VK_KHR_portability_subset.
     bool portability = InstanceHasExtension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
@@ -1500,9 +1512,15 @@ void RendererInit(SDL_Window *window, const RendererConfig &config) {
     g.offscreen = config.offscreen;
     g.layout = config.layout;
     CreateInstance();
+#ifdef __EMSCRIPTEN__
+    if (!g.offscreen && vkCreateCanvasSurfaceWEB(g.instance, &g.surface) != VK_SUCCESS) {
+        Fatal("the page's canvas cannot be drawn to with WebGPU");
+    }
+#else
     if (!g.offscreen && !SDL_Vulkan_CreateSurface(window, g.instance, nullptr, &g.surface)) {
         Fatal("SDL_Vulkan_CreateSurface: %s", SDL_GetError());
     }
+#endif
     PickPhysicalDevice();
     CreateDevice();
     CreateFrames();

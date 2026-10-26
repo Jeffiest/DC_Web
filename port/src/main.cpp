@@ -627,6 +627,11 @@ int Run(int argc, const char **argv) {
             renderer.render_thread = *parsed;
         }
     }
+#if defined(__EMSCRIPTEN__)
+    // WebGPU's objects belong to the thread that made the device (port/web/vulkan): the game's.
+    renderer.render_thread = gfx::RenderThreadMode::Off;
+    SDL_setenv_unsafe("KZ_RENDER_THREAD", "off", 1);
+#endif
     if (options.headless || options.screenshot != nullptr) {
         renderer.render_thread = gfx::RenderThreadMode::Off;
         // The renderer also reads this override; deterministic runs take precedence over it.
