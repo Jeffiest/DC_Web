@@ -901,7 +901,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *equals = i + 1 < argc && std::strcmp(argv[i], "--env") == 0 ? std::strchr(argv[i + 1], '=') : nullptr;
         if (equals != nullptr) {
-            const std::string name(argv[i + 1], equals);
+            const std::string name(argv[i + 1], static_cast<std::size_t>(equals - argv[i + 1]));
             setenv(name.c_str(), equals + 1, 1);
             std::printf("env: %s\n", argv[i + 1]);
             i++;
