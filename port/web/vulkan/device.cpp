@@ -802,6 +802,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR ha
 // the browser has the canvas: they tell a frame drawn wrong from one the browser shows wrong.
 std::atomic<int> g_capture_frames{0};
 
+// DC_WEBGPU_SERIAL_FRAMES=1: each frame is finished on the GPU before the next is begun, as a capture's are. On
+// Android (Mali) frames flicker that capture right; this tells whether frames overlapping on the GPU is why.
+static bool SerialFrames() {
+    static const bool serial = [] {
+        const char *value = std::getenv("DC_WEBGPU_SERIAL_FRAMES");
+        const bool  on = value != nullptr && std::strcmp(value, "1") == 0;
+        if (on) {
+            std::fprintf(stderr, "webgpu: each frame finishes on the GPU before the next begins\n");
+        }
+        return on;
+    }();
+    return serial;
+}
+
 // Reads the frame back and hands it to the page as RGBA, opaque.
 static void CaptureFrame(Image *image, uint32_t width, uint32_t height) {
     const uint32_t       row = width * 4;
@@ -923,6 +937,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
         auto              *chain = Get<Swapchain>(info->pSwapchains[i]);
         Image             *image = chain->images[info->pImageIndices[i]];
         VkResult           result = VK_SUCCESS;
+        if (SerialFrames()) {
+            WaitForSerial(SubmitSerial());
+        }
         if (g_capture_frames.load() > 0 && image->texture != nullptr) {
             CaptureFrame(image, chain->width, chain->height);
         }
