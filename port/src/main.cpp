@@ -886,7 +886,10 @@ int func_01DD2220() {
 #if defined(__EMSCRIPTEN__)
 // WebAssembly's startup calls only the standard two-argument main; the tagged one below still replaces the
 // game's, which the port override script finds by its tag whatever the condition around it.
+void WebMountStorage();
+
 int main(int argc, char **argv) {
+    WebMountStorage();
     return Run(argc, const_cast<const char **>(argv));
 }
 #else

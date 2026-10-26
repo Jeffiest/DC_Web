@@ -56,7 +56,8 @@ endfunction()
 
 # The desktop-only units, replaced.
 function(dc_web_port target)
-    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/discord.cpp ${DC_WEB_DIR}/src/firstrun.cpp)
+    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/discord.cpp ${DC_WEB_DIR}/src/firstrun.cpp
+        ${DC_WEB_DIR}/src/storage.cpp)
 endfunction()
 
 # wasm-ld has no --defsym. The two names the other platforms alias at link time are aliases appended to
@@ -75,8 +76,19 @@ function(dc_web_alias_footer unit copy)
     set(DC_WEB_FOOTER_COMMAND COMMAND ${Python3_EXECUTABLE} ${DC_WEB_DIR}/append.py ${footer} ${copy} PARENT_SCOPE)
 endfunction()
 
-# What the page loads. The game runs on a pthread; the main thread keeps the page responsive.
+# The page around the game (site/): copied beside darkcloud.js, so the build directory serves as is.
+file(GLOB DC_WEB_SITE CONFIGURE_DEPENDS ${DC_WEB_DIR}/site/*)
+add_custom_target(dc_web_site
+    COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_SITE} ${CMAKE_BINARY_DIR}
+    COMMENT "Copying the web page")
+
+# What the page loads. The game runs on a pthread; the main thread keeps the page responsive. WasmFS
+# mounts the browser's storage (src/storage.cpp). lang/ and glyphs/, which the game reads beside its
+# executable, are preloaded into the root: the executable is ./this.program there.
 set(DC_WEB_LINK_OPTIONS
+    -sWASMFS=1
+    --preload-file ${CMAKE_BINARY_DIR}/lang@/lang
+    --preload-file ${CMAKE_BINARY_DIR}/glyphs@/glyphs
     -sPROXY_TO_PTHREAD=1
     -sASYNCIFY=1
     -sALLOW_MEMORY_GROWTH=1

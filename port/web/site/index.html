@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dark Cloud</title>
+<style>
+  :root { color-scheme: dark; --bg: #0d0d12; --fg: #e6e6ea; --dim: #8a8a96; --accent: #c9a24a; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 8px; }
+  p { color: var(--dim); margin: 0 0 12px; }
+  canvas { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; margin: 12px 0; }
+  button, label.button { background: var(--accent); color: #111; border: 0; padding: 8px 14px; border-radius: 4px;
+    font: inherit; cursor: pointer; display: inline-block; }
+  button.secondary { background: #2a2a33; color: var(--fg); }
+  input[type=file] { display: none; }
+  progress { width: 100%; }
+  pre { background: #000; color: #b8b8c0; padding: 8px; height: 240px; overflow: auto; font-size: 12px;
+    white-space: pre-wrap; word-break: break-all; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dark Cloud</h1>
+  <p id="status">Starting…</p>
+  <div id="pick" hidden>
+    <p>Choose the <code>data.zip</code> made from your own disc with <code>dcdata</code>. It is copied into this
+      browser's storage once and never leaves your computer.</p>
+    <label class="button">Choose data.zip<input id="file" type="file" accept=".zip"></label>
+  </div>
+  <progress id="progress" hidden></progress>
+  <div id="ready" hidden>
+    <button id="start">Start</button>
+    <button id="forget" class="secondary">Remove data.zip</button>
+  </div>
+  <canvas id="canvas" tabindex="-1"></canvas>
+  <pre id="log"></pre>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>

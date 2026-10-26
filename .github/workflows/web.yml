@@ -4,7 +4,7 @@ name: web
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   workflow_dispatch:
 
 permissions:
@@ -67,7 +67,30 @@ jobs:
           set +e
           timeout 180 node darkcloud.js --headless --offscreen --frames 30 --save smoke-save > ../../../ci/smoke.log 2>&1
           echo "exit=$?" >> ../../../ci/smoke.log
-          cp darkcloud.js darkcloud.wasm ../../../ci/
+          cp darkcloud.js darkcloud.wasm darkcloud.data ../../../ci/
+
+      # The page in headless Chromium from a plain static server, as GitHub Pages serves it: sw.js has to
+      # isolate it, and the game has to read a data.zip the page stored in the browser's storage.
+      - name: Smoke run in Chromium
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          cd port/build/web
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('smoke-data.zip', 'w') as archive:
+              archive.writestr('data/smoke.txt', 'not the game data\n')
+          PY
+          (python3 -m http.server 8000 > /dev/null 2>&1 &)
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.49.1 > /dev/null
+          npx playwright install --with-deps chromium > /dev/null
+          cp "$GITHUB_WORKSPACE/port/web/test/browser_smoke.mjs" .
+          timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
+            "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
 
       - name: Publish the log to ci-logs
         if: always()
@@ -89,5 +112,9 @@ jobs:
           path: |
             port/build/web/darkcloud.js
             port/build/web/darkcloud.wasm
+            port/build/web/darkcloud.data
+            port/build/web/index.html
+            port/build/web/shell.js
+            port/build/web/sw.js
             port/build/web/lang
             port/build/web/glyphs
