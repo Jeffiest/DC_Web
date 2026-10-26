@@ -52,7 +52,7 @@ jobs:
             build=${PIPESTATUS[0]}
           fi
           echo "configure=$configure build=$build" | tee ci/status.txt
-          grep -E "error:|Error |undefined symbol|FAILED:" ci/build.log | sort | uniq -c | sort -rn > ci/errors.txt || true
+          grep -E "error:|Error |undefined symbol|FAILED:|Wshift-count-overflow|Wbitfield-width" ci/build.log | sort | uniq -c | sort -rn > ci/errors.txt || true
           ls -la port/build/web/darkcloud* >> ci/status.txt 2>&1 || true
           [ "$configure" -eq 0 ] && [ "$build" -eq 0 ]
 

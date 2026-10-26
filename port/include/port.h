@@ -54,12 +54,13 @@ T &Ps2Lvalue(T &&value) {
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #pragma push_macro("NULL")
 #define size_t ps2_size_t
-#ifdef _WIN32
-// Windows uses LLP64; the GS register bitfields require the PS2's 64-bit u_long.
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+// Windows (LLP64) and wasm32 (ILP32) have a 32-bit long; the GS register bitfields require the PS2's
+// 64-bit u_long.
 #define u_long ps2_native_u_long
 #endif
 #include "types.h"
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
 #undef u_long
 #define u_long u64
 #endif
