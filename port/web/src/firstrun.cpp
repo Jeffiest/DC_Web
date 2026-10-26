@@ -4,21 +4,25 @@
 // - data.zip, or a data directory with files: nothing to do.
 // - disc.iso, a disc image, or disc/, a directory holding DATA.DAT and DATA.HD2: the game reads the disc's
 //   files in place (DataArchive::OpenDisc), and the data directory holds only what dcdata writes beside them
-//   (normalized/, data.hd2, languages.json and the aliases). Those are made here once, from the few files
-//   they come from: writing every file of the disc to the browser's storage takes many minutes on a phone.
-//   languages.json, written last, marks them done; until it is there, they are made again from the start.
+//   (normalized/, data.hd2, languages.json and the aliases). Those are made here once, from the files they
+//   come from, which are copied into memory, not the browser's storage: making a file there takes seconds on a
+//   phone. Only what is made is written there. languages.json, written last, marks it done; until it is
+//   there, it is made again from the start.
 //
 // Progress goes to stdout as "extract: <files> <total files> <bytes> <total bytes>", which the page shows.
 
 #include "platform/firstrun.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <exception>
 #include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <vector>
+
+#include <emscripten/wasmfs.h>
 
 #include "platform/data_archive.hpp"
 #include "platform/paths.hpp"
@@ -60,9 +64,14 @@ void FirstRunIfNoData(bool) {
         return;
     }
     // What a data directory holds is the disc's own copy or an earlier start's; both are made again.
-    const fs::path staging = root.parent_path() / "prepare";
+    const fs::path staging = "/prepare";
     fs::remove_all(root, error);
+    fs::remove_all(root.parent_path() / "prepare", error); // where an earlier version staged them
     fs::remove_all(staging, error);
+    if (int failed = wasmfs_create_directory(staging.c_str(), 0777, wasmfs_create_memory_backend()); failed != 0) {
+        std::fprintf(stderr, "cannot make %s in memory: %s\n", staging.c_str(), std::strerror(-failed));
+        return;
+    }
     std::printf("extract: preparing the game data from %s\n", disc.filename().string().c_str());
     std::fflush(stdout);
     try {
@@ -118,7 +127,7 @@ void FirstRunIfNoData(bool) {
         for (const fs::path &path : kept) {
             const fs::path target = root / path.lexically_relative(staging);
             fs::create_directories(target.parent_path());
-            fs::rename(path, target);
+            fs::copy_file(path, target, fs::copy_options::overwrite_existing);
         }
         dcdata::WriteLanguages(root, release);
         std::printf("extract: the disc is %s\n", std::string(release.name).c_str());

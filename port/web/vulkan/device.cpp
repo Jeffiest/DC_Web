@@ -681,7 +681,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice, const VkSwapchainC
     WGPUSurfaceConfiguration configuration = {};
     configuration.device = g.device;
     configuration.format = TextureFormat(info->imageFormat);
-    configuration.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst;
+    configuration.usage = WGPUTextureUsage_CopyDst;
     configuration.width = info->imageExtent.width;
     configuration.height = info->imageExtent.height;
     configuration.alphaMode = WGPUCompositeAlphaMode_Opaque;
@@ -691,6 +691,18 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice, const VkSwapchainC
     auto *chain = new Swapchain;
     chain->width = info->imageExtent.width;
     chain->height = info->imageExtent.height;
+    // The frames are drawn into textures of the layer's own and copied to the canvas when presented. The canvas's
+    // texture is shown as soon as this thread yields, which the renderer's waits do mid-frame on a slow GPU: drawn
+    // into directly, it flashed half-drawn or empty frames.
+    WGPUTextureDescriptor descriptor = {};
+    descriptor.label = View("swapchain image");
+    descriptor.dimension = WGPUTextureDimension_2D;
+    descriptor.size = {chain->width, chain->height, 1};
+    descriptor.format = configuration.format;
+    descriptor.mipLevelCount = 1;
+    descriptor.sampleCount = 1;
+    descriptor.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst | WGPUTextureUsage_CopySrc |
+                       WGPUTextureUsage_TextureBinding;
     for (uint32_t i = 0; i < kSwapchainImages; i++) {
         auto *image = new Image;
         image->format = configuration.format;
@@ -698,6 +710,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice, const VkSwapchainC
         image->width = chain->width;
         image->height = chain->height;
         image->swapchain = true;
+        image->texture = wgpuDeviceCreateTexture(g.device, &descriptor);
         chain->images.push_back(image);
     }
     *swapchain = Handle<VkSwapchainKHR>(chain);
@@ -731,29 +744,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice, VkSwapchainKHR 
 VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR handle, uint64_t, VkSemaphore,
                                                      VkFence fence, uint32_t *index) {
     AssertDeviceThread(__func__);
-    auto              *chain = Get<Swapchain>(handle);
-    WGPUSurfaceTexture current = {};
-    wgpuSurfaceGetCurrentTexture(g.surface, &current);
-    if (current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
-        current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
-        if (current.texture != nullptr) {
-            wgpuTextureRelease(current.texture);
-        }
-        return VK_ERROR_OUT_OF_DATE_KHR;
-    }
-    // The canvas resizes with the page; a texture of another size means the swapchain is stale.
-    if (wgpuTextureGetWidth(current.texture) != chain->width || wgpuTextureGetHeight(current.texture) != chain->height) {
-        wgpuTextureRelease(current.texture);
-        return VK_ERROR_OUT_OF_DATE_KHR;
-    }
+    auto          *chain = Get<Swapchain>(handle);
     const uint32_t slot = chain->next;
     chain->next = (chain->next + 1) % kSwapchainImages;
-    Image *image = chain->images[slot];
-    if (image->texture != nullptr) {
-        wgpuTextureRelease(image->texture);
-    }
-    image->texture = current.texture;
-    image->generation++;
     chain->acquired = static_cast<int32_t>(slot);
     if (fence != VK_NULL_HANDLE) {
         Get<Fence>(fence)->signaled = true;
@@ -764,20 +757,51 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR ha
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR *info) {
     AssertDeviceThread(__func__);
+    VkResult overall = VK_SUCCESS;
     for (uint32_t i = 0; i < info->swapchainCount; i++) {
-        auto *chain = Get<Swapchain>(info->pSwapchains[i]);
-        Image *image = chain->images[info->pImageIndices[i]];
-        if (image->texture != nullptr) {
-            wgpuTextureRelease(image->texture);
-            image->texture = nullptr;
+        auto              *chain = Get<Swapchain>(info->pSwapchains[i]);
+        Image             *image = chain->images[info->pImageIndices[i]];
+        VkResult           result = VK_SUCCESS;
+        WGPUSurfaceTexture current = {};
+        wgpuSurfaceGetCurrentTexture(g.surface, &current);
+        if (current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
+            current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
+            result = VK_ERROR_OUT_OF_DATE_KHR;
+        } else {
+            // The canvas resizes with the page; a texture of another size means the swapchain is stale. What
+            // overlaps is still shown, so the frame is not blank.
+            const uint32_t width = wgpuTextureGetWidth(current.texture);
+            const uint32_t height = wgpuTextureGetHeight(current.texture);
+            if (width != chain->width || height != chain->height) {
+                result = VK_ERROR_OUT_OF_DATE_KHR;
+            }
+            WGPUCommandEncoder       encoder = wgpuDeviceCreateCommandEncoder(g.device, nullptr);
+            WGPUTexelCopyTextureInfo from = {};
+            from.texture = image->texture;
+            from.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyTextureInfo to = {};
+            to.texture = current.texture;
+            to.aspect = WGPUTextureAspect_All;
+            const WGPUExtent3D extent = {std::min(width, chain->width), std::min(height, chain->height), 1};
+            wgpuCommandEncoderCopyTextureToTexture(encoder, &from, &to, &extent);
+            WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+            wgpuQueueSubmit(g.queue, 1, &commands);
+            wgpuCommandBufferRelease(commands);
+            wgpuCommandEncoderRelease(encoder);
+        }
+        if (current.texture != nullptr) {
+            wgpuTextureRelease(current.texture);
         }
         if (info->pResults != nullptr) {
-            info->pResults[i] = VK_SUCCESS;
+            info->pResults[i] = result;
+        }
+        if (result != VK_SUCCESS) {
+            overall = result;
         }
     }
     // The browser shows the canvas once this thread yields to it; there is no present call.
     emscripten_sleep(0);
-    return VK_SUCCESS;
+    return overall;
 }
 
 // --- Synchronisation and submission -------------------------------------------------------------------------
