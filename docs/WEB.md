@@ -43,15 +43,20 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 - **Exceptions** are Emscripten's JavaScript-based ones (`-fexceptions`); native wasm exceptions do not
   work with Asyncify.
 - Discord and the first-run extractor are stubbed, as on the Switch.
-- **Game data** is the player's own: the `data.zip` that `dcdata` makes from their disc on the desktop.
-  The page copies it into the origin private file system as `chronicle/data.zip` once. The game mounts
+- **Game data** is the player's own, from their PAL disc. The page copies what they choose into the origin
+  private file system under `chronicle/` once: the disc image (`disc.iso`), the disc's `DATA.DAT` and
+  `DATA.HD2` (`disc/`), an extracted `data` folder (`data/`), or the `data.zip` dcdata packs. The game mounts
   that file system at `/opfs` through WasmFS (`port/web/src/storage.cpp`) and starts with
-  `--data /opfs/chronicle/data --save /opfs/chronicle/save`, so the archive is read in place a seek at a
-  time, never loaded whole into memory, and saves persist. OPFS needs Chromium or Firefox; Safari lacks
-  `createWritable` on the page.
-- **The page** (`port/web/site/`): `shell.js` handles the data and starts the game; `sw.js` is a service
-  worker that adds COOP/COEP for hosts that cannot send them, GitHub Pages among them, and `shell.js`
-  reloads once under it. `?args=--headless+--frames+30` on the URL passes extra arguments to the game.
+  `--data /opfs/chronicle/data --save /opfs/chronicle/save`; saves persist there. A disc is extracted by the
+  game at its first start with dcdata's own code (`port/web/src/firstrun.cpp`), which then checks every
+  file and removes the disc; an extraction cut short resumes at the next start. `data.zip` is read in
+  place a seek at a time. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
+- **Saves**: Kazarov's `FilesWrite` commits a new file with an exclusive rename or a hard link, neither of
+  which WasmFS has; on the web it checks the name is free and renames (`platform/files.cpp`).
+- **The page** (`port/web/site/`): `shell.js` stores the data and starts the game, which then fills the
+  window, scaled to fit, with Fullscreen and Log buttons and the extraction's progress over it; `sw.js` is a
+  service worker that adds COOP/COEP for hosts that cannot send them, GitHub Pages among them, and
+  `shell.js` reloads once under it. `?args=--headless+--frames+30` on the URL passes extra arguments.
 
 ## Status
 
