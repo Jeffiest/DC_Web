@@ -109,12 +109,19 @@ bool RequestAdapter() {
     if (g.adapter == nullptr) {
         return false;
     }
-    g.dual_source = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_DualSourceBlending);
-    g.depth32_stencil8 = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_Depth32FloatStencil8);
-    // DC_WEBGPU_NO_CLIP_DISTANCES=1 takes the fallback where the adapter has them, as the web workflow tests it.
-    const char *no_clip = std::getenv("DC_WEBGPU_NO_CLIP_DISTANCES");
-    g.clip_distances = wgpuAdapterHasFeature(g.adapter, WGPUFeatureName_ClipDistances) &&
-                       (no_clip == nullptr || std::strcmp(no_clip, "1") != 0);
+    // DC_WEBGPU_NO_<feature>=1 takes the fallback where the adapter has the feature: the web workflow tests the
+    // clip distances' that way, and a player can tell a driver's fault in one from the layer's.
+    auto feature = [](WGPUFeatureName name, const char *off) {
+        const char *value = std::getenv(off);
+        if (value != nullptr && std::strcmp(value, "1") == 0) {
+            std::fprintf(stderr, "webgpu: %s: left unused\n", off);
+            return false;
+        }
+        return static_cast<bool>(wgpuAdapterHasFeature(g.adapter, name));
+    };
+    g.dual_source = feature(WGPUFeatureName_DualSourceBlending, "DC_WEBGPU_NO_DUAL_SOURCE");
+    g.depth32_stencil8 = feature(WGPUFeatureName_Depth32FloatStencil8, "DC_WEBGPU_NO_DEPTH32_STENCIL8");
+    g.clip_distances = feature(WGPUFeatureName_ClipDistances, "DC_WEBGPU_NO_CLIP_DISTANCES");
     wgpuAdapterGetLimits(g.adapter, &g.limits);
     WGPUAdapterInfo info = {};
     wgpuAdapterGetInfo(g.adapter, &info);
