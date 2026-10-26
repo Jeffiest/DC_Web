@@ -339,7 +339,7 @@ WGPUBindGroup PushedBindGroup(DescriptorSetLayout *layout, const std::vector<Des
         const DescriptorEntry *entry = FindEntry(entries, binding.binding);
         uint64_t               id = 0;
         if (entry != nullptr && entry->view != nullptr) {
-            // A swapchain image's view changes texture each frame.
+            // An image's view follows it when it takes a new texture.
             id = entry->view->id << 16 | (entry->view->image->generation & 0xFFFF);
         } else if (entry != nullptr && entry->sampler != nullptr) {
             id = reinterpret_cast<uintptr_t>(entry->sampler);

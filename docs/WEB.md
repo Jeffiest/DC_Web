@@ -51,7 +51,9 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   (`DataArchive::OpenDisc`, `platform/data_archive.cpp`): each file of `DATA.HD2` from `DATA.DAT` a seek at a
   time, with the data folder's loose files over them. At its first start the game makes those loose files, what
   dcdata writes beside a disc's (`normalized/`, `data.hd2`, `languages.json` and the aliases), from the
-  menus, system packs and other files they come from (`port/web/src/firstrun.cpp`); `languages.json`, written last, marks them done.
+  menus, system packs and other files they come from, copied into a WasmFS memory directory rather than the
+  browser's storage, where making a file takes seconds on a phone (`port/web/src/firstrun.cpp`);
+  `languages.json`, written last, marks them done.
   Copying every file of the disc to the browser's storage took many minutes on a phone. `data.zip` is read in
   place the same way. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
 - **Saves**: Kazarov's `FilesWrite` commits a new file with an exclusive rename or a hard link, neither of
@@ -87,6 +89,9 @@ offers no timestamps, depth bounds or depth blits.
 - **Memory**: host-visible memory is a copy in wasm memory. The renderer writes it only through its
   transient allocator (`gfx/memory.cpp`), which marks each span it hands out; the marked ranges are
   uploaded when they are next submitted.
+- **The swapchain** is three textures of the layer's own; `vkQueuePresentKHR` copies the frame to the canvas's
+  current texture and yields. The canvas's texture is shown whenever the thread yields, as the renderer's fence
+  waits do mid-frame on a slow GPU, so frames drawn into it directly flashed on phones.
 - **Copies** WebGPU cannot take as they are, rows not a multiple of 256 bytes, go through an upload buffer
   with padded rows; readbacks land in map-read buffers that the fence wait unpacks. Blits that scale or
   flip, attachment clears and colour image clears are drawn by the layer's own small pipelines.

@@ -78,14 +78,14 @@ struct Buffer {
 };
 
 struct Image {
-    WGPUTexture       texture = nullptr; // a swapchain image's is the canvas's current texture
+    WGPUTexture       texture = nullptr;
     WGPUTextureFormat format = WGPUTextureFormat_Undefined;
     VkFormat          vk_format = VK_FORMAT_UNDEFINED;
     uint32_t          width = 0;
     uint32_t          height = 0;
     uint32_t          mips = 1;
     bool              swapchain = false;
-    uint32_t          generation = 0; // bumped when a swapchain image takes a new texture
+    uint32_t          generation = 0; // bumped when the image takes a new texture
 };
 
 struct ImageView {
