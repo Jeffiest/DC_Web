@@ -86,7 +86,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
           npm install --no-audit --no-fund playwright@1.63.0 > /dev/null
-          npx playwright install --with-deps chromium > /dev/null
+          # The runner already has Chromium's system libraries; apt-installing them took about nine minutes.
+          # They are installed only if the browser cannot start without them.
+          npx playwright install chromium > /dev/null
+          node -e "require('playwright').chromium.launch().then((b) => b.close())" 2> /dev/null ||
+            npx playwright install-deps chromium > /dev/null
           cp "$GITHUB_WORKSPACE/port/web/test/browser_smoke.mjs" .
           timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
