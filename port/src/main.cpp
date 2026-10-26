@@ -893,9 +893,23 @@ int func_01DD2220() {
 // game's, which the port override script finds by its tag whatever the condition around it.
 void WebMountStorage();
 
+// --env NAME=VALUE, which the page's ?args= can pass, sets an environment variable, as a browser has no
+// other way to: DC_WEBGPU_NO_CLIP_DISTANCES=1, for one, draws as on GPUs without clip distances.
 int main(int argc, char **argv) {
     WebMountStorage();
-    return Run(argc, const_cast<const char **>(argv));
+    int kept = 1;
+    for (int i = 1; i < argc; i++) {
+        const char *equals = i + 1 < argc && std::strcmp(argv[i], "--env") == 0 ? std::strchr(argv[i + 1], '=') : nullptr;
+        if (equals != nullptr) {
+            const std::string name(argv[i + 1], equals);
+            setenv(name.c_str(), equals + 1, 1);
+            std::printf("env: %s\n", argv[i + 1]);
+            i++;
+        } else {
+            argv[kept++] = argv[i];
+        }
+    }
+    return Run(kept, const_cast<const char **>(argv));
 }
 #else
 PORT_OVERRIDE int main(int argc, const char **argv, const char **envp) {

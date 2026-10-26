@@ -138,8 +138,7 @@ void FirstRunIfNoData(bool) {
         }
         for (const fs::path &path : kept) {
             const fs::path target = root / path.lexically_relative(staging);
-            fs::create_directories(target.parent_path());
-            fs::copy_file(path, target, fs::copy_options::overwrite_existing);
+            dcdata::WriteFile(target, dcdata::ReadFile(path));
         }
         dcdata::WriteLanguages(root, release);
         const auto seconds = [](auto from, auto to) { return std::chrono::duration<double>(to - from).count(); };
@@ -147,8 +146,12 @@ void FirstRunIfNoData(bool) {
                     std::string(release.name).c_str(), needed.size(), done_bytes / 1048576.0,
                     seconds(started, read), seconds(read, std::chrono::steady_clock::now()));
     } catch (const std::exception &failure) {
-        std::fprintf(stderr, "preparing the data from %s failed: %s\n", disc.filename().string().c_str(),
-                     failure.what());
+        // Left on the page over the game, which starts without what failed and tries again next time.
+        std::printf("extract: preparing the game data from %s failed: %s\n", disc.filename().string().c_str(),
+                    failure.what());
+        std::fflush(stdout);
+        fs::remove_all(staging, error);
+        return;
     }
     fs::remove_all(staging, error);
     std::printf("extract: done\n");
