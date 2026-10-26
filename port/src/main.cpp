@@ -883,6 +883,13 @@ int func_01DD2220() {
 }
 
 #ifndef DC_NO_ENTRYPOINT
+#if defined(__EMSCRIPTEN__)
+// WebAssembly's startup calls only the standard two-argument main; the tagged one below still replaces the
+// game's, which the port override script finds by its tag whatever the condition around it.
+int main(int argc, char **argv) {
+    return Run(argc, const_cast<const char **>(argv));
+}
+#else
 PORT_OVERRIDE int main(int argc, const char **argv, const char **envp) {
 #if defined(__SWITCH__)
     return SwitchMain(argc, argv, Run);
@@ -890,6 +897,7 @@ PORT_OVERRIDE int main(int argc, const char **argv, const char **envp) {
     return Run(argc, argv);
 #endif
 }
+#endif
 
 #if defined(__ANDROID__)
 // SDLActivity resolves SDL_main from the native application library.
