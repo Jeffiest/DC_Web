@@ -310,7 +310,7 @@ std::string UiScaleText(const Config &config) {
     return std::format("{:.0f}%", config.ui_scale * 100.0f);
 }
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
 int TouchOpacityCount(const Config &) { return 10; }
 
 int TouchOpacityChoice(const Config &config) { return config.touch_overlay_opacity / 10 - 1; }
@@ -637,7 +637,7 @@ const Row kDisplayRows[] = {
     SettingRow("video.ui_scale", "Interface Size",
                "\"Interface Size\"\nThe size of the HUD\nand menus, from when\nOptions closes.", UiScaleCount,
                UiScaleChoice, SetUiScale, UiScaleText),
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     SettingRow("video.touch_overlay_opacity", "Touch Opacity",
                "\"Touch Opacity\"\nHow visible the on-screen\nbuttons are.", TouchOpacityCount,
                TouchOpacityChoice, SetTouchOpacity, TouchOpacityText),

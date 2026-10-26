@@ -10,8 +10,9 @@
 #include <TargetConditionals.h>
 #endif
 
-// Touch screens get an on-screen gamepad: Android's and iOS's ports draw it over the game.
-#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+// Touch screens get an on-screen gamepad: Android's and iOS's ports draw it over the game, and on the web the
+// page does on a touch screen.
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE) || defined(__EMSCRIPTEN__)
 #define KZ_TOUCH_OVERLAY 1
 #endif
 

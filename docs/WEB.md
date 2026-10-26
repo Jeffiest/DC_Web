@@ -56,6 +56,10 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   `languages.json`, written last, marks them done.
   Copying every file of the disc to the browser's storage took many minutes on a phone. `data.zip` is read in
   place the same way. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
+- **On-screen gamepad**: on a touch screen (`pointer: coarse`) the page draws a PS2 pad over the game, D-pad,
+  face and shoulder buttons, Select, Start and both sticks, and hands its state to the game the way Android's
+  Java overlay does (`port/web/src/touch.cpp`, `KZ_TOUCH_OVERLAY`). The game hides it while a gamepad is
+  connected or a key held, and the Touch Opacity option sets how visible it is.
 - **Saves**: Kazarov's `FilesWrite` commits a new file with an exclusive rename or a hard link, neither of
   which WasmFS has; on the web it checks the name is free and renames (`platform/files.cpp`).
 - **The page** (`port/web/site/`): `shell.js` stores the data and starts the game, which then fills the

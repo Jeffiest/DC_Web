@@ -291,7 +291,7 @@ bool Inside(float x, float y, int left, int top, int right, int bottom) {
 
 void RunMouse() {
     InputMenuMouse mouse = InputTakeMenuMouse();
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     if (InputTouchOverlayVisible()) {
         mouse.dx = mouse.dy = mouse.wheel = 0.0f;
     }
