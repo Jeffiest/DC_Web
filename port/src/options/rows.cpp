@@ -284,9 +284,9 @@ int UiScaleCount(const Config &) {
     return 16;
 }
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
 int RenderScaleChoice(const Config &config) {
-    return std::clamp(static_cast<int>(std::lround(config.render_scale * 10.0f)) - 5, 0, 15);
+    return std::clamp(static_cast<int>(std::lround(ConfigRenderScale(config) * 10.0f)) - 5, 0, 15);
 }
 
 int RenderScaleCount(const Config &) { return 16; }
@@ -294,7 +294,7 @@ int RenderScaleCount(const Config &) { return 16; }
 void SetRenderScale(Config &config, int choice) { config.render_scale = (choice + 5) / 10.0f; }
 
 std::string RenderScaleText(const Config &config) {
-    return std::format("{}%", static_cast<int>(std::lround(config.render_scale * 100.0f)));
+    return std::format("{}%", static_cast<int>(std::lround(ConfigRenderScale(config) * 100.0f)));
 }
 #endif
 
@@ -653,7 +653,8 @@ const Row kDisplayRows[] = {
     GameRow<&ConfigGameOptions::soft_focus, true>("video.soft_focus", "Soft Focus", "On|Off", 0x169),
 };
 
-#if defined(__ANDROID__)
+// The browser has the window, so the web takes Android's rows: Render Resolution for Window Mode and Resolution.
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
 const Row kAndroidDisplayRows[] = {
     SettingRow("video.render_scale", "Render Resolution",
                "\"Render Resolution\"\nThe game's internal image\nsize. Lower values improve\nspeed and battery life.",
@@ -680,7 +681,7 @@ const Row kSwitchDisplayRows[] = {
 #endif
 
 std::span<const Row> DisplayRows() {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     return kAndroidDisplayRows;
 #elif defined(__SWITCH__)
     return kSwitchDisplayRows;

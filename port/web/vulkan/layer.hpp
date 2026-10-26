@@ -308,6 +308,8 @@ struct Context {
     // Whether the canvas gets the newest frame the GPU has finished rather than the one just presented
     // (vkQueuePresentKHR).
     bool              present_finished = false;
+    // Whether submissions are held to reach the GPU together at the next present (vkQueueSubmit2).
+    bool              batch_submits = false;
     WGPULimits        limits = {};
     char              adapter_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {};
 };

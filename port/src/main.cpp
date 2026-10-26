@@ -457,9 +457,9 @@ void ApplyConfigChange(const Config &before, const Config &after) {
     }
     gfx::SetPresentMode(PresentMode(after.present_mode));
     gfx::SetAnisotropy(after.anisotropy);
-#if defined(__ANDROID__)
-    if (after.render_scale != before.render_scale) {
-        gfx::SetRenderScale(after.render_scale);
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    if (ConfigRenderScale(after) != ConfigRenderScale(before)) {
+        gfx::SetRenderScale(ConfigRenderScale(after));
     }
 #endif
 #if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
@@ -638,8 +638,8 @@ int Run(int argc, const char **argv) {
         SDL_setenv_unsafe("KZ_RENDER_THREAD", "off", 1);
     }
     renderer.layout = Layout(config);
-#if defined(__ANDROID__)
-    renderer.render_scale = config.render_scale;
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    renderer.render_scale = ConfigRenderScale(config);
 #endif
     renderer.validation = renderer.validation || SettingsEnv("VULKAN_VALIDATION") != nullptr;
     gfx::RendererInit(WindowHandle(), renderer);
@@ -651,8 +651,8 @@ int Run(int argc, const char **argv) {
     }
 #endif
     gfx::SetAnisotropy(config.anisotropy);
-#if defined(__ANDROID__)
-    gfx::SetRenderScale(config.render_scale);
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    gfx::SetRenderScale(ConfigRenderScale(config));
 #endif
 
     audio::DefaultMixer().SetMasterGain(config.master_volume);
