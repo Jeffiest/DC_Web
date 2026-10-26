@@ -138,3 +138,40 @@ add_custom_command(TARGET webgpu_probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/probe/probe.html ${CMAKE_BINARY_DIR}
     VERBATIM)
 add_dependencies(webgpu_probe dc_web_site)
+
+# Kazarov's renderer tests against Vulkan on WebGPU, for the browser (test/gfx_tests.html). Not built by
+# default: `cmake --build --preset web --target kazarov_gfx_tests`. The render thread and depth planes
+# cases need what the web leaves out (a worker thread on the device, bindless textures).
+function(dc_web_gfx_tests)
+    FetchContent_Declare(googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.18.0
+        GIT_SHALLOW TRUE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+    file(GLOB tests CONFIGURE_DEPENDS ${KZ_PORT_ROOT}/tests/gfx_*_test.cpp)
+    list(FILTER tests EXCLUDE REGEX "gfx_(render_thread|depth_planes)_test\\.cpp$")
+    add_executable(kazarov_gfx_tests EXCLUDE_FROM_ALL ${DC_WEB_DIR}/test/gfx_tests_main.cpp ${tests})
+    set_target_properties(kazarov_gfx_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    target_include_directories(kazarov_gfx_tests PRIVATE ${KZ_PORT_INCLUDE_ROOT}/tests ${KZ_PORT_INCLUDE_ROOT}
+        ${CMAKE_BINARY_DIR}/kz_port/generated)
+    target_link_libraries(kazarov_gfx_tests PRIVATE dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan
+        fastgltf::fastgltf nlohmann_json::nlohmann_json GTest::gtest)
+    target_compile_options(kazarov_gfx_tests PRIVATE --use-port=emdawnwebgpu)
+    target_link_options(kazarov_gfx_tests PRIVATE
+        --use-port=emdawnwebgpu
+        -sPROXY_TO_PTHREAD=1
+        -sASYNCIFY=1
+        -sALLOW_MEMORY_GROWTH=1
+        -sINITIAL_MEMORY=268435456
+        -sSTACK_SIZE=4194304
+        -sDEFAULT_PTHREAD_STACK_SIZE=4194304
+        -sWASMFS=1
+        -sEXIT_RUNTIME=1
+        -sENVIRONMENT=web,worker
+        -Wl,--error-limit=0)
+    add_custom_command(TARGET kazarov_gfx_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/test/gfx_tests.html ${CMAKE_BINARY_DIR}
+        VERBATIM)
+endfunction()

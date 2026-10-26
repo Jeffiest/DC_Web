@@ -92,6 +92,29 @@ jobs:
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
 
+      # Kazarov's renderer tests against Vulkan on WebGPU, built apart so their failures leave the game's alone.
+      - name: Build the renderer tests
+        id: gfx_tests
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          set +e
+          cmake --build --preset web --target kazarov_gfx_tests -- -k 0 > ci/gfx_tests_build.log 2>&1
+          status=$?
+          grep -E "error:|undefined symbol|FAILED:" ci/gfx_tests_build.log | sort | uniq -c | sort -rn > ci/gfx_tests_errors.txt
+          exit $status
+
+      - name: Renderer tests in Chromium
+        if: steps.gfx_tests.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          cd "$RUNNER_TEMP/smoke"
+          cp "$GITHUB_WORKSPACE/port/web/test/gfx_tests.mjs" .
+          timeout 900 node gfx_tests.mjs http://localhost:8000/gfx_tests.html "$GITHUB_WORKSPACE/ci/gfx_tests.log"
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/gfx_tests.log"
+
       # The WebGPU probe in Chromium on SwiftShader: device, canvas, readback and fibers on the game's thread model.
       - name: WebGPU probe in Chromium
         if: steps.build.outcome == 'success'
