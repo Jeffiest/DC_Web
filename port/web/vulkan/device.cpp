@@ -7,6 +7,8 @@
 #include <emscripten/emscripten.h>
 
 #include <algorithm>
+#include <chrono>
+#include <deque>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +31,39 @@ bool               g_have_device = false;
 
 uint64_t g_submitted = 0;
 uint64_t g_completed = 0;
+// DC_WEBGPU_FENCE_DELAY_MS: work counts as finished only this long after the GPU finished it, so a fast GPU's
+// frames meet the renderer's waits as a slow one's do.
+struct Finished {
+    uint64_t                              serial;
+    std::chrono::steady_clock::time_point at;
+};
+std::deque<Finished> g_finished;
+uint64_t             g_seen = 0;
+
+std::chrono::milliseconds FenceDelay() {
+    static const std::chrono::milliseconds delay = [] {
+        const char *value = std::getenv("DC_WEBGPU_FENCE_DELAY_MS");
+        const long  ms = value != nullptr ? std::strtol(value, nullptr, 10) : 0;
+        if (ms > 0) {
+            std::fprintf(stderr, "webgpu: GPU work counts as finished %ld ms late\n", ms);
+        }
+        return std::chrono::milliseconds(std::max(ms, 0L));
+    }();
+    return delay;
+}
+
+// The newest serial the renderer may take as finished.
+uint64_t Completed() {
+    if (FenceDelay().count() == 0) {
+        return g_completed;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    while (!g_finished.empty() && g_finished.front().at + FenceDelay() <= now) {
+        g_seen = std::max(g_seen, g_finished.front().serial);
+        g_finished.pop_front();
+    }
+    return g_seen;
+}
 
 std::unordered_set<Buffer *> g_dirty;
 
@@ -291,10 +326,10 @@ uint32_t TexelBytes(VkFormat format) { return format == VK_FORMAT_R8_UNORM ? 1 :
 
 uint64_t SubmitSerial() { return g_submitted; }
 
-uint64_t CompletedSerial() { return g_completed; }
+uint64_t CompletedSerial() { return Completed(); }
 
 void WaitForSerial(uint64_t serial) {
-    WaitUntil([serial] { return g_completed >= serial; });
+    WaitUntil([serial] { return Completed() >= serial; });
 }
 
 void MarkDirty(Buffer *buffer, VkDeviceSize offset, VkDeviceSize size) {
@@ -920,7 +955,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice, uint32_t count, const VkF
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice, VkFence fence) {
     Fence *object = Get<Fence>(fence);
-    if (!object->signaled && object->serial != 0 && g_completed >= object->serial) {
+    if (!object->signaled && object->serial != 0 && Completed() >= object->serial) {
         FinishReadbacks(object->readbacks);
         object->signaled = true;
     }
@@ -932,7 +967,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice, uint32_t count, const V
     AssertDeviceThread(__func__);
     auto ready = [&](uint32_t i) {
         Fence *fence = Get<Fence>(fences[i]);
-        return fence->signaled || (fence->serial != 0 && g_completed >= fence->serial);
+        return fence->signaled || (fence->serial != 0 && Completed() >= fence->serial);
     };
     auto satisfied = [&] {
         for (uint32_t i = 0; i < count; i++) {
@@ -981,6 +1016,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue, uint32_t count, const VkS
     callback.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void *done, void *) {
         const auto value = reinterpret_cast<uintptr_t>(done);
         g_completed = std::max<uint64_t>(g_completed, value);
+        if (FenceDelay().count() > 0) {
+            g_finished.push_back({value, std::chrono::steady_clock::now()});
+        }
     };
     callback.userdata1 = reinterpret_cast<void *>(static_cast<uintptr_t>(serial));
     wgpuQueueOnSubmittedWorkDone(g.queue, callback);
