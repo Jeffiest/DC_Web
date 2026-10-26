@@ -211,6 +211,15 @@ int RenameExclusive(const fs::path &temp, const fs::path &path) {
     return renamex_np(temp.c_str(), path.c_str(), RENAME_EXCL);
 #elif defined(__SWITCH__)
     return rename(temp.c_str(), path.c_str());
+#elif defined(__EMSCRIPTEN__)
+    // WasmFS has neither an exclusive rename nor hard links. The game is the only process on the browser's
+    // storage, so no one can take the name between this check and the rename.
+    struct stat existing;
+    if (lstat(path.c_str(), &existing) == 0) {
+        errno = EEXIST;
+        return -1;
+    }
+    return rename(temp.c_str(), path.c_str());
 #else
     errno = ENOSYS;
     return -1;
