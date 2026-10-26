@@ -221,15 +221,16 @@ void MGStretchMoveImage(sceGsTex0 *src, const CRect<int> &src_rect, sceGsTex0 *d
 void MGFillBox(const CRect<int> &rect, u_char r, u_char g, u_char b, u_char a) { MGFillBox(Rect(rect), r, g, b, a); }
 
 // The title's own CWater declares DrawVu1 with a u_long128 * where water.hpp has a RenderInfo *;
-// both reach the one body retail has.
+// both reach the one body retail has. It returns nothing, as op_c.cpp's declaration and call have it:
+// wasm-ld traps a call whose type differs from the definition's.
 class CWater {
 public:
-    int DrawVu1(RenderInfo *info, sceVif1Packet *packet, u_long128 *parent_info);
+    void DrawVu1(RenderInfo *info, sceVif1Packet *packet, u_long128 *parent_info);
 };
 
 extern "C" int DrawVu1__6CWaterFP10RenderInfoP13sceVif1PacketP1(CWater *water, RenderInfo *info,
                                                                 sceVif1Packet *draw_packet, void *parent_info);
 
-int CWater::DrawVu1(RenderInfo *info, sceVif1Packet *packet, u_long128 *parent_info) {
-    return DrawVu1__6CWaterFP10RenderInfoP13sceVif1PacketP1(this, info, packet, parent_info);
+void CWater::DrawVu1(RenderInfo *info, sceVif1Packet *packet, u_long128 *parent_info) {
+    DrawVu1__6CWaterFP10RenderInfoP13sceVif1PacketP1(this, info, packet, parent_info);
 }

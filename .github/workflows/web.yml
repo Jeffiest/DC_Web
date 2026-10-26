@@ -52,9 +52,22 @@ jobs:
             build=${PIPESTATUS[0]}
           fi
           echo "configure=$configure build=$build" | tee ci/status.txt
-          grep -E "error:|Error |undefined symbol|FAILED:|Wshift-count-overflow|Wbitfield-width" ci/build.log | sort | uniq -c | sort -rn > ci/errors.txt || true
+          grep -E "error:|Error |undefined symbol|FAILED:|Wshift-count-overflow|Wbitfield-width|signature mismatch" ci/build.log | sort | uniq -c | sort -rn > ci/errors.txt || true
           ls -la port/build/web/darkcloud* >> ci/status.txt 2>&1 || true
           [ "$configure" -eq 0 ] && [ "$build" -eq 0 ]
+
+      # No game data here, so this shows how far startup gets: the runtime, the fibers and the host setup.
+      - name: Smoke run under Node
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          cd port/build/web
+          mkdir -p smoke-save
+          set +e
+          timeout 180 node darkcloud.js --headless --offscreen --frames 30 --save smoke-save > ../../../ci/smoke.log 2>&1
+          echo "exit=$?" >> ../../../ci/smoke.log
+          cp darkcloud.js darkcloud.wasm ../../../ci/
 
       - name: Publish the log to ci-logs
         if: always()
