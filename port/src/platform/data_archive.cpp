@@ -4,7 +4,10 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -337,8 +340,8 @@ std::unique_ptr<DataArchive> DataArchive::OpenDisc(const std::filesystem::path &
     const std::vector<dcdata::Record> records = dcdata::ParseIndex(hd2);
     std::size_t                       duplicates = 0;
     archive->path_ = opened.dat.file;
-    archive->stream_.open(opened.dat.file, std::ios::binary);
-    if (!archive->stream_) {
+    archive->disc_file_ = ::open(opened.dat.file.c_str(), O_RDONLY | O_CLOEXEC);
+    if (archive->disc_file_ < 0) {
         Invalid(opened.dat.file, "cannot open the disc's DATA.DAT");
     }
     std::unordered_map<std::string, std::size_t> by_name;
@@ -379,6 +382,40 @@ std::unique_ptr<DataArchive> DataArchive::OpenDisc(const std::filesystem::path &
     return archive;
 }
 
+DataArchive::~DataArchive() {
+    if (disc_file_ >= 0) {
+        ::close(disc_file_);
+    }
+}
+
+bool DataArchiveReadAt(int file, std::uint64_t offset, void *output, std::size_t size) {
+    auto *at = static_cast<char *>(output);
+    while (size > 0) {
+        const ssize_t got = ::pread(file, at, size, static_cast<off_t>(offset));
+        if (got < 0 && errno == EINTR) {
+            continue;
+        }
+        if (got <= 0) {
+            return false;
+        }
+        at += got;
+        offset += static_cast<std::uint64_t>(got);
+        size -= static_cast<std::size_t>(got);
+    }
+    return true;
+}
+
+bool DataArchiveReadFile(const std::filesystem::path &path, void *output, std::size_t size) {
+    const int file = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (file < 0) {
+        return false;
+    }
+    char       extra = 0;
+    const bool read = DataArchiveReadAt(file, 0, output, size) && ::pread(file, &extra, 1, size) == 0;
+    ::close(file);
+    return read;
+}
+
 std::size_t DataArchive::Count() const {
     return records_.size();
 }
@@ -399,15 +436,9 @@ bool DataArchive::Read(std::size_t index, std::span<std::uint8_t> output) const 
             return false;
         }
         if (record.source == Source::kLoose) {
-            std::ifstream loose(record.loose_path, std::ios::binary);
-            loose.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
-            return static_cast<std::size_t>(loose.gcount()) == output.size();
+            return DataArchiveReadFile(record.loose_path, output.data(), output.size());
         }
-        std::scoped_lock lock(stream_mutex_);
-        stream_.clear();
-        stream_.seekg(static_cast<std::streamoff>(record.disc_offset));
-        stream_.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
-        return static_cast<std::size_t>(stream_.gcount()) == output.size();
+        return DataArchiveReadAt(disc_file_, record.disc_offset, output.data(), output.size());
     }
     if (record.entry.name.back() == '/' || record.entry.size != output.size() ||
         output.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||

@@ -15,6 +15,8 @@
 
 #include <chrono>
 #include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
 #include <cstdio>
 #include <exception>
 #include <string_view>
@@ -87,14 +89,22 @@ void FirstRunIfNoData(bool) {
                 total_bytes += record->size;
             }
         }
-        dcdata::Reader             dat(archive.dat.file);
+        const auto started = std::chrono::steady_clock::now();
+        const int  dat = ::open(archive.dat.file.c_str(), O_RDONLY | O_CLOEXEC);
+        if (dat < 0) {
+            dcdata::Fail("cannot open {}", archive.dat.file.string());
+        }
         std::vector<unsigned char> bytes;
         std::uint64_t              done_bytes = 0;
         auto                       last = std::chrono::steady_clock::time_point{};
         for (std::size_t index = 0; index < needed.size(); ++index) {
             const dcdata::Record *record = needed[index];
             bytes.resize(record->size);
-            dat.Read(archive.dat.offset + record->sector * dcdata::kSector, bytes.data(), bytes.size());
+            if (!DataArchiveReadAt(dat, archive.dat.offset + record->sector * dcdata::kSector, bytes.data(),
+                                   bytes.size())) {
+                ::close(dat);
+                dcdata::Fail("cannot read {} from the disc", record->path);
+            }
             dcdata::WriteFile(staging / record->path, bytes);
             done_bytes += record->size;
             const auto now = std::chrono::steady_clock::now();
@@ -103,7 +113,9 @@ void FirstRunIfNoData(bool) {
                 Report(index + 1, needed.size(), done_bytes, total_bytes);
             }
         }
+        ::close(dat);
         Report(needed.size(), needed.size(), done_bytes, total_bytes);
+        const auto read = std::chrono::steady_clock::now();
 
         dcdata::Normalize(staging, records);
         const dcdata::Release release = dcdata::ReleaseOf(hd2, records);
@@ -130,7 +142,10 @@ void FirstRunIfNoData(bool) {
             fs::copy_file(path, target, fs::copy_options::overwrite_existing);
         }
         dcdata::WriteLanguages(root, release);
-        std::printf("extract: the disc is %s\n", std::string(release.name).c_str());
+        const auto seconds = [](auto from, auto to) { return std::chrono::duration<double>(to - from).count(); };
+        std::printf("extract: the disc is %s; read %zu files (%.0f MiB) in %.1f s, prepared in %.1f s\n",
+                    std::string(release.name).c_str(), needed.size(), done_bytes / 1048576.0,
+                    seconds(started, read), seconds(read, std::chrono::steady_clock::now()));
     } catch (const std::exception &failure) {
         std::fprintf(stderr, "preparing the data from %s failed: %s\n", disc.filename().string().c_str(),
                      failure.what());
