@@ -172,14 +172,24 @@ bool RequestAdapter() {
         }
     }
     Copy(g.adapter_name, sizeof g.adapter_name, name.c_str());
-    // Arm's Mali GPUs (Android phones) draw frames wrong while two are on the GPU at once: some draws take the next
-    // frame's state, which showed as flicker and wrong texels that no frame read back alone had, and finishing each
-    // frame before the next was begun (DC_WEBGPU_SERIAL_FRAMES) cured it. This is the narrower wait, one submission
-    // on the GPU at a time while the CPU builds the next frame. DC_WEBGPU_ONE_FRAME=1 or 0 overrides the choice.
+    // On Arm's Mali GPUs (Android phones) the canvas showed frames before the GPU had finished drawing them: the
+    // copy to the canvas outran the frame's last draws, as flicker, frames missing their last overlays and
+    // wrong-coloured blocks, none of them in a frame read back once finished. Waiting for each frame before
+    // copying it (DC_WEBGPU_SERIAL_FRAMES) cured it at half the frame rate; showing the newest finished frame
+    // instead costs a frame of latency and no waiting. DC_WEBGPU_PRESENT_FINISHED=1 or 0 overrides the choice.
+    // DC_WEBGPU_ONE_FRAME=1 also keeps a submission off the GPU until the ones before it finish, which alone did
+    // not cure it.
     std::string vendor = text(info.vendor);
     std::transform(vendor.begin(), vendor.end(), vendor.begin(), [](unsigned char c) { return std::tolower(c); });
-    const char *one_frame = std::getenv("DC_WEBGPU_ONE_FRAME");
-    g.one_frame_on_gpu = one_frame != nullptr ? std::strcmp(one_frame, "1") == 0 : vendor == "arm";
+    auto choice = [](const char *name, bool otherwise) {
+        const char *value = std::getenv(name);
+        return value != nullptr ? std::strcmp(value, "1") == 0 : otherwise;
+    };
+    g.present_finished = choice("DC_WEBGPU_PRESENT_FINISHED", vendor == "arm");
+    g.one_frame_on_gpu = choice("DC_WEBGPU_ONE_FRAME", false);
+    if (g.present_finished) {
+        std::fprintf(stderr, "webgpu: the canvas shows the newest frame the GPU has finished\n");
+    }
     if (g.one_frame_on_gpu) {
         std::fprintf(stderr, "webgpu: one submission on the GPU at a time\n");
     }
@@ -955,6 +965,25 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
         if (g_capture_frames.load() > 0 && image->texture != nullptr) {
             CaptureFrame(image, chain->width, chain->height);
         }
+        Image *shown = image;
+        if (g.present_finished) {
+            chain->pending.push_back({image, SubmitSerial()});
+            wgpuInstanceProcessEvents(g.instance);
+            while (!chain->pending.empty() && chain->pending.front().serial <= g_completed) {
+                chain->shown = chain->pending.front().image;
+                chain->pending.pop_front();
+            }
+            // Until a frame has finished the canvas keeps what it has: taking its texture would blank it.
+            // Shown again, a frame is safe to copy: the renderer draws into its image only after the GPU has
+            // finished a newer frame, which would be shown instead.
+            if (chain->shown == nullptr) {
+                if (info->pResults != nullptr) {
+                    info->pResults[i] = VK_SUCCESS;
+                }
+                continue;
+            }
+            shown = chain->shown;
+        }
         WGPUSurfaceTexture current = {};
         wgpuSurfaceGetCurrentTexture(g.surface, &current);
         if (current.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
@@ -970,7 +999,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
             }
             WGPUCommandEncoder       encoder = wgpuDeviceCreateCommandEncoder(g.device, nullptr);
             WGPUTexelCopyTextureInfo from = {};
-            from.texture = image->texture;
+            from.texture = shown->texture;
             from.aspect = WGPUTextureAspect_All;
             WGPUTexelCopyTextureInfo to = {};
             to.texture = current.texture;
