@@ -7,6 +7,10 @@
 #include "mathutil.hpp"
 #include "title/title_port.hpp"
 
+#if defined(__EMSCRIPTEN__)
+[[noreturn]] void WebQuickExit(int status); // port/web/src/exit.cpp
+#endif
+
 // Retail halted on a failed assertion. The game prints its own context on stdout first (LoadFile
 // names the file), so stdout is flushed ahead of the message. _Exit, not exit: static destructors
 // would tear down the renderer under a frame the game may have open.
@@ -18,7 +22,11 @@ extern "C" [[noreturn]] void __assert(const char *file, int line, const char *ex
     std::fflush(stdout);
     std::fprintf(stderr, "%s:%d: assertion failed: %s\n", file, line, expression);
     std::fflush(nullptr);
+#if defined(__EMSCRIPTEN__)
+    WebQuickExit(kExitGameAssert);
+#else
     std::_Exit(kExitGameAssert);
+#endif
 }
 
 // Retail's libc generator, in place of the host's. The game leans on its exact sequence: a fire

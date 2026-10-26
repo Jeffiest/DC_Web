@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGPU probe</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 16px; background: #0d0d12; color: #e6e6ea; font: 14px system-ui, sans-serif; }
+  canvas { display: block; width: 640px; max-width: 100%; aspect-ratio: 4 / 3; background: #000; }
+  pre { white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<!-- The WebGPU probe (port/web/probe/webgpu_probe.cpp); ?frames=N sets how many frames it draws. -->
+<canvas id="canvas" width="640" height="480"></canvas>
+<pre id="log"></pre>
+<script>
+'use strict';
+(async () => {
+    const log = (text) => {
+        document.getElementById('log').textContent += text + '\n';
+        console.log(text);
+    };
+    // Isolation as shell.js gets it: sw.js adds COOP/COEP, then the page reloads once under it.
+    if (!self.crossOriginIsolated) {
+        if (sessionStorage.getItem('dc-probe-reload') || !('serviceWorker' in navigator)) {
+            log('probe: isolation FAIL');
+            return;
+        }
+        await navigator.serviceWorker.register('sw.js');
+        await navigator.serviceWorker.ready;
+        sessionStorage.setItem('dc-probe-reload', '1');
+        location.reload();
+        return;
+    }
+    sessionStorage.removeItem('dc-probe-reload');
+    const frames = new URLSearchParams(location.search).get('frames') || '120';
+    window.Module = {
+        arguments: [frames],
+        canvas: document.getElementById('canvas'),
+        print: log,
+        printErr: log,
+        onExit: (code) => log(`exit=${code}`),
+        onAbort: (reason) => log(`abort: ${reason}`),
+    };
+    const script = document.createElement('script');
+    script.src = 'webgpu_probe.js';
+    document.body.appendChild(script);
+})();
+</script>
+</body>
+</html>

@@ -9,25 +9,31 @@ records how it is built and where it stands.
 source /path/to/emsdk/emsdk_env.sh   # emsdk 6.0.13, as CI pins
 cmake --preset web
 cmake --build --preset web
+cd port/build/web && python3 -m http.server   # then open http://localhost:8000/
 ```
 
 The build needs `glslangValidator` on the host (it still compiles the Vulkan shaders). Output is
-`port/build/web/darkcloud.js` and `darkcloud.wasm`, with `lang/` and `glyphs/` beside them.
+`port/build/web/darkcloud.js`, `darkcloud.wasm` and `darkcloud.data` (`lang/` and `glyphs/`, preloaded),
+with the page (`port/web/site/`) beside them, so the build directory is the site.
 
-The `web` workflow (`.github/workflows/web.yml`) builds every push to `main`, smoke-runs the build under
-Node, and force-pushes the log, the error summary, the smoke log and the build to the `ci-logs` branch.
+The `web` workflow (`.github/workflows/web.yml`) builds every push to `main` and `claude/**`, smoke-runs the
+build under Node and the page in headless Chromium, and force-pushes the log, the error summary, both smoke
+logs (`smoke.log`, `browser.log`) and the build to the `ci-logs` branch.
 
 ## What the web build changes
 
 All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 
 - **SDL3** is built from source (release-3.4.18).
-- **Vulkan**: browsers have none. The renderer compiles against Vulkan-Headers 1.4.366 and links
-  `gen_vk_stubs.py`'s stubs, which fail, so `RendererInit` cannot start yet. A WebGPU backend behind
-  `gfx.hpp` replaces this.
+- **Vulkan on WebGPU** (`port/web/vulkan/`): browsers have no Vulkan, so the Vulkan commands Kazarov's
+  renderer calls are implemented on WebGPU (Emscripten's `emdawnwebgpu` port) and the renderer runs
+  unchanged. See "Vulkan on WebGPU" below. Weak stubs that fail (`gen_vk_stubs.py`) stand for every
+  other command.
 - **PS2 threads** (`sce/eekernel_threads.cpp`) are Emscripten fibers, which need `-sASYNCIFY`.
 - **The game runs on a pthread** (`-sPROXY_TO_PTHREAD`), so its blocking waits do not stall the page.
-  Hosting needs cross-origin isolation (COOP/COEP headers, or a service worker on GitHub Pages).
+  Hosting needs cross-origin isolation (COOP/COEP headers, or a service worker on GitHub Pages). The
+  canvas is handed to that thread as an OffscreenCanvas, and the renderer stays on it (render thread off):
+  WebGPU's objects belong to the thread that made the device.
 - **Arenas** are heap blocks (`port/web/src/memory.cpp`); WebAssembly has no page protection, so the
   guard page after each catches nothing.
 - **`u_long` is 64-bit**, as on Windows: wasm32's `long` is 32-bit and the GS register bitfields need 64.
@@ -36,18 +42,69 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 - **`main`** has the standard two-argument signature on the web.
 - **Exceptions** are Emscripten's JavaScript-based ones (`-fexceptions`); native wasm exceptions do not
   work with Asyncify.
-- Discord and the first-run extractor are stubbed, as on the Switch.
+- Discord is stubbed, as on the Switch.
+- **Game data** is the player's own, from their PAL disc. The page copies what they choose into the origin
+  private file system under `chronicle/` once: the disc image (`disc.iso`), the disc's `DATA.DAT` and
+  `DATA.HD2` (`disc/`), an extracted `data` folder (`data/`), or the `data.zip` dcdata packs. The game mounts
+  that file system at `/opfs` through WasmFS (`port/web/src/storage.cpp`) and starts with
+  `--data /opfs/chronicle/data --save /opfs/chronicle/save`; saves persist there. A disc is extracted by the
+  game at its first start with dcdata's own code (`port/web/src/firstrun.cpp`), which then checks every
+  file and removes the disc; an extraction cut short resumes at the next start. `data.zip` is read in
+  place a seek at a time. OPFS needs Chromium or Firefox; Safari lacks `createWritable` on the page.
+- **Saves**: Kazarov's `FilesWrite` commits a new file with an exclusive rename or a hard link, neither of
+  which WasmFS has; on the web it checks the name is free and renames (`platform/files.cpp`).
+- **The page** (`port/web/site/`): `shell.js` stores the data and starts the game, which then fills the
+  window, scaled to fit, with Fullscreen and Log buttons and the extraction's progress over it; `sw.js` is a
+  service worker that adds COOP/COEP for hosts that cannot send them, GitHub Pages among them, and
+  `shell.js` reloads once under it. `?args=--headless+--frames+30` on the URL passes extra arguments.
 
 ## Status
 
 | Stage | State |
 | :-- | :-- |
 | Compiles and links to wasm | Done |
-| Starts under Node up to the game-data check | Done |
-| Runs game logic with real data (headless) | Not yet tested: needs extracted data |
-| Game data in the browser (drop `data.zip`, keep it in OPFS) | Not started |
-| WebGPU renderer behind `gfx.hpp` | Not started |
-| Audio, input, page and hosting | Not started |
+| Game data in the browser: disc image, disc files, data folder or `data.zip` | Done; the disc extracted in the page |
+| Renderer on WebGPU (Vulkan on WebGPU) | Done; Kazarov's renderer tests pass in Chromium, the game plays in Chrome |
+| Saves | Done |
+| Page: fills the window, fullscreen, log drawer | Done |
+| Main-depth copies | Not yet (see below) |
+| Hosting on GitHub Pages | Deploy job ready, from `main` |
+
+## Vulkan on WebGPU
+
+`port/web/vulkan/` implements the Vulkan commands the renderer calls, and only those, on `webgpu.h`. It
+reports a Vulkan 1.3 portability-subset device, the same path the renderer takes on Apple through MoltenVK:
+push descriptors instead of the bindless array, no triangle fans, one stencil reference and mask pair. It
+offers no timestamps, depth bounds or depth blits.
+
+- **Commands** encode into a WebGPU command encoder as they are recorded. Dynamic rendering is a render
+  pass. WebGPU has no dynamic state, so the command buffer tracks Vulkan's and each draw picks a variant of
+  its pipeline by that state and the pass's formats; `vkCreateGraphicsPipelines` only keeps a description.
+- **Push constants** are copied per draw into a storage buffer read at a dynamic offset (bind group 2).
+- **Memory**: host-visible memory is a copy in wasm memory. The renderer writes it only through its
+  transient allocator (`gfx/memory.cpp`), which marks each span it hands out; the marked ranges are
+  uploaded when they are next submitted.
+- **Copies** WebGPU cannot take as they are, rows not a multiple of 256 bytes, go through an upload buffer
+  with padded rows; readbacks land in map-read buffers that the fence wait unpacks. Blits that scale or
+  flip, attachment clears and colour image clears are drawn by the layer's own small pipelines.
+- **Shaders** are hand-ported to WGSL (`vulkan/shaders/`) and matched to the renderer's SPIR-V modules
+  word for word. Specialisation constants are WGSL overrides with the same ids; clip space is flipped in y.
+  When a GLSL shader in `gfx/shaders/` changes, its WGSL port must follow.
+- **Without dual-source blending** (SwiftShader, some browsers), the blends that use a second source,
+  only ever on targets without alpha, draw from one source: the shader writes the factor as alpha and the
+  pipeline leaves alpha out of the target.
+
+Headless Chromium on SwiftShader, which CI uses, loses the WebGPU device once a canvas presents, so CI
+runs the game `--offscreen` and checks pixels through readbacks. A browser with a GPU does not.
+
+Kazarov's renderer tests (`gfx_*_test.cpp`, built as `kazarov_gfx_tests` and run in Chromium by CI) are the
+layer's conformance suite. Left out of the run:
+
+- `GfxGpuDepthCopy.*`: main-depth copies (`CopyMainDepthToTarget`) are not offered yet, as WebGPU cannot blit
+  depth. The game then draws the depth-of-field haze without its low-resolution copy.
+- `GfxGpuMeshDc2.FogCrossingTheEyeBlendsClampedFog` and `PlainFogCrossesTheEyeWithoutDividingByZero`: their
+  vertices lie exactly on the eye plane (w = 0), where SwiftShader's clipper leaves those vertices out of the
+  interpolation. A hair either side of the plane, and on other GPUs, the result is the expected one.
 
 ## Watch for
 

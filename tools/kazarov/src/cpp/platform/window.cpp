@@ -144,6 +144,8 @@ void WindowInit(const WindowConfig &config) {
 #endif
     // SDL3 backs a Vulkan window on macOS with a CAMetalLayer (VK_EXT_metal_surface) by itself.
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // On the web the renderer's Vulkan draws to the canvas itself (port/web/vulkan); SDL has no Vulkan there.
+#ifndef __EMSCRIPTEN__
     if (config.vulkan) {
         flags |= SDL_WINDOW_VULKAN;
 #ifdef _WIN32
@@ -152,6 +154,7 @@ void WindowInit(const WindowConfig &config) {
         }
 #endif
     }
+#endif
     Placement placement = Place(config, SDL_GetPrimaryDisplay());
     // An iOS window takes the whole display whatever is placed; fullscreen also hides the status bar.
     if (placement.fullscreen || kIos) {
