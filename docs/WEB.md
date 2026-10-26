@@ -91,7 +91,9 @@ offers no timestamps, depth bounds or depth blits.
   uploaded when they are next submitted.
 - **The swapchain** is three textures of the layer's own; `vkQueuePresentKHR` copies the frame to the canvas's
   current texture and yields. The canvas's texture is shown whenever the thread yields, as the renderer's fence
-  waits do mid-frame on a slow GPU, so frames drawn into it directly flashed on phones.
+  waits do mid-frame on a slow GPU, so frames drawn into it directly flashed on phones. A second pass then sets
+  the canvas's alpha to 1: the frame's alpha is the GS frame buffer's, which an opaque canvas should ignore,
+  but Android on Mali flickered to frames as much brighter as a colour divided by it.
 - **Copies** WebGPU cannot take as they are, rows not a multiple of 256 bytes, go through an upload buffer
   with padded rows; readbacks land in map-read buffers that the fence wait unpacks. Blits that scale or
   flip, attachment clears and colour image clears are drawn by the layer's own small pipelines.
