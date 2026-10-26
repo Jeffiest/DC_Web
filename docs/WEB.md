@@ -104,6 +104,9 @@ offers no timestamps, depth bounds or depth blits.
 - **Shaders** are hand-ported to WGSL (`vulkan/shaders/`) and matched to the renderer's SPIR-V modules
   word for word. Specialisation constants are WGSL overrides with the same ids; clip space is flipped in y.
   When a GLSL shader in `gfx/shaders/` changes, its WGSL port must follow.
+- **Mali GPUs** (Android phones) draw frames wrong while two are on the GPU at once, as flicker and texel-sized
+  blocks; on an Arm adapter each submission waits for the GPU to finish the ones before it
+  (`DC_WEBGPU_ONE_FRAME=1` or `0` with `?args=--env+...` forces the choice).
 - **Without clip distances** (Mali GPUs, among others), every shader comes in a `_noclip` variant: the vertex
   shader hands its clip distances to the fragment shader as two more varyings, and that discards where any is
   negative. CI runs the GPU renderer tests a second time on it (`--no-clip-distances`).
