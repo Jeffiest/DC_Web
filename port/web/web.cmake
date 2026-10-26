@@ -87,8 +87,8 @@ add_custom_target(dc_web_site
 # executable, are preloaded into the root: the executable is ./this.program there.
 set(DC_WEB_LINK_OPTIONS
     -sWASMFS=1
-    --preload-file ${CMAKE_BINARY_DIR}/lang@/lang
-    --preload-file ${CMAKE_BINARY_DIR}/glyphs@/glyphs
+    "SHELL:--preload-file ${CMAKE_BINARY_DIR}/lang@/lang"
+    "SHELL:--preload-file ${CMAKE_BINARY_DIR}/glyphs@/glyphs"
     -sPROXY_TO_PTHREAD=1
     -sASYNCIFY=1
     -sALLOW_MEMORY_GROWTH=1
