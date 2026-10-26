@@ -688,7 +688,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice, const VkSwapchainC
     WGPUSurfaceConfiguration configuration = {};
     configuration.device = g.device;
     configuration.format = TextureFormat(info->imageFormat);
-    configuration.usage = WGPUTextureUsage_CopyDst;
+    configuration.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_RenderAttachment;
     configuration.width = info->imageExtent.width;
     configuration.height = info->imageExtent.height;
     configuration.alphaMode = WGPUCompositeAlphaMode_Opaque;
@@ -762,6 +762,55 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR ha
     return VK_SUCCESS;
 }
 
+// Draws alpha 1 over the canvas's texture, leaving its colour. The frame's alpha is the GS frame buffer's, often
+// below 1; the canvas is configured opaque, which should make the browser ignore it. Android (on Mali at least)
+// flickers to frames as much brighter as a colour divided by that alpha would be, and only there.
+static WGPURenderPipeline OpaquePipeline(WGPUTextureFormat format) {
+    static WGPURenderPipeline pipeline = nullptr;
+    static WGPUTextureFormat  made_for = WGPUTextureFormat_Undefined;
+    if (pipeline != nullptr && made_for == format) {
+        return pipeline;
+    }
+    if (pipeline != nullptr) {
+        wgpuRenderPipelineRelease(pipeline);
+    }
+    static const char *const kCode = R"wgsl(
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4f { return vec4f(0.0, 0.0, 0.0, 1.0); }
+)wgsl";
+    WGPUShaderSourceWGSL source = {};
+    source.chain.sType = WGPUSType_ShaderSourceWGSL;
+    source.code = View(kCode);
+    WGPUShaderModuleDescriptor module_descriptor = {};
+    module_descriptor.nextInChain = &source.chain;
+    module_descriptor.label = View("opaque canvas");
+    WGPUShaderModule module = wgpuDeviceCreateShaderModule(g.device, &module_descriptor);
+    WGPUColorTargetState target = {};
+    target.format = format;
+    target.writeMask = WGPUColorWriteMask_Alpha;
+    WGPUFragmentState fragment = {};
+    fragment.module = module;
+    fragment.entryPoint = View("fs");
+    fragment.targetCount = 1;
+    fragment.targets = &target;
+    WGPURenderPipelineDescriptor descriptor = {};
+    descriptor.label = View("opaque canvas");
+    descriptor.vertex.module = module;
+    descriptor.vertex.entryPoint = View("vs");
+    descriptor.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    descriptor.primitive.cullMode = WGPUCullMode_None;
+    descriptor.multisample.count = 1;
+    descriptor.multisample.mask = 0xFFFFFFFF;
+    descriptor.fragment = &fragment;
+    pipeline = wgpuDeviceCreateRenderPipeline(g.device, &descriptor);
+    wgpuShaderModuleRelease(module);
+    made_for = format;
+    return pipeline;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR *info) {
     AssertDeviceThread(__func__);
     VkResult overall = VK_SUCCESS;
@@ -791,6 +840,27 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR
             to.aspect = WGPUTextureAspect_All;
             const WGPUExtent3D extent = {std::min(width, chain->width), std::min(height, chain->height), 1};
             wgpuCommandEncoderCopyTextureToTexture(encoder, &from, &to, &extent);
+            WGPUCommandBuffer copy = wgpuCommandEncoderFinish(encoder, nullptr);
+            wgpuQueueSubmit(g.queue, 1, &copy);
+            wgpuCommandBufferRelease(copy);
+            wgpuCommandEncoderRelease(encoder);
+            // Its own submission, so a browser that refused it would still show the frame.
+            encoder = wgpuDeviceCreateCommandEncoder(g.device, nullptr);
+            WGPUTextureView                view = wgpuTextureCreateView(current.texture, nullptr);
+            WGPURenderPassColorAttachment attachment = {};
+            attachment.view = view;
+            attachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            attachment.loadOp = WGPULoadOp_Load;
+            attachment.storeOp = WGPUStoreOp_Store;
+            WGPURenderPassDescriptor pass_descriptor = {};
+            pass_descriptor.colorAttachmentCount = 1;
+            pass_descriptor.colorAttachments = &attachment;
+            WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor);
+            wgpuRenderPassEncoderSetPipeline(pass, OpaquePipeline(wgpuTextureGetFormat(current.texture)));
+            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(pass);
+            wgpuRenderPassEncoderRelease(pass);
+            wgpuTextureViewRelease(view);
             WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
             wgpuQueueSubmit(g.queue, 1, &commands);
             wgpuCommandBufferRelease(commands);
