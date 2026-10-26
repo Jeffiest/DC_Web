@@ -80,6 +80,14 @@ fn SamplePalette(uv: vec2f) -> vec4f {
     return select(filtered, nearest, (pc.flags & kLinear) == 0u);
 }
 
+// NaN and infinities as 0. What a GPU writes for them into an 8-bit target is its own: NVIDIA's 0 goes unseen,
+// and Mali's is the suspect in Android's white blocks and flashing frames. Read from the bits, as WGSL lets a
+// compiler assume finite floats and drop a v != v test.
+fn Finite(v: vec4f) -> vec4f {
+    let exponent = bitcast<vec4u>(v) & vec4u(0x7f800000u);
+    return select(v, vec4f(0.0), exponent == vec4u(0x7f800000u));
+}
+
 fn ColorFlags() -> u32 {
     return select(u32(kColorFeatures), pc.flags, kColorFeatures < 0);
 }
@@ -189,7 +197,7 @@ fn main(v: In) -> Out {
         rgb = vec3f(factor);
     }
     var o: Out;
-    o.color = vec4f(rgb, select(color.a, 1.0, (pc.flags & kOpaqueTarget) != 0u));
-    o.factor = vec4f(factor); // @dual
+    o.color = Finite(vec4f(rgb, select(color.a, 1.0, (pc.flags & kOpaqueTarget) != 0u)));
+    o.factor = Finite(vec4f(factor)); // @dual
     return o;
 }
