@@ -541,7 +541,7 @@ bool Apply(Config &config, std::string_view name, const Json &value) {
         return true;
     }
 #endif
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     if (name == "video.touch_overlay_opacity") {
         if (!value.is_number_integer()) {
             return false;
@@ -721,6 +721,8 @@ std::string ConfigSerialize(const Config &config) {
     root["video"]["ui_scale"] = Shortest(config.ui_scale);
 #if defined(__ANDROID__)
     root["video"]["render_scale"] = Shortest(config.render_scale);
+#endif
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     root["video"]["touch_overlay_opacity"] = config.touch_overlay_opacity;
 #endif
     root["video"]["show_fps"] = config.show_fps;
