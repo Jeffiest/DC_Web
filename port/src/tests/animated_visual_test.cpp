@@ -1,15 +1,23 @@
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
-#include "draw3d.hpp"
 #include "gfx/displaylist.hpp"
 #include "gfx_fixture.hpp"
 #include "mdt.hpp"
 #include "mglib.hpp"
+#include "render/draw3d.hpp"
 #include "renderinfo.hpp"
 #include "visual.hpp"
+
+namespace dc::test {
+
+using namespace dc::game;
+using namespace dc::render;
 
 TEST(ChroniclePresentation, AnimatedBodyMatchesAcrossDisplayBuffersAndStationaryPoses) {
     dc::test::GfxFixture fixture(64, 48, 1.0f, dc::test::GfxOptions{.offscreen = true});
@@ -101,7 +109,7 @@ TEST(ChroniclePresentation, AnimatedBodyMatchesAcrossDisplayBuffersAndStationary
 TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertices) {
     dc::test::GfxFixture fixture(64, 48, 1.0f, dc::test::GfxOptions{.offscreen = true});
     CVisualVu1           visual;
-    auto                 block = std::make_unique<unsigned int[]>(kDraw3DBlockQuads * 4);
+    auto                 block = std::make_unique<unsigned int[]>(static_cast<std::size_t>(kDraw3DBlockQuads) * 4);
     auto                 data = std::make_unique<unsigned int[]>(512);
     auto                *header = reinterpret_cast<MDT_HEADER *>(data.get());
     header->vertex_num = 15;
@@ -116,7 +124,13 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
         const unsigned word = 4 + strip * 12;
         mesh[word] = 4;
         mesh[word + 1] = 3;
-        mesh[word + 2] = (strip == 0 || strip == 4) ? 0 : (strip == 2 ? 1 : -1);
+        int material = -1;
+        if (strip == 0 || strip == 4) {
+            material = 0;
+        } else if (strip == 2) {
+            material = 1;
+        }
+        mesh[word + 2] = material;
         for (unsigned corner = 0; corner < 3; ++corner) {
             mesh[word + 3 + corner * 3] = strip * 3 + corner;
         }
@@ -131,7 +145,7 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
         positions[vertex][3] = 1.0f;
     }
 
-    const auto block_address = block.get();
+    auto *const block_address = block.get();
     ASSERT_NE(visual.CreateVUdataFromMDT(block_address, data.get(), 0, 0), 0);
     Draw3DVisual *draw_visual = Draw3DFindVisual(block_address);
     ASSERT_NE(draw_visual, nullptr);
@@ -146,10 +160,10 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
     info.scale[0] = info.scale[1] = 1.0f;
 
     struct Draw {
-        uint32_t first_index;
-        uint32_t index_count;
-        float    diffuse_red;
-        float    diffuse_green;
+        std::uint32_t first_index;
+        std::uint32_t index_count;
+        float         diffuse_red;
+        float         diffuse_green;
     };
 
     auto remake_and_record = [&] {
@@ -175,7 +189,7 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
     };
     auto expect_draws = [](const std::vector<Draw> &actual, std::initializer_list<Draw> expected) {
         ASSERT_EQ(actual.size(), expected.size());
-        size_t index = 0;
+        std::size_t index = 0;
         for (const Draw &draw : expected) {
             EXPECT_EQ(actual[index].first_index, draw.first_index);
             EXPECT_EQ(actual[index].index_count, draw.index_count);
@@ -225,3 +239,5 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
     block[8] = 0;
     Draw3DSweepVisuals();
 }
+
+} // namespace dc::test

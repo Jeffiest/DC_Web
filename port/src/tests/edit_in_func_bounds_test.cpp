@@ -7,10 +7,13 @@
 #include <cstddef>
 #include <cstring>
 
-#include "eparts_port.hpp"
+#include "edit_in.hpp"
+#include "editpartsinfo.hpp"
 #include "objanime.hpp"
 
-int GetFuncPoint(int parts_no, u_int *archive, EPARTS_FUNC_DATA *points);
+namespace dc::test {
+
+using namespace dc::game;
 
 TEST(EditInterior, RejectsFunctionTablePastFixedCapacity) {
     alignas(16) std::array<std::byte, 0x100> archive{};
@@ -18,8 +21,10 @@ TEST(EditInterior, RejectsFunctionTablePastFixedCapacity) {
     EPartsDiscHeader                         header{};
     header.func_count = 129;
     words[1] = 2;
-    std::memcpy(words + 2, &header, sizeof(header));
+    std::memcpy(&words[2], &header, sizeof(header));
     std::array<EPARTS_FUNC_DATA, 128> points{};
 
     EXPECT_EQ(GetFuncPoint(0, words, points.data()), 0);
 }
+
+} // namespace dc::test

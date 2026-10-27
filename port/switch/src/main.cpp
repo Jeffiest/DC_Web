@@ -17,6 +17,8 @@ std::uint32_t romfsUnmount(const char *name);
 #include "platform/window.hpp"
 #include "switch_main.hpp"
 
+namespace dc::platform {
+
 int SwitchMain(int argc, const char **argv, SwitchRunFunction run) {
     setenv("KZ_LIST_ARENA", "1", 0);
     setenv("DC_SHADOW_CLIP_DIRECT", "1", 0);
@@ -94,3 +96,5 @@ void SwitchConfigureRenderer(gfx::RendererConfig &config) {
     SwitchLogClocks();
     SwitchLogClockRates();
 }
+
+} // namespace dc::platform

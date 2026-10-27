@@ -8,21 +8,20 @@
 #include <string_view>
 
 #include "clsmes.hpp"
-#include "custom_shop.hpp"
-#include "dataread_port.hpp"
-#include "gametext.hpp"
+#include "data/data_read.hpp"
 #include "itemdata.hpp"
 #include "menuetc.hpp"
 #include "platform/paths.hpp"
+#include "quest/custom_shop.hpp"
 #include "shop.hpp"
+#include "text/gametext.hpp"
 
-// ps2/src/shop.cpp's prices, as custom_shop.cpp declares them.
-struct ITEM_MONEY_ENTRY {
-    s16 buy_price;
-    s16 sell_price;
-};
+namespace dc::test {
 
-extern ITEM_MONEY_ENTRY PriceList[296];
+using namespace dc::game;
+using namespace dc::data;
+using namespace dc::quest;
+using namespace dc::text;
 
 namespace {
 
@@ -136,3 +135,5 @@ TEST_F(CustomShopTest, ItsLinesAreTheShopkeepersWhileOpen) {
 }
 
 } // namespace
+
+} // namespace dc::test

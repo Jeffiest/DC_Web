@@ -3,19 +3,23 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 
-#include "captionfont.hpp"
 #include "gamepad.hpp"
-#include "localize.hpp"
+#include "localize/localize.hpp"
 #include "snd.hpp"
 #include "sound.hpp"
-#include "ui_framework.hpp"
+#include "text/captionfont.hpp"
+#include "title/tisound.hpp"
+#include "ui/framework.hpp"
 
-void TiPlayVolSE(int group, int no, int voice, float volume);
+namespace dc::title::menu {
 
-namespace TitleMenu {
+using namespace dc::game;
+using namespace dc::localize;
+using namespace dc::text;
 
 namespace {
 
@@ -26,12 +30,13 @@ struct Row {
 
 // Retail's words for its painted rows (start.img and its French, German, Italian and Spanish
 // copies), then Exit.
-constexpr Row kRows[kRowCount] = {
-    {"title.menu.start",    "START"   },
-    {"title.menu.continue", "CONTINUE"},
-    {"title.menu.option",   "OPTION"  },
-    {"title.menu.exit",     "EXIT"    },
+constexpr std::array kRows = {
+    Row{.key = "title.menu.start",    .english = "START"   },
+    Row{.key = "title.menu.continue", .english = "CONTINUE"},
+    Row{.key = "title.menu.option",   .english = "OPTION"  },
+    Row{.key = "title.menu.exit",     .english = "EXIT"    },
 };
+static_assert(kRows.size() == kRowCount);
 
 // Where the letters stand on the PAL screen. Retail's painted capitals are 16 tall, from 263 across,
 // with their tops about 29 apart from 306, and the trademark lines start at about 405: a fourth row
@@ -48,7 +53,7 @@ constexpr float kStretch = 1.0f;
 constexpr float kLetterGap = 0.05f;
 constexpr float kKernStrength = 1.0f;
 
-// capfont's slot for the title font (UI::FontWeight::Title).
+// capfont's slot for the title font (ui::FontWeight::Title).
 constexpr int kTitleFontSlot = 3;
 
 // Retail's hand stands about 2 above its row's capitals.
@@ -85,8 +90,8 @@ bool g_confirm_open = false;
 int  g_confirm_choice = static_cast<int>(Choice::No);
 bool g_confirm_chosen = false;
 
-UI::Cursor &ConfirmCursor() {
-    static UI::Cursor cursor;
+ui::Cursor &ConfirmCursor() {
+    static ui::Cursor cursor;
     return cursor;
 }
 
@@ -118,7 +123,7 @@ float HandY(int row) {
 }
 
 int RowAt(float x, float y) {
-    const float top = static_cast<float>(kFirstTextTop - kRowAboveText);
+    const auto top = static_cast<float>(kFirstTextTop - kRowAboveText);
     if (x < kRowLeft || x >= kRowLeft + kRowWidth || y < top || y >= top + kRowCount * kRowStride) {
         return -1;
     }
@@ -132,21 +137,24 @@ namespace {
 // round one (C, O). This is how far the first letter of text sits right of where START's S does, in
 // logical pixels, from the two letters' left side bearings in the title font.
 float BearingFromS(const std::string &text) {
-    float      h[4], first[4], s[4];
+    float      h_bounds[4];
+    float      first_bounds[4];
+    float      s_bounds[4];
     const auto ch = static_cast<unsigned char>(text.empty() ? 'S' : text[0]);
-    if (ch >= 0x80 || !capfont::GetGlyphBounds(U'H', h, kTitleFontSlot) ||
-        !capfont::GetGlyphBounds(ch, first, kTitleFontSlot) || !capfont::GetGlyphBounds(U'S', s, kTitleFontSlot)) {
+    if (ch >= 0x80 || !capfont::GetGlyphBounds(U'H', h_bounds, kTitleFontSlot) ||
+        !capfont::GetGlyphBounds(ch, first_bounds, kTitleFontSlot) ||
+        !capfont::GetGlyphBounds(U'S', s_bounds, kTitleFontSlot)) {
         return 0.0f;
     }
-    return (first[0] - s[0]) * kCapHeight / (h[3] - h[1]) * kStretch;
+    return (first_bounds[0] - s_bounds[0]) * kCapHeight / (h_bounds[3] - h_bounds[1]) * kStretch;
 }
 
 } // namespace
 
 void Draw(int selected, int selected_alpha, int other_alpha) {
-    UI::TextStyle style;
-    style.align = UI::Alignment::Left;
-    style.weight = UI::FontWeight::Title;
+    ui::TextStyle style;
+    style.align = ui::Alignment::Left;
+    style.weight = ui::FontWeight::Title;
     style.scale = kCapHeight / 14.5f;
     style.xscale = kStretch;
     style.letter = kLetterGap;
@@ -155,7 +163,7 @@ void Draw(int selected, int selected_alpha, int other_alpha) {
     style.use_custom_rgb = true;
     style.see_through = true;
     // Label puts the capitals' top 3 below its y, less half what the scale adds to their height.
-    const int cap_offset = static_cast<int>(3.0f - (kCapHeight - 14.5f) * 0.5f + 0.5f);
+    const int cap_offset = static_cast<int>(std::lround(3.0f - ((kCapHeight - 14.5f) * 0.5f)));
 
     for (int row = 0; row < kRowCount; ++row) {
         const bool chosen = row == selected;
@@ -166,7 +174,7 @@ void Draw(int selected, int selected_alpha, int other_alpha) {
         style.halo = kHaloReach;
         style.halo_strength = kHaloStrength;
         const std::string text = LocalizeText(kRows[row].key, kRows[row].english);
-        UI::Label         label(text, style);
+        ui::Label         label(text, style);
         label.Draw(kTextLeft + static_cast<int>(std::lround(BearingFromS(text))), kFirstTextTop + row * kRowStride - cap_offset,
                    // Retail's alphas on the painting's doubled texels (above).
                    chosen ? selected_alpha : std::min(other_alpha * 2 * kOtherRowsShare / kOtherRowsOf, 0x80));
@@ -181,7 +189,7 @@ void OpenConfirm() {
     g_confirm_open = true;
     g_confirm_chosen = false;
     g_confirm_choice = static_cast<int>(Choice::No);
-    const UI::Rect no = UI::ConfirmModal::ButtonRect(ConfirmTitle(), ConfirmDescription(), static_cast<int>(Choice::No));
+    const ui::Rect no = ui::ConfirmModal::ButtonRect(ConfirmTitle(), ConfirmDescription(), static_cast<int>(Choice::No));
     ConfirmCursor().SnapTo(static_cast<float>(no.x - 34), static_cast<float>(no.y + 3));
     PlayConfirmSound();
 }
@@ -213,20 +221,21 @@ void StepConfirm(int pointer_hover, bool pointer_click, bool pointer_back) {
 }
 
 int ConfirmHit(float x, float y) {
-    return UI::ConfirmModal::Hit(ConfirmTitle(), ConfirmDescription(), x, y);
+    return ui::ConfirmModal::Hit(ConfirmTitle(), ConfirmDescription(), x, y);
 }
 
 void DrawConfirm(int alpha) {
     if (!g_confirm_open) {
         return;
     }
-    UI::ConfirmModal::Draw(ConfirmTitle(), ConfirmDescription(), LocalizeText("battlemenu.quit.yes", "YES"),
+    ui::ConfirmModal::Draw(ConfirmTitle(), ConfirmDescription(), LocalizeText("battlemenu.quit.yes", "YES"),
                            LocalizeText("battlemenu.quit.no", "NO"), g_confirm_choice, ConfirmCursor(), alpha,
-                           UI::WindowPreset::DarkTranslucent, g_confirm_chosen ? static_cast<int>(Choice::Yes) : -1, g_confirm_chosen);
+                           ui::WindowPreset::DarkTranslucent, g_confirm_chosen ? static_cast<int>(Choice::Yes) : -1, g_confirm_chosen);
 }
 
 std::vector<std::pair<std::string, std::string>> Strings() {
     std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(kRows.size() + 2);
     for (const Row &row : kRows) {
         out.emplace_back(row.key, row.english);
     }
@@ -235,4 +244,4 @@ std::vector<std::pair<std::string, std::string>> Strings() {
     return out;
 }
 
-} // namespace TitleMenu
+} // namespace dc::title::menu

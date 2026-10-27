@@ -75,6 +75,24 @@ inline std::string FoldPath(std::string_view path) {
     return out;
 }
 
+// Where a published model bundle's file sits in the data. Bundles are named after their source, so
+// a pack's members land in a folder named like the pack ("chara/fishing.pak/uki.gltf"); the data
+// keeps the pack itself under that name, so such a folder takes ".assets" after it.
+inline std::string PublishedPath(std::string_view path, const std::function<bool(std::string_view)> &is_file) {
+    std::string out;
+    std::size_t start = 0;
+    for (std::size_t slash = path.find('/'); slash != std::string_view::npos; slash = path.find('/', start)) {
+        out.append(path.substr(start, slash - start));
+        if (is_file(out)) {
+            out += ".assets";
+        }
+        out += '/';
+        start = slash + 1;
+    }
+    out.append(path.substr(start));
+    return out;
+}
+
 inline bool IsSafeRelative(std::string_view path) {
     if (path.empty() || path.back() == '/') {
         return false;

@@ -3,10 +3,16 @@
 #include <set>
 #include <string>
 
-#include "caption_text.hpp"
 #include "mainselect.hpp"
 #include "menu_draw.hpp"
-#include "texture_port.hpp"
+#include "render/texture_registry.hpp"
+#include "text/caption_text.hpp"
+
+namespace dc::test {
+
+using namespace dc::game;
+using namespace dc::render;
+using namespace dc::text;
 
 TEST(Caption, ColoursAreThePaintedEnglishOnes) {
     EXPECT_EQ(caption::kFill[0], 232);
@@ -33,7 +39,7 @@ TEST(Caption, PreparePaintedLeavesOtherTexturesAlone) {
     texture.width = 4;
     texture.height = 4;
     texture.format = gfx::TextureFormat::Rgba8;
-    texture.levels.push_back(std::vector<uint8_t>(4 * 4 * 4, 200));
+    texture.levels.emplace_back(std::size_t{4} * 4 * 4, 200);
     caption::PreparePainted("other", texture);
     for (uint8_t byte : texture.levels[0]) {
         EXPECT_EQ(byte, 200);
@@ -90,3 +96,5 @@ TEST(Caption, MissingPaintedWordsClearThePreviousBounds) {
     EXPECT_FALSE(caption::PaintedBounds(-1));
     EXPECT_FALSE(caption::PaintedBounds(caption::kIcons));
 }
+
+} // namespace dc::test

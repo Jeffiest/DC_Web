@@ -1,5 +1,5 @@
 # darkcloud_tests links the whole port and game so a test can exercise a
-# replacement unit against the real game types. Each *_test.cpp holds
+# unit against the real game types. Each *_test.cpp holds
 # GoogleTest cases; ctest runs one process per case, since the game's state is
 # global.
 include(FetchContent)
@@ -16,32 +16,22 @@ include(GoogleTest)
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp)
 add_executable(darkcloud_tests ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ${TEST_SOURCES})
 set_target_properties(darkcloud_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-target_include_directories(darkcloud_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(darkcloud_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
 dc_link_game(darkcloud_tests)
 kz_port_tests(darkcloud_tests)
 target_link_libraries(darkcloud_tests PRIVATE GTest::gtest nlohmann_json::nlohmann_json)
-
-# The tests need the port's compatibility overrides from main.cpp, but they already provide a
-# GoogleTest main. Compile the shared unit with only its process entrypoints disabled.
-add_library(dc_test_main_overrides OBJECT ${PORT_DIR}/main.cpp)
-target_compile_definitions(dc_test_main_overrides PRIVATE DC_NO_ENTRYPOINT)
-target_include_directories(dc_test_main_overrides PRIVATE ${PORT_DIR} ${SHADER_HEADER_DIR})
-target_link_libraries(dc_test_main_overrides PRIVATE dc_options SDL3::SDL3 Vulkan::Vulkan
-    nlohmann_json::nlohmann_json kz_port_headers)
-target_compile_options(dc_test_main_overrides PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-label
-    -Wno-overloaded-virtual -Wno-unused-function)
-target_sources(darkcloud_tests PRIVATE $<TARGET_OBJECTS:dc_test_main_overrides>)
 
 # A test that stalls is cut off; graphics startup can take several seconds on some systems. The clock
 # cases measure short sleeps, which the parallel gfx cases skew, so they run on their own.
 set(DC_TEST_TIMEOUT 30 CACHE STRING "Seconds a test case may run before it is cut off")
 # The cases that need a Vulkan device have the gpu label, so a machine without one runs ctest -LE gpu. They are
-# Kazarov's suites named GfxGpu* (its src/cpp/gfx/README.md, "Shared device test classification") and its older
-# GfxMisc and GfxTim2, and every suite in a Chronicle test file that includes gfx_fixture.hpp or tex_fixture.hpp,
-# found here so that a new one is labeled without a list to keep. Some start several renderers, seconds apiece on
-# a software driver such as lavapipe, so they have their own limit.
-set(DC_GPU_TEST_TIMEOUT ${DC_TEST_TIMEOUT} CACHE STRING "Seconds a test case that needs a Vulkan device may run")
-set(device_suites GfxMisc GfxTim2)
+# Kazarov's suites named GfxGpu* (its src/cpp/gfx/README.md, "Shared device test classification") and the ones
+# that start a device under another name (GfxMisc, GfxTim2 and GfxCachedTarget), and every suite in a Chronicle
+# test file that includes gfx_fixture.hpp or tex_fixture.hpp, found here so that a new one is labeled without a
+# list to keep. Some start several renderers, each compiling every pipeline (seconds apiece, more on a software
+# driver such as lavapipe), so they have their own limit.
+set(DC_GPU_TEST_TIMEOUT 120 CACHE STRING "Seconds a test case that needs a Vulkan device may run")
+set(device_suites GfxMisc GfxTim2 GfxCachedTarget)
 foreach(source IN LISTS TEST_SOURCES)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${source})
     file(STRINGS ${source} fixture REGEX "^#include \"(gfx|tex)_fixture\\.hpp\"")

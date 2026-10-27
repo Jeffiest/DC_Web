@@ -20,10 +20,6 @@
 #define section(name)
 #endif
 
-#define PORT_STRINGIFY2(x) #x
-#define PORT_STRINGIFY(x) PORT_STRINGIFY2(x)
-#define PORT_ASM_NAME(name) PORT_STRINGIFY(__USER_LABEL_PREFIX__) #name
-
 #include "kazarov/port.h"
 
 /**

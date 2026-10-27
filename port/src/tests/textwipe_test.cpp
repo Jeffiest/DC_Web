@@ -3,7 +3,12 @@
 #include <vector>
 
 #include "platform/config.hpp"
-#include "textwipe.hpp"
+#include "text/textwipe.hpp"
+
+namespace dc::test {
+
+using namespace dc::platform;
+using namespace dc::text;
 
 TEST(TextWipe, SweepStartsAtTheRightAndReachesTheLeft) {
     EXPECT_FLOAT_EQ(textwipe::SweepPosition(0.0), 640.0f);
@@ -15,8 +20,9 @@ TEST(TextWipe, SweepStartsAtTheRightAndReachesTheLeft) {
 
 TEST(TextWipe, SweepRepeatsAndNeverLeavesTheScreen) {
     const double cycle = 2.0 * (4.0 + 0.8);
-    for (double t = 0.0; t < 3 * cycle; t += 0.05) {
-        const float x = textwipe::SweepPosition(t);
+    for (int step = 0; step * 0.05 < 3 * cycle; step++) {
+        const double t = step * 0.05;
+        const float  x = textwipe::SweepPosition(t);
         EXPECT_GE(x, 0.0f);
         EXPECT_LE(x, 640.0f);
         EXPECT_NEAR(x, textwipe::SweepPosition(t + cycle), 0.01f);
@@ -59,3 +65,5 @@ TEST(TextWipe, OffByDefaultAndTextKeepsTheLockedFits) {
         EXPECT_FLOAT_EQ(now.lock, locked.lock);
     }
 }
+
+} // namespace dc::test
