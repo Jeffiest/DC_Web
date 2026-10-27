@@ -124,6 +124,10 @@ jobs:
           timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
+          # The same on WebGL2.
+          timeout 300 node browser_smoke.mjs "http://localhost:8000/index.html?renderer=gl" /smoke-data.zip \
+            "$GITHUB_WORKSPACE/ci/browser_gl.log" --headless --offscreen --frames 30
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser_gl.log"
 
       # Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, built apart so their failures leave the
       # game's alone.

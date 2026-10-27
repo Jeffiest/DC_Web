@@ -115,7 +115,10 @@ bool EnsureContext() {
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &g.max_texture_size);
     glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &g.max_uniform_block_size);
     g.ubo_alignment = std::max(g.ubo_alignment, 16);
-    const char *renderer = reinterpret_cast<const char *>(glGetString(0x9246 /* UNMASKED_RENDERER_WEBGL */));
+    const char *renderer = nullptr;
+    if (emscripten_webgl_enable_extension(g.context, "WEBGL_debug_renderer_info")) {
+        renderer = reinterpret_cast<const char *>(glGetString(0x9246 /* UNMASKED_RENDERER_WEBGL */));
+    }
     if (renderer == nullptr) {
         renderer = reinterpret_cast<const char *>(glGetString(GL_RENDERER));
     }
