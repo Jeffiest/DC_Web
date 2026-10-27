@@ -106,22 +106,6 @@ function(dc_web_port target)
         ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp ${DC_WEB_DIR}/src/touch.cpp)
 endfunction()
 
-# wasm-ld has no --defsym. The two names the other platforms alias at link time are aliases appended to
-# the units that define their storage.
-function(dc_web_alias_footer unit copy)
-    if(unit STREQUAL "ebattle.cpp")
-        set(footer ${DC_WEB_DIR}/aliases/ebattle.inc)
-    elseif(unit STREQUAL "dataset.cpp")
-        set(footer ${DC_WEB_DIR}/aliases/dataset.inc)
-    else()
-        set(DC_WEB_FOOTER "" PARENT_SCOPE)
-        set(DC_WEB_FOOTER_COMMAND "" PARENT_SCOPE)
-        return()
-    endif()
-    set(DC_WEB_FOOTER ${footer} PARENT_SCOPE)
-    set(DC_WEB_FOOTER_COMMAND COMMAND ${Python3_EXECUTABLE} ${DC_WEB_DIR}/append.py ${footer} ${copy} PARENT_SCOPE)
-endfunction()
-
 # The page around the game (site/): copied beside darkcloud.js, so the build directory serves as is.
 file(GLOB DC_WEB_SITE CONFIGURE_DEPENDS ${DC_WEB_DIR}/site/*)
 add_custom_target(dc_web_site

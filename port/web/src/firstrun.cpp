@@ -29,6 +29,8 @@
 #include "platform/data_archive.hpp"
 #include "platform/paths.hpp"
 
+namespace dc::platform {
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -157,3 +159,5 @@ void FirstRunIfNoData(bool) {
     std::printf("extract: done\n");
     std::fflush(stdout);
 }
+
+} // namespace dc::platform

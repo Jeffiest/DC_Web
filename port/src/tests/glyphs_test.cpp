@@ -1,15 +1,21 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <string>
 #include <string_view>
 
-#include "../glyph_draw.hpp"
 #include "platform/config.hpp"
 #include "platform/input.hpp"
+#include "text/glyph_draw.hpp"
+
+namespace dc::test {
+
+using namespace dc::platform;
+using namespace dc::text;
 
 // The button symbols (platform/glyphs.hpp): their two settings, the key names the keyboard style looks
 // glyphs up by, and the shipped glyphs.json the names must be found in.
@@ -92,9 +98,9 @@ TEST(Glyphs, EveryAtlasRectIsInsideItsAtlasFile) {
                                     value["atlas"].get<std::string>();
         ASSERT_TRUE(std::filesystem::exists(png)) << png;
         // PNG: the width and height are the two big-endian words after the signature and "IHDR".
-        std::ifstream stream(png, std::ios::binary);
-        unsigned char header[24] = {};
-        stream.read(reinterpret_cast<char *>(header), sizeof(header));
+        std::ifstream                 stream(png, std::ios::binary);
+        std::array<unsigned char, 24> header{};
+        stream.read(reinterpret_cast<char *>(header.data()), static_cast<std::streamsize>(header.size()));
         auto word = [&](int at) {
             return (header[at] << 24) | (header[at + 1] << 16) | (header[at + 2] << 8) | header[at + 3];
         };
@@ -114,3 +120,5 @@ TEST(Glyphs, TheSkipPromptButtonsAreListedInEveryLanguage) {
         EXPECT_EQ(GlyphBakedCount(name), 2) << name;
     }
 }
+
+} // namespace dc::test

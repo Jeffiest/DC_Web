@@ -4,7 +4,9 @@ This ledger tracks the coordinated C++26 and storage review. It does not claim
 that every line in the native port was manually reviewed. PS2 sources and
 generated output were excluded. Concurrent changes under `port/src/audio/`,
 `port/include/audio/`, build/run scripts, and `tools/kazarov` were not reviewed
-or edited here.
+or edited here. Files that still exist are named at their current paths
+(`docs/PC.md`, "Layout"); the source inventories keep the names the files had
+when they were reviewed.
 
 ## UI, menu, framework, quest, and shared headers
 
@@ -12,7 +14,7 @@ The UI reviewer completed line-by-line reads of 85 assigned production and
 header files from `area_card*`, `battlemenu/**`, `btitem*`, `caption*`,
 `clsmes*`, `custom_shop*`, `dialog*`, `dualsense*`, `item_icon3d*`, `menu*`,
 `memcard.cpp`, `mouse*`, `name_mouse*`, `options/**`, `presence*`, `quest*`,
-`quests/**`, `save_slots*`, `screen.hpp`, and `ui_framework/**`, plus the
+`quest/**`, `save_slots*`, `screen.hpp`, and `ui/framework/**`, plus the
 shared `port/include/**` headers except `port.h`, `stubs/**`, and concurrent
 audio headers. `exitcodes.hpp`, `normal_smoothing.hpp`, and `text_shadow.hpp`
 were included. Six additional paths received consolidation-block diff review
@@ -70,13 +72,13 @@ paths removed by source consolidation still appear in `git ls-files`.
 ## Gameplay, world, dungeon, edit, and title
 
 The gameplay reviewer’s final organization and source checks covered
-`port/src/camera_zoom.cpp`, `port/src/first_person_walk.cpp`,
-`port/src/title/titleloop.cpp`, `port/src/edit.cpp`, `port/src/edit_in.cpp`,
-`port/src/editloop.cpp`, `port/src/editloop3.cpp`,
-`port/src/title/opening.cpp`, `port/src/title/op_a.cpp`,
-`port/src/title/op_b.cpp`, `port/src/title/rushmovi.cpp`,
-`port/src/title/title.cpp`, and `port/src/dun/movechara.cpp`.
-`port/src/gameloop.cpp` received the caller-boundary fix described below;
+`port/src/input/camera_zoom.cpp`, `port/src/input/first_person_walk.cpp`,
+`port/src/game/title/titleloop.cpp`, `port/src/game/edit.cpp`, `port/src/game/edit_in.cpp`,
+`port/src/game/editloop.cpp`, `port/src/game/editloop3.cpp`,
+`port/src/game/title/opening.cpp`, `port/src/game/title/op_a.cpp`,
+`port/src/game/title/op_b.cpp`, `port/src/game/title/rushmovi.cpp`,
+`port/src/game/title/title.cpp`, and `port/src/game/dun/movechara.cpp`.
+`port/src/app/gameloop.cpp` received the caller-boundary fix described below;
 `port/src/tests/integration_gameloop_test.cpp` received the matching regression
 assertions and a full formatting pass. The verifier owns `op_c.cpp`; its
 recovery and patch audit are recorded separately below. The other assigned
@@ -123,14 +125,16 @@ camerafollow.cpp,camera_port.cpp,camera_port.hpp,camera_zoom.cpp,
 camera_zoom.hpp,character.cpp,chararead.cpp,cloth_draw.cpp,clothread.cpp,
 cloth_step.cpp,collisionmdt.cpp,dungeon_aerial.cpp,dungeon_aerial.hpp,
 dungeonmap.cpp,dungeonparts.cpp,ebattle.cpp,edit.cpp,editground.cpp,
-editground_port.hpp,edit_in.cpp,edit_in_parts.cpp,editloop.cpp,editloop3.cpp,
+edit_in.cpp,edit_in_parts.cpp,editloop.cpp,editloop3.cpp,
 editloop_init.cpp,editloop_parts.cpp,editloop_sprite.cpp,editmapscript.cpp,
 effectmacro.cpp,fireomni.cpp,first_person_walk.cpp,first_person_walk.hpp,
-fish.cpp,fishing.cpp,fish_port.hpp,gameloop.cpp,gameloop.hpp,
+fish.cpp,fishing.cpp,gameloop.cpp,gameloop.hpp,
 gameutil_midi.cpp,gameutil_motion.cpp,gameutil_sprite.cpp,itemdata.cpp,
-mapparts.cpp,monstorunit.cpp,runeffect.cpp,runscript.cpp,runscript_port.hpp,
+mapparts.cpp,monstorunit.cpp,runeffect.cpp,runscript.cpp,
 shadowclip.cpp,shadowclip.hpp,shot_freefuncs.cpp,shop.cpp}`, plus all tracked
-files in `port/src/dun/` and `port/src/title/`. Shared ownership files were
+files in `port/src/dun/` and `port/src/title/`, and the three port headers since
+folded into `port/include/game/editground.hpp`, `fish.hpp`, `fishing.hpp` and
+`runscript.hpp`. Shared ownership files were
 not edited during recovery. The source list above is the assigned inventory;
 it is not a claim that every one received the final namespace tidy check.
 
@@ -148,11 +152,11 @@ sizes, malformed and stale pack entries, sound loading from a host pointer
 above 4 GiB, and texture block compaction/range rejection.
 
 The runtime reviewer read all 25 assigned files line by line: `dataalloc2_1.cpp`,
-`dataread.cpp`, `dataread_port.hpp`, `dataset.cpp`, `draw2d_port.cpp`,
-`draw3d.hpp`, `frame.cpp`, `gamepad.cpp`, `gametext.cpp`, `gametext.hpp`,
+`dataread.cpp`, `data/data_read.hpp`, `dataset.cpp`, `render/draw2d.cpp`,
+`render/draw3d.hpp`, `frame.cpp`, `gamepad.cpp`, `gametext.cpp`, `gametext.hpp`,
 `localize.cpp`, `localize.hpp`, `memorycardaccess.cpp`, `mglib.cpp`,
 `nowload.cpp`, `snd.cpp`, `sound.cpp`, `textwipe.cpp`, `textwipe.hpp`,
-`texture.cpp`, `texture_port.cpp`, `textureanime.cpp`, `visualvu1.cpp`,
+`texture.cpp`, `render/texture_registry.cpp`, `textureanime.cpp`, `visualvu1.cpp`,
 `vu0_ops.hpp`, and `water.cpp`. The 42 non-external test sources were also
 read line by line: `area_card_test.cpp`, `bits64_fixture.hpp`,
 `bits64_placement_test.cpp`, `camera_zoom_test.cpp`, `capfont_test.cpp`,

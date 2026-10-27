@@ -1,21 +1,26 @@
 #include <gtest/gtest.h>
 
-#include "dualsense.hpp"
+#include "input/dualsense.hpp"
 #include "platform/config.hpp"
 #include "platform/touchpad.hpp"
+
+namespace dc::test {
+
+using namespace dc::input;
+using namespace dc::platform;
 
 namespace {
 
 TouchpadFrame One(float x, float y) {
     TouchpadFrame frame;
-    frame.finger[0] = {true, x, y};
+    frame.finger[0] = {.down = true, .x = x, .y = y};
     return frame;
 }
 
 TouchpadFrame Two(float y0, float y1) {
     TouchpadFrame frame;
-    frame.finger[0] = {true, 0.3f, y0};
-    frame.finger[1] = {true, 0.7f, y1};
+    frame.finger[0] = {.down = true, .x = 0.3f, .y = y0};
+    frame.finger[1] = {.down = true, .x = 0.7f, .y = y1};
     return frame;
 }
 
@@ -135,3 +140,5 @@ TEST(DualSenseConfig, BadValuesKeepTheDefault) {
     EXPECT_EQ(config.touchpad_sensitivity, 1.0f);
     EXPECT_EQ(config.rumble_strength, 1.0f);
 }
+
+} // namespace dc::test

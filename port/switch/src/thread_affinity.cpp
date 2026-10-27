@@ -10,6 +10,7 @@
 #include "kazarov/log.hpp"
 #include "switch_main.hpp"
 
+namespace dc::platform {
 namespace {
 
 struct ClockRate {
@@ -239,3 +240,5 @@ void SwitchConfigureThreads() {
              game_actual_core, game_actual_mask, render_actual_core, render_actual_mask, allowed, game_priority,
              render_priority);
 }
+
+} // namespace dc::platform

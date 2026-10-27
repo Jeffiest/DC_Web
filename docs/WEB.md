@@ -41,8 +41,6 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 - **Arenas** are heap blocks (`port/web/src/memory.cpp`); WebAssembly has no page protection, so the
   guard page after each catches nothing.
 - **`u_long` is 64-bit**, as on Windows: wasm32's `long` is 32-bit and the GS register bitfields need 64.
-- **`draw_rect` and `WorkBuffer__2`** are aliases appended to `ebattle.cpp` and `dataset.cpp`
-  (`port/web/aliases/`), because wasm-ld has no `--defsym`.
 - **`main`** has the standard two-argument signature on the web.
 - **Exceptions** are Emscripten's JavaScript-based ones (`-fexceptions`); native wasm exceptions do not
   work with Asyncify.

@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <utility>
@@ -12,6 +14,10 @@
 #include "platform/display.hpp"
 #include "platform/paths.hpp"
 #include "platform_fixture.hpp"
+
+namespace dc::test {
+
+using namespace dc::platform;
 
 TEST(PlatformConfig, Defaults) {
     Config config = ConfigParse("");
@@ -28,7 +34,8 @@ TEST(PlatformConfig, RenderThreadModesPersistAndRequireRestart) {
     EXPECT_EQ(ConfigParse("").render_thread, gfx::RenderThreadMode::Async);
     for (const auto *name : {"off", "lockstep", "async"}) {
         const auto mode = gfx::ParseRenderThreadMode(name);
-        const auto config = ConfigParse(std::string("{\"video\":{\"render_thread\":\"") + name + "\"}}");
+        ASSERT_TRUE(mode.has_value());
+        const auto config = ConfigParse(std::string(R"({"video":{"render_thread":")") + name + R"("}})");
         EXPECT_EQ(config.render_thread, *mode);
         EXPECT_EQ(ConfigParse(ConfigSerialize(config)).render_thread, *mode);
     }
@@ -75,7 +82,7 @@ TEST(PlatformConfig, CameraReturnValidatesBoundsAndRoundTripsCustomRates) {
         ASSERT_FLOAT_EQ(ConfigParse(ConfigSerialize(config)).mouse_camera_return, rate);
     }
     for (const char *value : {"-0.01", "1.01", "1e100", "true", "\"slow\"", "null", "[]"}) {
-        std::string json = std::string("{\"input\":{\"mouse_camera_return\":") + value + "}}";
+        std::string json = std::string(R"({"input":{"mouse_camera_return":)") + value + "}}";
         ASSERT_FLOAT_EQ(ConfigParse(json).mouse_camera_return, 0.2f) << value;
     }
     Config config;
@@ -284,7 +291,7 @@ void RecordChange(const Config &before, const Config &after) {
 bool g_nested = true;
 
 // Changes the settings again and removes itself, both from inside a change.
-void ChangeAgain(const Config &before, const Config &after) {
+void ChangeAgain(const Config & /*before*/, const Config &after) {
     Config again = after;
     again.master_volume = 0.75f;
     g_nested = ConfigChange(again);
@@ -397,20 +404,20 @@ constexpr unsigned kRefuseFullscreen = 1;
 constexpr unsigned kRefuseSize = 2;
 constexpr unsigned kUnfinished = 4;
 
-constexpr WindowMode kFullscreenWindow{true, 1920, 1080};
+constexpr WindowMode kFullscreenWindow{.fullscreen = true, .width = 1920, .height = 1080};
 
 // A window as WindowSetMode drives it.
 struct FakeWindow {
     WindowMode mode;
     // The size it has once out of fullscreen.
     WindowMode windowed;
-    unsigned   faults;
-    bool       pending;
-    bool       pending_fullscreen;
-    bool       event;
+    unsigned   faults = 0;
+    bool       pending = false;
+    bool       pending_fullscreen = false;
+    bool       event = false;
     // WindowSetMode calls, and the window changes they tried.
-    int sets;
-    int changes;
+    int sets = 0;
+    int changes = 0;
 };
 
 FakeWindow g_fake;
@@ -426,7 +433,7 @@ WindowModeResult FakeSetMode(const WindowConfig &config) {
     bool             desktop = config.width <= 0 && config.height <= 0;
     WindowModeResult result;
     result.before = g_fake.mode;
-    result.requested = {config.fullscreen || desktop, config.width, config.height};
+    result.requested = {.fullscreen = config.fullscreen || desktop, .width = config.width, .height = config.height};
     if (!(result.before == result.requested)) {
         if (g_fake.mode.fullscreen != result.requested.fullscreen) {
             ++g_fake.changes;
@@ -479,7 +486,7 @@ TEST(PlatformConfig, DisplayFieldsFollowTheWindow) {
     // asks for fullscreen or not, and Size for 1024x768; Edit changes another setting; Close saves as
     // the screen does when it closes; Finish makes SDL finish, Drag resizes the window by hand and
     // Event changes nothing, each sending an event that Pump, the host's, takes.
-    enum Kind {
+    enum class Kind {
         Start,
         StartCli,
         Ask,
@@ -502,12 +509,13 @@ TEST(PlatformConfig, DisplayFieldsFollowTheWindow) {
         int            changes;
     };
 
+    using enum Kind;
     using enum DisplayWarning;
-    const Fields full{true, 1280, 720};
-    const Fields left{false, 1600, 900};
-    const Fields full_left{true, 1600, 900};
-    const Fields full_small{true, 1024, 768};
-    const Fields small{false, 1024, 768};
+    const Fields full{.fullscreen = true, .width = 1280, .height = 720};
+    const Fields left{.fullscreen = false, .width = 1600, .height = 900};
+    const Fields full_left{.fullscreen = true, .width = 1600, .height = 900};
+    const Fields full_small{.fullscreen = true, .width = 1024, .height = 768};
+    const Fields small{.fullscreen = false, .width = 1024, .height = 768};
     const Step   steps[] = {
         {Start,    true,  0,                 None,    full,       0, 0},
         {Ask,      false, kRefuseFullscreen, Kept,    full,       1, 1},
@@ -583,7 +591,7 @@ TEST(PlatformConfig, DisplayFieldsFollowTheWindow) {
     fake.set_mode = FakeSetMode;
     fake.current_mode = FakeCurrentMode;
     fake.take_event = FakeTakeEvent;
-    for (int i = 0; i < static_cast<int>(std::size(steps)); ++i) {
+    for (std::ptrdiff_t i = 0; i < std::ssize(steps); ++i) {
         SCOPED_TRACE(i);
         const Step &step = steps[i];
         Config      config = ConfigGet();
@@ -595,7 +603,7 @@ TEST(PlatformConfig, DisplayFieldsFollowTheWindow) {
             config.window_height = step.fields.height;
             ASSERT_TRUE(ConfigChange(config));
             g_fake = FakeWindow{};
-            g_fake.windowed = {false, 1600, 900};
+            g_fake.windowed = {.fullscreen = false, .width = 1600, .height = 900};
             g_fake.mode = step.fullscreen ? kFullscreenWindow : g_fake.windowed;
             DisplayUseWindow(fake);
             DisplaySetOverrides(step.kind == StartCli ? 1024 : 0, step.kind == StartCli ? 768 : 0, false);
@@ -619,7 +627,7 @@ TEST(PlatformConfig, DisplayFieldsFollowTheWindow) {
             g_fake.pending = false;
             g_fake.event = true;
         } else if (step.kind == Drag) {
-            g_fake.mode = g_fake.windowed = {false, 800, 600};
+            g_fake.mode = g_fake.windowed = {.fullscreen = false, .width = 800, .height = 600};
             g_fake.event = true;
         } else if (step.kind == Event) {
             g_fake.event = true;
@@ -685,8 +693,18 @@ TEST(PlatformConfig, SwapKeepsLockOn) {
     ASSERT_TRUE(!ConfigParse(R"({"game": {"swap_keeps_lock_on": "yes"}})").swap_keeps_lock_on);
 }
 
+TEST(PlatformConfig, Autosave) {
+    ASSERT_TRUE(ConfigParse("").autosave);
+    Config config = ConfigParse(R"({"game": {"autosave": false}})");
+    ASSERT_TRUE(!config.autosave);
+    ASSERT_TRUE(!ConfigParse(ConfigSerialize(config)).autosave);
+    ASSERT_TRUE(ConfigParse(R"({"game": {"autosave": "no"}})").autosave);
+}
+
 TEST(PlatformConfig, TextFontIsNoLongerWritten) {
     // An older config.json's text font setting is read without complaint and not written back.
     const Config config = ConfigParse(R"({"video": {"text_font": "original"}})");
     ASSERT_EQ(ConfigSerialize(config).find("text_font"), std::string::npos);
 }
+
+} // namespace dc::test

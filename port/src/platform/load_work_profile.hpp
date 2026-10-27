@@ -4,8 +4,11 @@
 #include <chrono>
 #include <cstdint>
 
-namespace dc::load_profile {
+namespace dc::platform::load_profile {
 
+/**
+ * The kinds of loading work timed on the calling thread.
+ */
 enum class Kind {
     BackgroundRead,
     Metadata,
@@ -16,15 +19,24 @@ enum class Kind {
     Count
 };
 
+/**
+ * How often one kind of work ran and the wall time it took.
+ */
 struct Counter {
-    std::uint64_t calls = 0;
-    std::uint64_t nanoseconds = 0;
+    std::uint64_t calls = 0;       /**< Spans of this kind that finished while profiling was active. */
+    std::uint64_t nanoseconds = 0; /**< Their summed wall time. */
 };
 
-inline thread_local bool                                                    active = false;
+/** Whether spans on this thread are being timed. */
+inline thread_local bool active = false;
+
+/** The per-kind totals of this thread. */
 inline thread_local std::array<Counter, static_cast<unsigned>(Kind::Count)> counters;
 
-// These are nested wall spans on the calling thread, not GPU execution timings.
+/**
+ * Turns timing on for this thread for its lifetime. Spans are nested wall spans on the calling
+ * thread, not GPU execution timings.
+ */
 class Activation {
 public:
     Activation() : previous(active) { active = true; }
@@ -35,6 +47,9 @@ private:
     bool previous;
 };
 
+/**
+ * Adds its lifetime to kind's counter when timing was active at its construction.
+ */
 class Span {
 public:
     explicit Span(Kind kind) : kind(kind), enabled(active) {
@@ -59,9 +74,12 @@ private:
     Clock::time_point started;
 };
 
+/**
+ * The milliseconds kind has taken since the counters were copied into before.
+ */
 inline double MillisecondsSince(const decltype(counters) &before, Kind kind) {
-    const auto i = static_cast<unsigned>(kind);
-    return static_cast<double>(counters[i].nanoseconds - before[i].nanoseconds) / 1'000'000.0;
+    const auto index = static_cast<unsigned>(kind);
+    return static_cast<double>(counters[index].nanoseconds - before[index].nanoseconds) / 1'000'000.0;
 }
 
-} // namespace dc::load_profile
+} // namespace dc::platform::load_profile

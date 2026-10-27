@@ -1,6 +1,8 @@
 pub mod core;
 #[cfg(not(test))]
 mod host_jobs;
+#[cfg(not(test))]
+mod host_models;
 #[cfg(feature = "desktop-ui")]
 mod setup;
 
@@ -54,9 +56,20 @@ mod ffi {
             policy: ScriptPublicationPolicy,
         ) -> Result<ExtractReport>;
         fn textures_convert(raw: &str, output: &str, jobs: usize) -> Result<TextureConvertReport>;
-        fn textures_convert_dc1(raw: &str, output: &str, jobs: usize) -> Result<TextureConvertReport>;
+        fn textures_convert_dc1(
+            raw: &str,
+            output: &str,
+            jobs: usize,
+        ) -> Result<TextureConvertReport>;
         fn textures_document_map_dc1(raw: &str, output: &str, jobs: usize) -> Result<String>;
         fn textures_verify(textures: &str) -> Result<()>;
+        /// Publishes one Sony HD/BD bank under data_out as bank JSON and WAV samples, named from key as
+        /// the sound converter names a bank's ("sound/a.snd/b.hd" is "sound/a.sound/bank.json");
+        /// returns the bank document's path under data_out.
+        fn audio_publish_bank(key: &str, hd: &[u8], bd: &[u8], data_out: &str) -> Result<String>;
+        /// Publishes one Sony SQ sequence under data_out as sequence JSON, named from key as the
+        /// sound converter names one's; returns the document's path under data_out.
+        fn audio_publish_sequence(key: &str, sq: &[u8], data_out: &str) -> Result<String>;
         fn list(source: &str) -> Result<String>;
         fn sound(source: &str) -> Result<String>;
         fn refresh_configs(source: &str, config_dir: &str) -> Result<usize>;
@@ -155,9 +168,14 @@ fn extract_tracked(
     jobs: usize,
 ) -> Result<ffi::ExtractReport, core::CoreError> {
     *EXTRACT_STATUS.lock().unwrap() = (0.0, "");
-    let report = core::extract_with_progress(source.as_ref(), data_out.as_ref(), jobs, &|fraction, stage| {
-        *EXTRACT_STATUS.lock().unwrap() = (fraction, stage);
-    })?;
+    let report = core::extract_with_progress(
+        source.as_ref(),
+        data_out.as_ref(),
+        jobs,
+        &|fraction, stage| {
+            *EXTRACT_STATUS.lock().unwrap() = (fraction, stage);
+        },
+    )?;
     Ok(ffi::ExtractReport {
         files: report.files,
         bytes: report.bytes,
@@ -284,6 +302,19 @@ fn textures_document_map_dc1(
 
 fn textures_verify(textures: &str) -> Result<(), core::CoreError> {
     core::textures::verify_tree(textures.as_ref())
+}
+
+fn audio_publish_bank(
+    key: &str,
+    hd: &[u8],
+    bd: &[u8],
+    data_out: &str,
+) -> Result<String, core::CoreError> {
+    core::audio::publish_bank(data_out.as_ref(), key, hd, bd)
+}
+
+fn audio_publish_sequence(key: &str, sq: &[u8], data_out: &str) -> Result<String, core::CoreError> {
+    core::audio::publish_sequence(data_out.as_ref(), key, sq)
 }
 
 fn list(source: &str) -> Result<String, core::CoreError> {

@@ -12,6 +12,7 @@
 #include <mutex>
 
 #include "platform/input.hpp"
+#include "platform/touch_overlay.hpp"
 
 namespace {
 
@@ -53,6 +54,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE void dc_web_touch_state(int mask, float lx, floa
     g_state = next;
 }
 
+namespace dc::platform {
+
 void TouchOverlayPoll() {
     const bool visible = InputTouchOverlayVisible();
     if (!g_told || visible != g_visible) {
@@ -79,3 +82,5 @@ void TouchOverlaySetOpacity(float opacity) {
         }
     }, opacity);
 }
+
+} // namespace dc::platform

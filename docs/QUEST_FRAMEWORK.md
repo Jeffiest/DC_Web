@@ -1,4 +1,4 @@
-# Quest Framework (`Quest::` Namespace)
+# Quest Framework (`dc::quest` Namespace)
 
 Quests the port adds to the game: each a state machine of named stages, moved on by rules and by
 what the player picks in conversations, kept beside each save. Quests add choices to villagers'
@@ -10,30 +10,30 @@ conversations through the dialog framework (`docs/DIALOG_FRAMEWORK.md`).
 
 Dependencies flow downward only.
 
-1. **`Quest::` runtime** (`port/include/quest_framework.hpp`, `port/src/quest_framework.cpp`). The
+1. **`quest::` runtime** (`port/src/quest/framework.hpp`, `port/src/quest/framework.cpp`). The
    registry, stages, rules, conditions, conversation choices and saving. No PS2 headers: a quest
-   reaches the game only through `Quest::IGame`.
-2. **Host** (`port/src/quest_host.cpp`). `IGame` over the save data, the dialog option provider, the
+   reaches the game only through `quest::IGame`.
+2. **Host** (`port/src/quest/host.cpp`). `IGame` over the save data, the dialog option provider, the
    save files, and the shop screen.
-3. **Quests** (`port/src/quests/`). One file each, listed in `RegisterAllQuests` (`quests.cpp`).
+3. **Quests** (`port/src/quest/`). One file each, listed in `RegisterAllQuests` (`quests.cpp`).
 
 ---
 
 ## 2. A quest
 
 ```cpp
-Quest::Definition CarlsSlingshot() {
-    return Quest::Builder("carls_slingshot")
+quest::Definition CarlsSlingshot() {
+    return quest::Builder("carls_slingshot")
         .Stages({"hidden", "offered", "asked", "excuse", "doubted", "confessed", "done"})   // starts at the first
-        .Advance("hidden", Quest::PartyMember(kXiao), "offered")
-        .Option(kCarl, Quest::AtStage("offered"), kCarlAsk, CarlAsksForHelp)
-        .Option(kCarl, Quest::AtStages({"asked", "excuse", "doubted", "confessed"}), kCarlAbout, CarlOnTheSlingshot)
-        .Option(kGina, Quest::AtStages({"asked", "excuse", "doubted", "confessed"}), kGinaAbout, GinaOnTheSlingshot)
+        .Advance("hidden", quest::PartyMember(kXiao), "offered")
+        .Option(kCarl, quest::AtStage("offered"), kCarlAsk, CarlAsksForHelp)
+        .Option(kCarl, quest::AtStages({"asked", "excuse", "doubted", "confessed"}), kCarlAbout, CarlOnTheSlingshot)
+        .Option(kGina, quest::AtStages({"asked", "excuse", "doubted", "confessed"}), kGinaAbout, GinaOnTheSlingshot)
         .Build();
 }
 ```
 
-That is the whole of the port's example quest (section 7, `port/src/quests/carls_slingshot.cpp`): two
+That is the whole of the port's example quest (section 7, `port/src/quest/carls_slingshot.cpp`): two
 NPCs, and a stage for each step between them. `port/src/tests/quest_framework_test.cpp` also has a
 quest that ends in a shop (`FetchQuest`).
 
@@ -42,15 +42,16 @@ quest that ends in a shop (`FetchQuest`).
 - **Rules** (`Advance`) move a quest from one stage to another once a condition holds. `Evaluate`
   applies them until none does; it runs whenever an NPC's menu is put together, and again after
   each quest choice.
-- **Conditions** are plain functions of the quest's `Context`: `AtStage`, `AtStages`, `HasItem`,
-  `HasMoney`, `FloorReached`, `DungeonStarted`, `PartyMember`, `VarAtLeast`, the game's flags
+- **Conditions** are plain functions of the quest's `Context`: `AtStage`, `AtStages`, `HasItem` (by
+  number, or by item ID: `HasItem("vanilla:bread", 2)`, docs/ITEM_FRAMEWORK.md), `HasItemWith<T>`
+  (items with an item trait between them: `HasItemWith<item::Fish>(3)`), `HasMoney`, `FloorReached`, `DungeonStarted`, `PartyMember`, `VarAtLeast`, the game's flags
   (`GameFlagSet`, `GameNumberAtLeast`, `MapFlagSet`), its georama (`PartPlaced`, `PartComplete`,
   `EventDone`, `RequestMet`, `VillagerHome`), and `All`, `Any`, `Not` to combine them. A lambda works
   too.
 - **Choices** (`Option`) are added to the menu of the NPCs an `NpcMatch` names (map, villager, message
-  file; `Quest::kAny` matches any) while their condition holds. A choice runs as a `Scene`.
+  file; `quest::kAny` matches any) while their condition holds. A choice runs as a `Scene`.
 - **Numbers**: `Var` and `SetVar` keep a quest's own counters and flags, saved with its stage.
-- **Retail takeovers** (`TakesOver(npc, Quest::Retail::...)`): something retail does by itself, which
+- **Retail takeovers** (`TakesOver(npc, quest::Retail::...)`): something retail does by itself, which
   the quest does its own way instead. While the quest is registered, the host holds retail's version
   back for the NPCs it names. `Retail::MayorSupplies` is the only one so far (section 6).
 
@@ -73,12 +74,12 @@ the next one's choices straight away.
 
 ### Text
 
-Every string is a `Quest::Text`: a key and the English. The key looks the text up in
+Every string is a `quest::Text`: a key and the English. The key looks the text up in
 `port/lang/<language>.json` (LocalizeText), so a quest is translated as the port's other text is,
 under `quest.<quest id>.`. `Text` holds views, so it is made of string literals.
 
 Each quest file lists every `Text` it uses in its `...Texts()` (`MayorSuppliesTexts`,
-`CarlsSlingshotTexts`), and `QuestStrings()` (`quests/quests.cpp`) gathers them for
+`CarlsSlingshotTexts`), and `QuestStrings()` (`quest/quests.cpp`) gathers them for
 `OptionStrings()`: the text export lists them for translators, and the test
 `LocalizeOptions.ShippedTranslationsHaveExactlyTheCodesKeys` checks that every language file in
 `port/lang/` has exactly those keys, with the same `{codes}` and `%1`... as the English. A new
@@ -89,7 +90,7 @@ members are `{name2}`...`{name6}` in the text rather than their names, as retail
 
 ## 3. The game
 
-`IGame` is all a quest sees of the game; `quest_host.cpp` implements it over `SaveData`:
+`IGame` is all a quest sees of the game; `quest/host.cpp` implements it over `SaveData`:
 
 | Call | In the game |
 |---|---|
@@ -100,7 +101,7 @@ members are `{name2}`...`{name6}` in the text rather than their names, as retail
 | `HasItemAnywhere(item)` | In the pack or stored, as retail's `PlayerAllItemCheck` looks. |
 | `DeepestFloor(dungeon)` | `floor_reached`: -1 for a dungeon never entered; 0 is the Divine Beast Cave. |
 | `DungeonCount(dungeon)` | `CSaveData::QuestDungeon(dungeon, 0)`, as the town scripts read it: 0 until the player has been in. |
-| `PartySize()` | How many have joined: Toan 1, Xiao 2, Goro 3... `Quest::PartyMember(chara)` holds once character `chara` (0 Toan, 1 Xiao...) has. |
+| `PartySize()` | How many have joined: Toan 1, Xiao 2, Goro 3... `quest::PartyMember(chara)` holds once character `chara` (0 Toan, 1 Xiao...) has. |
 | `GameFlag`, `SetGameFlag` | The game's flags, 0 to 8191, as the town scripts read and set them (`_SGET_GAME_FLAG`, `_SSET_GAME_FLAG`). Setting one changes what retail does, so a quest sets only flags it knows the meaning of. |
 | `GameNumber`, `SetGameNumber` | The game's 32 numbers (`_SGET_GAME_INT_FLAG`, `_SSET_GAME_INT_FLAG`). |
 | `MapFlag`, `SetMapFlag` | A map's flags as the scripts read them (`_SGET_MAP_FLAG`): set where the save holds 0. The map the player is on goes through `EdGetMapFlag`, which shares Treant's chest flags between its two maps. |
@@ -117,13 +118,13 @@ A test runs quests against a fake `IGame` (`port/src/tests/quest_framework_test.
 
 ## 4. Shops
 
-A quest's shop is a **custom shop** (`port/src/custom_shop.cpp`): retail's item shop screen with goods,
+A quest's shop is a **custom shop** (`port/src/quest/custom_shop.cpp`): retail's item shop screen with goods,
 prices, a shopkeeper and lines of its own. Retail's shops keep theirs:
 
 | What | How the custom shop gives it |
 |---|---|
-| Goods | `GetItemShopList` (a port override, with retail's lists copied from `ps2/src/shop.cpp`) gives the custom shop's while it is open. |
-| Shopkeeper | `ItemShopGetPacFileName` and `ItemShopGetImgFileName` (port overrides) give the keeper's character file. A villager's town model (`gedit/e01/chara/p13a.chr`) loads as a shopkeeper's does: the same pack, model and `<model>01.img`, and the shop plays only motions 0 and 3, which every villager has. |
+| Goods | `GetItemShopList` (the port's, in `port/src/game/shop.cpp`, with retail's lists) gives the custom shop's while it is open. |
+| Shopkeeper | `ItemShopGetPacFileName` and `ItemShopGetImgFileName` (the port's, in `shop.cpp`) give the keeper's character file. A villager's town model (`gedit/e01/chara/p13a.chr`) loads as a shopkeeper's does: the same pack, model and `<model>01.img`, and the shop plays only motions 0 and 3, which every villager has. |
 | Lines | A message file of the shop's own lines is laid over the shopkeeper's window (`CommonMenuMes3`, `ClsMesSetMessageOverlay`): item shop *n*'s lines are messages 4000 + *n* &times; 100 and an offset for the moment. |
 | Prices | The screen reads them from retail's `PriceList` through a function only `shop.cpp` can call, so the custom shop's buying prices are laid over that table for the visit and put back when the screen closes (`CommonShopLoop`). |
 
@@ -137,7 +138,7 @@ A quest's `ShopSpec` gives:
   for the screen's buffer (1 MB; retail's largest town model is 641 KB), falls back to
   `look_of_shop`'s shopkeeper. The screen needs one: without a shopkeeper it never shows its lines.
 - `lines`: `ShopLine::Greeting`, `Browsing`, `Selling`, `NotEnoughMoney`, `NoRoom`, `Confirm`,
-  `Thanks`, `Goodbye`, as `Quest::Text`.
+  `Thanks`, `Goodbye`, as `quest::Text`.
 
 The shopkeeper stands where `look_of_shop`'s does, scaled as theirs is: a villager much taller or
 shorter than that shopkeeper may need a `look_of_shop` whose shopkeeper is more their size.
@@ -163,7 +164,7 @@ when the save is loaded:
 
 ## 6. The Mayor's supplies
 
-`port/src/quests/mayor_supplies.cpp`. Retail's talk script (`gedit/e01/event.stb`, event 0x100) hands
+`port/src/quest/mayor_supplies.cpp`. Retail's talk script (`gedit/e01/event.stb`, event 0x100) hands
 the player one each of Tasty Water, Bread, Repair Powder, Escape Powder and Antidote Drink they have
 none of, in the pack or stored (`_SITEM_CHECK_ALL`, `_SITEM_GET`), whenever they talk to the Mayor,
 once they have been into the Divine Beast Cave (`QuestDungeon(0, 0)`) and until Gaffer's Buggy is
@@ -177,7 +178,7 @@ fits).
 
 The script's own handing out is held back (`Retail::MayorSupplies`): `EdTalkModeInit` calls
 `QuestHostTalkStarting` before the script runs, and while the talk with the Mayor starts,
-`PlayerAllItemCheck` (a port override in `quest_host.cpp`) answers that the player has those five
+`PlayerAllItemCheck` (the port's, in `port/src/game/menu_save.cpp`) answers that the player has those five
 items, so the script gives nothing and says his usual lines. The hold ends on the conversation's first
 tick in `EdTalkMode` (`QuestHostTalkOpened`).
 
@@ -185,7 +186,7 @@ tick in `EdTalkMode` (`QuestHostTalkOpened`).
 
 ## 7. Carl's Slingshot
 
-`port/src/quests/carls_slingshot.cpp`, the example quest. Carl (villager 7 of Norune) and Gina
+`port/src/quest/carls_slingshot.cpp`, the example quest. Carl (villager 7 of Norune) and Gina
 (villager 9) are two of the village's children, and come back with two different georama pieces.
 
 | Stage | Carl | Gina |
@@ -216,7 +217,7 @@ at a different offset in each script, so the port finds it by what it does (`run
 functions the programs reach, the one of four arguments that pushes `"/chara/iget.chr"`.
 
 When the conversation ends, `EdTalkMode` returns the port's event number `kEventItemGet`
-(`runscript_port.hpp`) as a talk's own event, and `CRunScript::run` starts the routine with the item,
+(`runscript.hpp`) as a talk's own event, and `CRunScript::run` starts the routine with the item,
 no fade and its own camera. Norune, Matataki and Queens have the routine, as do some interiors;
 Muska Lacka and Yellow Drops do not, and there `ShowItemReceived` is false.
 
