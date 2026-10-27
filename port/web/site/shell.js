@@ -1,7 +1,8 @@
 // The page around the game (docs/WEB.md). It makes the page cross-origin isolated (sw.js), keeps the player's
-// game data in the origin private file system under chronicle/, and starts darkcloud.js with that directory
-// mounted at /opfs (port/web/src/storage.cpp). Extra arguments for the game can be given as
-// ?args=--headless+--frames+30.
+// game data in the origin private file system under chronicle/, and starts the game with that directory
+// mounted at /opfs (port/web/src/storage.cpp): darkcloud.js, drawing with WebGPU, or darkcloud_gl.js, drawing
+// with WebGL2 (chooseRenderer). Extra arguments for the game can be given as ?args=--headless+--frames+30, and
+// the renderer as ?renderer=gl or ?renderer=webgpu.
 //
 // What the player chooses is stored as one of:
 // - chronicle/data.zip, the archive dcdata packs;
@@ -375,6 +376,44 @@ function showCaptured() {
     });
 }
 
+// The GPU's name as WebGL tells it, or '' where it does not.
+function gpuName() {
+    try {
+        const gl = document.createElement('canvas').getContext('webgl2');
+        if (!gl) {
+            return '';
+        }
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        const name = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        return name;
+    } catch {
+        return '';
+    }
+}
+
+function hasWebGl2() {
+    try {
+        return !!document.createElement('canvas').getContext('webgl2');
+    } catch {
+        return false;
+    }
+}
+
+// Which build the game runs as: WebGL2 where there is no WebGPU, and on Arm's Mali GPUs (Android phones), whose
+// WebGPU showed frames before they were drawn and ran the game at half speed once made to wait (docs/WEB.md);
+// WebGPU elsewhere. ?renderer=gl or ?renderer=webgpu chooses.
+function chooseRenderer() {
+    const asked = new URLSearchParams(location.search).get('renderer');
+    if (asked === 'gl' || asked === 'webgpu') {
+        return asked;
+    }
+    if (!navigator.gpu) {
+        return 'gl';
+    }
+    return /mali/i.test(gpuName()) ? 'gl' : 'webgpu';
+}
+
 function start() {
     $('setup').hidden = true;
     $('game').hidden = false;
@@ -386,7 +425,8 @@ function start() {
     window.dcLogging = true;
     kept.length = 0;
     log(`${new Date().toISOString()} ${navigator.userAgent}`);
-    log('darkcloud ' + args.join(' '));
+    const renderer = chooseRenderer();
+    log(`darkcloud ${args.join(' ')} (${renderer === 'gl' ? 'WebGL2' : 'WebGPU'}, ${gpuName() || 'GPU unknown'})`);
     const canvas = $('canvas');
     // Threads still running when the game exits can abort as it takes them down; the exit is what matters.
     let exited = false;
@@ -431,7 +471,7 @@ function start() {
         },
     };
     const script = document.createElement('script');
-    script.src = 'darkcloud.js';
+    script.src = renderer === 'gl' ? 'darkcloud_gl.js' : 'darkcloud.js';
     document.body.appendChild(script);
     canvas.addEventListener('click', () => canvas.focus());
     canvas.focus();
@@ -496,8 +536,8 @@ async function main() {
         setStatus('This browser has no origin private file system to keep the game data in.');
         return;
     }
-    if (!navigator.gpu) {
-        setStatus('This browser has no WebGPU, which the game draws with. Use a recent Chrome or Edge.');
+    if (!navigator.gpu && !hasWebGl2()) {
+        setStatus('This browser has neither WebGPU nor WebGL2 to draw the game with. Use a recent Chrome or Edge.');
         return;
     }
     navigator.storage.persist?.();

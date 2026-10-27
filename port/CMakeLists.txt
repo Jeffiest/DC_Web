@@ -69,6 +69,7 @@ if(NINTENDO_SWITCH)
     dc_switch_host(dc_host)
 elseif(EMSCRIPTEN)
     dc_web_host(dc_host)
+    dc_web_vulkan(dc_host)
 endif()
 # Chronicle still loads retail HD/BD/SQ audio. These compatibility declarations extend the shared
 # semantic audio API; every host and game unit must see the same class definitions.
@@ -326,7 +327,15 @@ if(NINTENDO_SWITCH)
     dc_switch_nro(darkcloud)
 endif()
 if(EMSCRIPTEN)
+    # The WebGPU build, and the same game on WebGL2 (web/web.cmake).
+    dc_web_link_vulkan(darkcloud webgpu)
+    add_executable(darkcloud_gl ${PORT_DIR}/main.cpp)
+    set_target_properties(darkcloud_gl PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    dc_link_game(darkcloud_gl)
+    dc_web_link_vulkan(darkcloud_gl gl)
     add_dependencies(darkcloud dc_web_site)
+    # After darkcloud, which has lang/ and glyphs/ copied for both to preload.
+    add_dependencies(darkcloud_gl darkcloud)
     dc_web_gfx_tests()
 endif()
 if(WIN32)

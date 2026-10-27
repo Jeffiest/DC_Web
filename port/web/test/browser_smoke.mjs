@@ -15,18 +15,19 @@ const note = (text) => {
 };
 
 // WebGPU on SwiftShader's Vulkan, so the renderer runs without a GPU. Here a presented canvas loses the
-// device, so the game runs --offscreen.
+// device, so the game runs --offscreen. A page url with ?renderer=gl runs it on WebGL2, on SwiftShader too.
 const browser = await chromium.launch({
     args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
-        '--use-webgpu-adapter=swiftshader', '--disable-vulkan-surface'],
+        '--use-webgpu-adapter=swiftshader', '--disable-vulkan-surface', '--enable-unsafe-swiftshader'],
 });
 try {
     const page = await browser.newPage();
     page.on('console', (message) => note(`[${message.type()}] ${message.text()}`));
     page.on('pageerror', (error) => note(`[pageerror] ${error.message}`));
-    const url = `${pageUrl}?args=${encodeURIComponent(gameArgs.join(' '))}`;
+    const url = new URL(pageUrl);
+    url.searchParams.set('args', gameArgs.join(' '));
 
-    await page.goto(url);
+    await page.goto(url.href);
     await page.waitForFunction(() => self.crossOriginIsolated && !document.getElementById('pick').hidden
         || !document.getElementById('ready').hidden, null, {timeout: 60000});
     note(`isolated: ${await page.evaluate(() => self.crossOriginIsolated)}`);

@@ -124,8 +124,13 @@ jobs:
           timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
+          # The same on WebGL2.
+          timeout 300 node browser_smoke.mjs "http://localhost:8000/index.html?renderer=gl" /smoke-data.zip \
+            "$GITHUB_WORKSPACE/ci/browser_gl.log" --headless --offscreen --frames 30
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser_gl.log"
 
-      # Kazarov's renderer tests against Vulkan on WebGPU, built apart so their failures leave the game's alone.
+      # Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, built apart so their failures leave the
+      # game's alone.
       - name: Build the renderer tests
         id: gfx_tests
         if: steps.build.outcome == 'success'
@@ -133,7 +138,7 @@ jobs:
         run: |
           source "$EMSDK/emsdk_env.sh" > /dev/null
           set +e
-          cmake --build --preset web --target kazarov_gfx_tests -- -k 0 > ci/gfx_tests_build.log 2>&1
+          cmake --build --preset web --target kazarov_gfx_tests kazarov_gfx_tests_gl -- -k 0 > ci/gfx_tests_build.log 2>&1
           status=$?
           grep -E "error:|undefined symbol|FAILED:" ci/gfx_tests_build.log | sort | uniq -c | sort -rn > ci/gfx_tests_errors.txt
           exit $status
@@ -156,6 +161,10 @@ jobs:
           timeout 900 node gfx_tests.mjs http://localhost:8000/gfx_tests.html "$GITHUB_WORKSPACE/ci/gfx_tests_noclip.log" \
             "--gtest_filter=GfxGpu*-$known" --no-clip-distances --mali
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/gfx_tests_noclip.log"
+          # And on WebGL2, which Android's Mali GPUs run the game on.
+          timeout 900 node gfx_tests.mjs "http://localhost:8000/gfx_tests.html?renderer=gl" \
+            "$GITHUB_WORKSPACE/ci/gfx_tests_gl.log" "--gtest_filter=-$known"
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/gfx_tests_gl.log"
 
       # The WebGPU probe in Chromium on SwiftShader: device, canvas, readback and fibers on the game's thread model.
       - name: WebGPU probe in Chromium
@@ -189,9 +198,10 @@ jobs:
           mkdir -p site
           cd port/build/web
           cp index.html shell.js sw.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
-            webgpu_probe.js webgpu_probe.wasm ../../../site/
+            darkcloud_gl.js darkcloud_gl.wasm darkcloud_gl.data webgpu_probe.js webgpu_probe.wasm ../../../site/
           # The renderer tests too, for running on a device whose GPU draws wrong (gfx_tests.html).
-          cp gfx_tests.html kazarov_gfx_tests.js kazarov_gfx_tests.wasm ../../../site/ 2>/dev/null || true
+          cp gfx_tests.html kazarov_gfx_tests.js kazarov_gfx_tests.wasm kazarov_gfx_tests_gl.js \
+            kazarov_gfx_tests_gl.wasm ../../../site/ 2>/dev/null || true
           touch ../../../site/.nojekyll
 
       - name: Upload the site for Pages
@@ -209,6 +219,9 @@ jobs:
             port/build/web/darkcloud.js
             port/build/web/darkcloud.wasm
             port/build/web/darkcloud.data
+            port/build/web/darkcloud_gl.js
+            port/build/web/darkcloud_gl.wasm
+            port/build/web/darkcloud_gl.data
             port/build/web/index.html
             port/build/web/shell.js
             port/build/web/sw.js

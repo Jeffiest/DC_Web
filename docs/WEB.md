@@ -13,8 +13,9 @@ cd port/build/web && python3 -m http.server   # then open http://localhost:8000/
 ```
 
 The build needs `glslangValidator` on the host (it still compiles the Vulkan shaders). Output is
-`port/build/web/darkcloud.js`, `darkcloud.wasm` and `darkcloud.data` (`lang/` and `glyphs/`, preloaded),
-with the page (`port/web/site/`) beside them, so the build directory is the site.
+`port/build/web/darkcloud.js`, `darkcloud.wasm` and `darkcloud.data` (`lang/` and `glyphs/`, preloaded), the
+game drawing with WebGPU, and `darkcloud_gl.js`, `.wasm` and `.data`, the same game drawing with WebGL2, with
+the page (`port/web/site/`) beside them, so the build directory is the site.
 
 The `web` workflow (`.github/workflows/web.yml`) builds every push to `main` and `claude/**`, smoke-runs the
 build under Node and the page in headless Chromium, and force-pushes the log, the error summary, both smoke
@@ -29,6 +30,9 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   renderer calls are implemented on WebGPU (Emscripten's `emdawnwebgpu` port) and the renderer runs
   unchanged. See "Vulkan on WebGPU" below. Weak stubs that fail (`gen_vk_stubs.py`) stand for every
   other command.
+- **Vulkan on WebGL2** (`port/web/gl/`): the same commands on WebGL2, linked into `darkcloud_gl`, which the page
+  starts where WebGPU is missing or draws the game wrong. See "Vulkan on WebGL2" below. Each layer is an
+  object library, so the stubs' weak definitions never stand in for its commands.
 - **PS2 threads** (`sce/eekernel_threads.cpp`) are Emscripten fibers, which need `-sASYNCIFY`.
 - **The game runs on a pthread** (`-sPROXY_TO_PTHREAD`), so its blocking waits do not stall the page.
   Hosting needs cross-origin isolation (COOP/COEP headers, or a service worker on GitHub Pages). The
@@ -69,6 +73,9 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   window, scaled to fit, with Fullscreen and Log buttons and the first start's progress over it; `sw.js` is a
   service worker that adds COOP/COEP for hosts that cannot send them, GitHub Pages among them, and
   `shell.js` reloads once under it. `?args=--headless+--frames+30` on the URL passes extra arguments.
+  The page starts `darkcloud_gl.js` on Arm's Mali GPUs (by WebGL's name for the GPU) and where there is no
+  WebGPU, and `darkcloud.js` elsewhere; `?renderer=gl` or `?renderer=webgpu` chooses, and the log's first lines
+  say which ran on what GPU.
 
 ## Status
 
@@ -77,6 +84,7 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 | Compiles and links to wasm | Done |
 | Game data in the browser: disc image, disc files, data folder or `data.zip` | Done; a disc read in place |
 | Renderer on WebGPU (Vulkan on WebGPU) | Done; Kazarov's renderer tests pass in Chromium, the game plays in Chrome |
+| Renderer on WebGL2 (Vulkan on WebGL2) | New; CI runs Kazarov's renderer tests on it; for Android's Mali GPUs |
 | Saves | Done |
 | Page: fills the window, fullscreen, log drawer | Done |
 | Main-depth copies | Not yet (see below) |
@@ -132,6 +140,34 @@ layer's conformance suite. Left out of the run:
 - `GfxGpuMeshDc2.FogCrossingTheEyeBlendsClampedFog` and `PlainFogCrossesTheEyeWithoutDividingByZero`: their
   vertices lie exactly on the eye plane (w = 0), where SwiftShader's clipper leaves those vertices out of the
   interpolation. A hair either side of the plane, and on other GPUs, the result is the expected one.
+
+## Vulkan on WebGL2
+
+`port/web/gl/` implements the same commands on WebGL2 (OpenGL ES 3.0) and reports the same device as Vulkan on
+WebGPU, so the renderer takes the same path on either. It is for Android's Mali GPUs, whose WebGPU flickered
+until frames were made to wait for each other, which halved the frame rate (above): WebGL orders the work it is
+given itself, and nothing waits.
+
+- **Commands** are recorded with the state each draw needs, and replayed as GL calls at submission
+  (`commands.cpp`), so a fence is signalled once `vkQueueSubmit2` returns and readbacks (`glReadPixels`) have
+  landed by then. GL state is set only where it differs from what was set last.
+- **Memory**: every buffer's bytes are in wasm memory, host-visible memory's own and a device-local buffer's
+  copy. Buffers drawn from have GL buffers, one per target, as WebGL keeps an index buffer from being anything
+  else; what the transient allocator marked or a copy wrote is uploaded before a draw next reads it. Buffer
+  copies happen in wasm memory.
+- **Uniform blocks** stand for push constants and the storage buffers' records: each draw's push constants and
+  the `MeshConstants`, `Prog0Constants` and `Prog0Palette` records it reads are copied into one uniform buffer
+  per submission, records shared by draws once.
+- **Images** keep Vulkan's layout: GL draws into a framebuffer row 0 first as Vulkan does, so clip space keeps
+  its y, and only the front-facing winding and the clip-space depth (0 to w in Vulkan, -w to w in GL) differ. The
+  canvas's row 0 is at its bottom, so the frame is blitted to it flipped at present. Copies and blits are
+  framebuffer blits; depth, which WebGL does not read back, is drawn into a colour target as its bytes first.
+- **Shaders** are hand-ported to GLSL ES 3.00 (`gl/shaders.cpp`), as the WGSL ports are: specialisation
+  constants are `#define`s, clip distances discard in the fragment shader, `textureGather` is four nearest
+  samples, and dual-source blends draw from one source as without WebGPU's. When a GLSL shader in
+  `gfx/shaders/` changes, its GLSL ES port must follow too.
+
+CI runs the renderer tests on it as well (`gfx_tests.html?renderer=gl`, `kazarov_gfx_tests_gl`).
 
 ## Watch for
 
