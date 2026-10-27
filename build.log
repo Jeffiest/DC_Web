@@ -1,0 +1,917 @@
+emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.13 (e13ee988ce3d87a738dd8f3661d02223308c412a)
+Preset CMake variables:
+
+  CMAKE_BUILD_TYPE="Release"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="/home/runner/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+  DC_BUILD_TESTS="OFF"
+  PLATFORM="WEB"
+
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Detecting Target CPU Architecture
+-- Detecting Target CPU Architecture - EMSCRIPTEN
+-- Performing Test COMPILER_SUPPORTS_FCOLOR_DIAGNOSTICS
+-- Performing Test COMPILER_SUPPORTS_FCOLOR_DIAGNOSTICS - Success
+-- Looking for getresgid
+-- Looking for getresgid - found
+-- Looking for getresuid
+-- Looking for getresuid - found
+-- Performing Test HAVE_POSIX_SPAWN
+-- Performing Test HAVE_POSIX_SPAWN - Failed
+-- Looking for vfork
+-- Looking for vfork - found
+-- 
+-- SDL3 was configured with the following options:
+-- 
+-- Platform: Emscripten-1
+-- 64-bit:   FALSE
+-- Compiler: /home/runner/emsdk/upstream/emscripten/emcc
+-- Revision: SDL-3.4.18-release-3.4.18
+-- Vendor:   
+-- 
+-- Subsystems:
+--   Audio:    ON
+--   Video:    ON
+--   GPU:      ON
+--   Render:   ON
+--   Camera:   ON
+--   Joystick: ON
+--   Haptic:   ON
+--   Hidapi:   ON
+--   Power:    ON
+--   Sensor:   ON
+--   Dialog:   ON
+--   Tray:     ON
+-- 
+-- Options:
+--   SDL_ALSA                       (Wanted: ON): OFF
+--   SDL_ALSA_SHARED                (Wanted: OFF): OFF
+--   SDL_ALTIVEC                    (Wanted: OFF): OFF
+--   SDL_ARMNEON                    (Wanted: OFF): OFF
+--   SDL_ASAN                       (Wanted: OFF): OFF
+--   SDL_ASSEMBLY                   (Wanted: OFF): OFF
+--   SDL_ASSERTIONS                 (Wanted: auto): auto
+--   SDL_AVX                        (Wanted: OFF): OFF
+--   SDL_AVX2                       (Wanted: OFF): OFF
+--   SDL_AVX512F                    (Wanted: OFF): OFF
+--   SDL_BACKGROUNDING_SIGNAL       (Wanted: OFF): OFF
+--   SDL_CCACHE                     (Wanted: OFF): OFF
+--   SDL_CLANG_TIDY                 (Wanted: OFF): OFF
+--   SDL_CLOCK_GETTIME              (Wanted: ON): ON
+--   SDL_COCOA                      (Wanted: OFF): OFF
+--   SDL_DBUS                       (Wanted: ON): OFF
+--   SDL_DEPS_SHARED                (Wanted: OFF): OFF
+--   SDL_DIRECTX                    (Wanted: OFF): OFF
+--   SDL_DISKAUDIO                  (Wanted: ON): ON
+--   SDL_DLOPEN_NOTES               (Wanted: ON): OFF
+--   SDL_DUMMYAUDIO                 (Wanted: ON): ON
+--   SDL_DUMMYCAMERA                (Wanted: ON): ON
+--   SDL_DUMMYVIDEO                 (Wanted: ON): ON
+--   SDL_EMSCRIPTEN_PERSISTENT_PATH (Wanted: ): OFF
+--   SDL_EXAMPLES                   (Wanted: OFF): OFF
+--   SDL_EXAMPLES_LINK_SHARED       (Wanted: OFF): OFF
+--   SDL_FOREGROUNDING_SIGNAL       (Wanted: OFF): OFF
+--   SDL_FRIBIDI                    (Wanted: ON): OFF
+--   SDL_FRIBIDI_SHARED             (Wanted: OFF): OFF
+--   SDL_GCC_ATOMICS                (Wanted: ON): ON
+--   SDL_HIDAPI                     (Wanted: ON): OFF
+--   SDL_HIDAPI_JOYSTICK            (Wanted: ON): OFF
+--   SDL_HIDAPI_LIBUSB              (Wanted: ON): OFF
+--   SDL_HIDAPI_LIBUSB_SHARED       (Wanted: OFF): OFF
+--   SDL_IBUS                       (Wanted: ON): OFF
+--   SDL_INSTALL                    (Wanted: OFF): OFF
+--   SDL_INSTALL_TESTS              (Wanted: OFF): OFF
+--   SDL_JACK                       (Wanted: ON): OFF
+--   SDL_JACK_SHARED                (Wanted: OFF): OFF
+--   SDL_KMSDRM                     (Wanted: ON): OFF
+--   SDL_KMSDRM_SHARED              (Wanted: OFF): OFF
+--   SDL_LASX                       (Wanted: OFF): OFF
+--   SDL_LIBC                       (Wanted: ON): ON
+--   SDL_LIBICONV                   (Wanted: OFF): OFF
+--   SDL_LIBTHAI                    (Wanted: ON): OFF
+--   SDL_LIBTHAI_SHARED             (Wanted: OFF): OFF
+--   SDL_LIBUDEV                    (Wanted: ON): OFF
+--   SDL_LIBURING                   (Wanted: ON): OFF
+--   SDL_LSX                        (Wanted: OFF): OFF
+--   SDL_METAL                      (Wanted: OFF): OFF
+--   SDL_MMX                        (Wanted: OFF): OFF
+--   SDL_OFFSCREEN                  (Wanted: ON): ON
+--   SDL_OPENGL                     (Wanted: ON): OFF
+--   SDL_OPENGLES                   (Wanted: ON): ON
+--   SDL_OPENVR                     (Wanted: OFF): OFF
+--   SDL_OSS                        (Wanted: ON): OFF
+--   SDL_PIPEWIRE                   (Wanted: ON): OFF
+--   SDL_PIPEWIRE_SHARED            (Wanted: OFF): OFF
+--   SDL_PTHREADS                   (Wanted: OFF): OFF
+--   SDL_PTHREADS_SEM               (Wanted: OFF): OFF
+--   SDL_PULSEAUDIO                 (Wanted: ON): OFF
+--   SDL_PULSEAUDIO_SHARED          (Wanted: OFF): OFF
+--   SDL_RENDER_D3D                 (Wanted: OFF): OFF
+--   SDL_RENDER_D3D11               (Wanted: OFF): OFF
+--   SDL_RENDER_D3D12               (Wanted: OFF): OFF
+--   SDL_RENDER_GPU                 (Wanted: ON): OFF
+--   SDL_RENDER_METAL               (Wanted: OFF): OFF
+--   SDL_RENDER_VULKAN              (Wanted: OFF): OFF
+--   SDL_ROCKCHIP                   (Wanted: OFF): OFF
+--   SDL_RPATH                      (Wanted: ON): OFF
+--   SDL_RPI                        (Wanted: OFF): OFF
+--   SDL_SNDIO                      (Wanted: ON): OFF
+--   SDL_SNDIO_SHARED               (Wanted: OFF): OFF
+--   SDL_SSE                        (Wanted: OFF): OFF
+--   SDL_SSE2                       (Wanted: OFF): OFF
+--   SDL_SSE3                       (Wanted: OFF): OFF
+--   SDL_SSE4_1                     (Wanted: OFF): OFF
+--   SDL_SSE4_2                     (Wanted: OFF): OFF
+--   SDL_SYSTEM_ICONV               (Wanted: ON): ON
+--   SDL_TESTS                      (Wanted: OFF): OFF
+--   SDL_TESTS_LINK_SHARED          (Wanted: OFF): OFF
+--   SDL_UNINSTALL                  (Wanted: OFF): OFF
+--   SDL_VIRTUAL_JOYSTICK           (Wanted: ON): ON
+--   SDL_VIVANTE                    (Wanted: OFF): OFF
+--   SDL_VULKAN                     (Wanted: OFF): OFF
+--   SDL_WASAPI                     (Wanted: OFF): OFF
+--   SDL_WAYLAND                    (Wanted: ON): OFF
+--   SDL_WAYLAND_LIBDECOR           (Wanted: ON): OFF
+--   SDL_WAYLAND_LIBDECOR_SHARED    (Wanted: OFF): OFF
+--   SDL_WAYLAND_SHARED             (Wanted: OFF): OFF
+--   SDL_X11                        (Wanted: ON): OFF
+--   SDL_X11_SHARED                 (Wanted: OFF): OFF
+--   SDL_X11_XCURSOR                (Wanted: ON): OFF
+--   SDL_X11_XDBE                   (Wanted: ON): OFF
+--   SDL_X11_XFIXES                 (Wanted: ON): OFF
+--   SDL_X11_XINPUT                 (Wanted: ON): OFF
+--   SDL_X11_XRANDR                 (Wanted: ON): OFF
+--   SDL_X11_XSCRNSAVER             (Wanted: ON): OFF
+--   SDL_X11_XSHAPE                 (Wanted: ON): OFF
+--   SDL_X11_XSYNC                  (Wanted: ON): OFF
+--   SDL_X11_XTEST                  (Wanted: ON): OFF
+--   SDL_XINPUT                     (Wanted: OFF): OFF
+-- 
+--  Build Shared Library: OFF
+--  Build Static Library: ON
+-- 
+-- Enabled backends:
+--   Video drivers: dummy emscripten offscreen
+--   Render drivers: ogl_es2
+--   GPU drivers: 
+--   Audio drivers: disk dummy emscripten
+--   Joystick drivers: emscripten virtual
+--   Camera drivers: dummy emscripten
+-- 
+-- If something was not detected, although the libraries
+-- were installed, then make sure you have set the
+-- CMAKE_C_FLAGS and CMAKE_PREFIX_PATH CMake variables correctly.
+-- 
+-- Looking for fork
+-- Looking for fork - found
+-- Looking for wait
+-- Looking for wait - found
+-- Looking for C++ include bit
+-- Looking for C++ include bit - found
+-- Adding -Og to compile flag
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Using the multi-header code from /home/runner/work/DC_Web/DC_Web/port/build/web/_deps/nlohmann_json-src/include/
+-- Configuring done (32.0s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/runner/work/DC_Web/DC_Web/port/build/web
+[0/2] Re-checking globbed directories...
+[1/520] Generating the Vulkan stubs
+gen_vk_stubs: 775 commands
+[2/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dynapi/SDL_dynapi.c.o
+[3/520] Building CXX object _deps/fastgltf-build/CMakeFiles/fastgltf.dir/src/base64.cpp.o
+_deps/fastgltf-src/src/base64.cpp:76:16: warning: unused variable 'impls' [-Wunused-variable]
+   76 |                         const auto& impls = simdjson::get_available_implementations();
+      |                                     ^~~~~
+1 warning generated.
+[4/520] Copying the web page
+[5/520] Copying the port's translated strings and text fonts
+[6/520] Copying the button symbols
+[7/520] Building CXX object _deps/fastgltf-build/CMakeFiles/fastgltf.dir/src/fastgltf.cpp.o
+[8/520] Building CXX object port/CMakeFiles/dc_vk_stubs.dir/build/web/web/vk_stubs.cpp.o
+[9/520] Building CXX object _deps/fastgltf-build/CMakeFiles/fastgltf.dir/src/io.cpp.o
+[10/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/cmake_pch.h.pch
+[11/520] Linking CXX static library port/libdc_vk_stubs.a
+[12/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL.c.o
+[13/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_assert.c.o
+[14/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_guid.c.o
+[15/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_error.c.o
+[16/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_hints.c.o
+[17/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_hashtable.c.o
+[18/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_log.c.o
+[19/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_list.c.o
+[20/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/actionseq.cpp.o
+[21/520] Building CXX object _deps/simdjson-build/CMakeFiles/simdjson.dir/cmake_pch.hxx.pch
+[22/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/battle_globals.cpp.o
+[23/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_utils.c.o
+[24/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/atomic/SDL_spinlock.c.o
+[25/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/SDL_properties.c.o
+[26/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/atomic/SDL_atomic.c.o
+[27/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audiodev.c.o
+[28/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audioqueue.c.o
+[29/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audio.c.o
+[30/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audioresample.c.o
+[31/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audiocvt.c.o
+[32/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_audiotypecvt.c.o
+[33/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_mixer.c.o
+[34/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/core/SDL_core_unsupported.c.o
+[35/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/camera/SDL_camera.c.o
+[36/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/cpuinfo/SDL_cpuinfo.c.o
+[37/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/SDL_wave.c.o
+[38/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_categories.c.o
+[39/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_clipboardevents.c.o
+[40/520] Building CXX object _deps/simdjson-build/CMakeFiles/simdjson.dir/src/simdjson.cpp.o
+[41/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_displayevents.c.o
+[42/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_dropevents.c.o
+[43/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_eventwatch.c.o
+[44/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_events.c.o
+/home/runner/work/DC_Web/DC_Web/port/build/web/_deps/sdl3-src/src/events/SDL_events.c:119:15: warning: variable 'SDL_last_event_id' set but not used [-Wunused-but-set-global]
+  119 | static Uint32 SDL_last_event_id = 0;
+      |               ^
+1 warning generated.
+[45/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_keysym_to_keycode.c.o
+[46/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_keysym_to_scancode.c.o
+[47/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_keymap.c.o
+[48/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_keyboard.c.o
+[49/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_quit.c.o
+[50/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_scancode_tables.c.o
+[51/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_pen.c.o
+[52/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_windowevents.c.o
+[53/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_mouse.c.o
+[54/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/SDL_touch.c.o
+[55/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/events/imKStoUCS.c.o
+[56/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/filesystem/SDL_filesystem.c.o
+[57/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/hidapi/SDL_hidapi.c.o
+[58/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/haptic/SDL_haptic.c.o
+[59/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/io/SDL_asyncio.c.o
+[60/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/io/generic/SDL_asyncio_generic.c.o
+[61/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/gpu/SDL_gpu.c.o
+[62/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/io/SDL_iostream.c.o
+[63/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/SDL_steam_virtual_gamepad.c.o
+[64/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/controller_type.c.o
+[65/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/locale/SDL_locale.c.o
+[66/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/SDL_gamepad.c.o
+/home/runner/work/DC_Web/DC_Web/port/build/web/_deps/sdl3-src/src/joystick/SDL_gamepad.c:126:26: warning: variable 's_pXInputMapping' set but not used [-Wunused-but-set-global]
+  126 | static GamepadMapping_t *s_pXInputMapping SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
+      |                          ^
+1 warning generated.
+[67/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/SDL_joystick.c.o
+[68/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/main/SDL_main_callbacks.c.o
+[69/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/main/SDL_runapp.c.o
+[70/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/power/SDL_power.c.o
+[71/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/misc/SDL_libusb.c.o
+[72/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/misc/SDL_url.c.o
+[73/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d/SDL_render_d3d.c.o
+[74/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/SDL_render_unsupported.c.o
+[75/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/SDL_yuv_sw.c.o
+[76/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d/SDL_shaders_d3d.c.o
+[77/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d11/SDL_render_d3d11.c.o
+[78/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d12/SDL_render_d3d12.c.o
+[79/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d11/SDL_shaders_d3d11.c.o
+[80/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/direct3d12/SDL_shaders_d3d12.c.o
+[81/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/gpu/SDL_pipeline_gpu.c.o
+[82/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/gpu/SDL_render_gpu.c.o
+[83/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/gpu/SDL_shaders_gpu.c.o
+[84/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/opengl/SDL_render_gl.c.o
+[85/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/ngage/SDL_render_ngage.c.o
+[86/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/SDL_render.c.o
+[87/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/opengl/SDL_shaders_gl.c.o
+[88/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/opengles2/SDL_shaders_gles2.c.o
+[89/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/ps2/SDL_render_ps2.c.o
+[90/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/psp/SDL_render_psp.c.o
+[91/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/opengles2/SDL_render_gles2.c.o
+[92/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_blendpoint.c.o
+[93/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_drawline.c.o
+[94/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_drawpoint.c.o
+[95/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/battlemenu.cpp.o
+../../src/game/battlemenu.cpp:3303:39: warning: invalid conversion specifier '\x0a' [-Wformat-invalid-specifier]
+ 3303 |                         printf("now 0%\n");
+      |                                      ~^
+../../src/game/battlemenu.cpp:3315:40: warning: invalid conversion specifier '\x0a' [-Wformat-invalid-specifier]
+ 3315 |                         printf("now 20%\n");
+      |                                       ~^
+../../src/game/battlemenu.cpp:3327:40: warning: invalid conversion specifier '\x0a' [-Wformat-invalid-specifier]
+ 3327 |                         printf("now 50%\n");
+      |                                       ~^
+../../src/game/battlemenu.cpp:3339:41: warning: invalid conversion specifier '\x0a' [-Wformat-invalid-specifier]
+ 3339 |                         printf("now 100%\n");
+      |                                        ~^
+4 warnings generated.
+[96/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_blendfillrect.c.o
+[97/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/vitagxm/SDL_render_vita_gxm.c.o
+[98/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_render_sw.c.o
+[99/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/vitagxm/SDL_render_vita_gxm_tools.c.o
+[100/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/vitagxm/SDL_render_vita_gxm_memory.c.o
+[101/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_triangle.c.o
+[102/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/vulkan/SDL_render_vulkan.c.o
+[103/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/vulkan/SDL_shaders_vulkan.c.o
+[104/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_crc16.c.o
+[105/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_crc32.c.o
+[106/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_getenv.c.o
+[107/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/sensor/SDL_sensor.c.o
+[108/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_iconv.c.o
+[109/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_malloc.c.o
+[110/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_memcpy.c.o
+[111/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/render/software/SDL_blendline.c.o
+[112/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_memmove.c.o
+[113/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_mslibc.c.o
+[114/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_memset.c.o
+[115/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_murmur3.c.o
+[116/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_random.c.o
+[117/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_qsort.c.o
+[118/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_stdlib.c.o
+[119/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_strtokr.c.o
+[120/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/stdlib/SDL_string.c.o
+[121/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/storage/SDL_storage.c.o
+[122/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/timer/SDL_timer.c.o
+[123/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/time/SDL_time.c.o
+[124/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/SDL_thread.c.o
+[125/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit.c.o
+[126/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_RLEaccel.c.o
+[127/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_0.c.o
+[128/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_1.c.o
+[129/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_copy.c.o
+[130/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_N.c.o
+[131/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_bmp.c.o
+[132/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_A.c.o
+[133/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_clipboard.c.o
+[134/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_slow.c.o
+[135/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_egl.c.o
+[136/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_fillrect.c.o
+[137/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_rotate.c.o
+[138/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_rect.c.o
+[139/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_pixels.c.o
+[140/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_stretch.c.o
+[141/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_video_unsupported.c.o
+[142/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_vulkan_utils.c.o
+[143/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_surface.c.o
+[144/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/yuv2rgb/yuv_rgb_lsx.c.o
+[145/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/yuv2rgb/yuv_rgb_sse.c.o
+[146/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_atan2.c.o
+[147/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_exp.c.o
+[148/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_yuv.c.o
+[149/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_video.c.o
+[150/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_log.c.o
+[151/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_fmod.c.o
+[152/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_log10.c.o
+[153/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/yuv2rgb/yuv_rgb_std.c.o
+[154/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_pow.c.o
+[155/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_rem_pio2.c.o
+[156/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/e_sqrt.c.o
+[157/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/k_cos.c.o
+[158/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/k_rem_pio2.c.o
+[159/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/k_sin.c.o
+[160/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/k_tan.c.o
+[161/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_atan.c.o
+[162/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_copysign.c.o
+[163/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_stb.c.o
+[164/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_cos.c.o
+[165/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_fabs.c.o
+[166/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_isinff.c.o
+[167/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_floor.c.o
+[168/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_isinf.c.o
+[169/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/SDL_blit_auto.c.o
+[170/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_isnanf.c.o
+[171/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_isnan.c.o
+[172/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_sin.c.o
+[173/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_scalbn.c.o
+[174/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_modf.c.o
+[175/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/dummy/SDL_dummyaudio.c.o
+[176/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/disk/SDL_diskaudio.c.o
+[177/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/libm/s_tan.c.o
+[178/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/camera/dummy/SDL_camera_dummy.c.o
+[179/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/loadso/dlopen/SDL_sysloadso.c.o
+[180/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/dummy/SDL_nullevents.c.o
+[181/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/dummy/SDL_nullframebuffer.c.o
+[182/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/dummy/SDL_nullvideo.c.o
+[183/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/main/emscripten/SDL_sysmain_callbacks.c.o
+[184/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/main/emscripten/SDL_sysmain_runapp.c.o
+[185/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/virtual/SDL_virtualjoystick.c.o
+[186/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/audio/emscripten/SDL_emscriptenaudio.c.o
+[187/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/misc/emscripten/SDL_sysurl.c.o
+[188/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/filesystem/emscripten/SDL_sysfilesystem.c.o
+[189/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/filesystem/posix/SDL_sysfsops.c.o
+[190/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/joystick/emscripten/SDL_sysjoystick.c.o
+[191/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/power/emscripten/SDL_syspower.c.o
+[192/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/camera/emscripten/SDL_camera_emscripten.c.o
+[193/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/locale/emscripten/SDL_syslocale.c.o
+[194/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/time/unix/SDL_systime.c.o
+[195/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/timer/unix/SDL_systimer.c.o
+[196/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/emscripten/SDL_emscriptenframebuffer.c.o
+[197/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/emscripten/SDL_emscriptenevents.c.o
+[198/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/sensor/emscripten/SDL_emscriptensensor.c.o
+[199/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/emscripten/SDL_emscriptenmouse.c.o
+[200/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/emscripten/SDL_emscriptenopengles.c.o
+[201/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/SDL_dialog.c.o
+[202/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/unix/SDL_portaldialog.c.o
+[203/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/unix/SDL_unixdialog.c.o
+[204/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/emscripten/SDL_emscriptenvideo.c.o
+[205/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/unix/SDL_zenitymessagebox.c.o
+[206/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/SDL_dialog_utils.c.o
+[207/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/process/SDL_process.c.o
+[208/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/dialog/unix/SDL_zenitydialog.c.o
+[209/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenopengles.c.o
+[210/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenvideo.c.o
+[211/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenevents.c.o
+[212/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenvulkan.c.o
+[213/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenframebuffer.c.o
+[214/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/tray/SDL_tray_utils.c.o
+[215/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/haptic/dummy/SDL_syshaptic.c.o
+[216/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/video/offscreen/SDL_offscreenwindow.c.o
+[217/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/storage/generic/SDL_genericstorage.c.o
+[218/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/process/dummy/SDL_dummyprocess.c.o
+[219/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/tray/dummy/SDL_tray.c.o
+[220/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_sysmutex.c.o
+[221/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_syscond.c.o
+[222/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_syssem.c.o
+[223/520] Linking CXX static library _deps/simdjson-build/libsimdjson.a
+[224/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_sysrwlock.c.o
+[225/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_systhread.c.o
+[226/520] Building C object _deps/sdl3-build/CMakeFiles/SDL3-static.dir/src/thread/generic/SDL_systls.c.o
+[227/520] Linking CXX static library _deps/fastgltf-build/libfastgltf.a
+[228/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/bound.cpp.o
+[229/520] Linking C static library _deps/sdl3-build/libSDL3.a
+[230/520] Compiling depth_planes.frag to SPIR-V
+[231/520] Compiling draw.frag to SPIR-V
+[232/520] Compiling draw2d.vert to SPIR-V
+[233/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/camera.cpp.o
+[234/520] Compiling draw_bound.frag to SPIR-V
+[235/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/camerafollow.cpp.o
+[236/520] Compiling draw_bound_single.frag to SPIR-V
+[237/520] Compiling draw_single.frag to SPIR-V
+[238/520] Compiling mesh_prog0.vert to SPIR-V
+[239/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/candleeffect.cpp.o
+[240/520] Compiling mesh.vert to SPIR-V
+[241/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/hdbank.cpp.o
+[242/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/hsmsg.cpp.o
+[243/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/mixer.cpp.o
+[244/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/pcm.cpp.o
+In file included from ../../../tools/kazarov/src/cpp/audio/pcm.cpp:18:
+kz_port/vendor/stb_vorbis.c:1404:75: warning: pointer comparison always evaluates to false [-Wtautological-compare]
+ 1404 |       if (f->stream_start + loc >= f->stream_end || f->stream_start + loc < f->stream_start) {
+      |                                                                           ^
+1 warning generated.
+[245/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/charakey.cpp.o
+[246/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/raw_audio.cpp.o
+[247/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/reverb.cpp.o
+[248/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/sequencer.cpp.o
+[249/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/soundtrack.cpp.o
+[250/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/sq.cpp.o
+[251/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/stream.cpp.o
+[252/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/btitem.cpp.o
+[253/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/trace.cpp.o
+[254/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/synth.cpp.o
+[255/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/track_cache.cpp.o
+[256/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/vag.cpp.o
+[257/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/audio/wav.cpp.o
+[258/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/btmisc.cpp.o
+[259/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/btsysscript.cpp.o
+[260/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/character.cpp.o
+[261/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/readback.cpp.o
+[262/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/memory.cpp.o
+[263/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/draw.cpp.o
+[264/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/pipelines.cpp.o
+[265/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/tim2.cpp.o
+[266/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/vulkan_android.cpp.o
+[267/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/arena.cpp.o
+[268/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/displaylist.cpp.o
+[269/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/audio.cpp.o
+[270/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/requirements.cpp.o
+[271/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/clock.cpp.o
+[272/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/files.cpp.o
+[273/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/game_icon.cpp.o
+[274/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/display.cpp.o
+[275/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/input.cpp.o
+[276/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/glyphs.cpp.o
+In file included from ../../../tools/kazarov/src/cpp/platform/glyphs.cpp:15:
+kz_port/vendor/stb_image.h:1070:12: warning: unused function 'stbi__addints_valid' [-Wunused-function]
+ 1070 | static int stbi__addints_valid(int a, int b)
+      |            ^~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_image.h:1078:12: warning: unused function 'stbi__mul2shorts_valid' [-Wunused-function]
+ 1078 | static int stbi__mul2shorts_valid(int a, int b)
+      |            ^~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.
+[277/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/imagefile.cpp.o
+[278/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/log.cpp.o
+[279/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/input_script.cpp.o
+[280/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/mouse.cpp.o
+[281/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/overlay.cpp.o
+[282/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/paths.cpp.o
+[283/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/settings.cpp.o
+[284/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/touchpad.cpp.o
+[285/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/texture_catalog.cpp.o
+[286/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/ttffont.cpp.o
+In file included from ../../../tools/kazarov/src/cpp/platform/ttffont.cpp:10:
+kz_port/vendor/stb_truetype.h:4937:15: warning: unused function 'stbtt_BakeFontBitmap' [-Wunused-function]
+ 4937 | STBTT_DEF int stbtt_BakeFontBitmap(const unsigned char *data, int offset,
+      |               ^~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3859:16: warning: unused function 'stbtt_GetBakedQuad' [-Wunused-function]
+ 3859 | STBTT_DEF void stbtt_GetBakedQuad(const stbtt_bakedchar *chardata, int pw, int ph, int char_index, float *xpos, float *ypos, stbtt_aligned_quad *q, int opengl_fillrule)
+      |                ^~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4350:16: warning: unused function 'stbtt_GetScaledFontVMetrics' [-Wunused-function]
+ 4350 | STBTT_DEF void stbtt_GetScaledFontVMetrics(const unsigned char *fontdata, int index, float size, float *ascent, float *descent, float *lineGap)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3957:15: warning: unused function 'stbtt_PackBegin' [-Wunused-function]
+ 3957 | STBTT_DEF int stbtt_PackBegin(stbtt_pack_context *spc, unsigned char *pixels, int pw, int ph, int stride_in_bytes, int padding, void *alloc_context)
+      |               ^~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3989:16: warning: unused function 'stbtt_PackEnd' [-Wunused-function]
+ 3989 | STBTT_DEF void stbtt_PackEnd  (stbtt_pack_context *spc)
+      |                ^~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4338:15: warning: unused function 'stbtt_PackFontRange' [-Wunused-function]
+ 4338 | STBTT_DEF int stbtt_PackFontRange(stbtt_pack_context *spc, const unsigned char *fontdata, int font_index, float font_size,
+      |               ^~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3995:16: warning: unused function 'stbtt_PackSetOversampling' [-Wunused-function]
+ 3995 | STBTT_DEF void stbtt_PackSetOversampling(stbtt_pack_context *spc, unsigned int h_oversample, unsigned int v_oversample)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4005:16: warning: unused function 'stbtt_PackSetSkipMissingCodepoints' [-Wunused-function]
+ 4005 | STBTT_DEF void stbtt_PackSetSkipMissingCodepoints(stbtt_pack_context *spc, int skip)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4363:16: warning: unused function 'stbtt_GetPackedQuad' [-Wunused-function]
+ 4363 | STBTT_DEF void stbtt_GetPackedQuad(const stbtt_packedchar *chardata, int pw, int ph, int char_index, float *xpos, float *ypos, stbtt_aligned_quad *q, int align_to_integer)
+      |                ^~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4949:15: warning: unused function 'stbtt_GetNumberOfFonts' [-Wunused-function]
+ 4949 | STBTT_DEF int stbtt_GetNumberOfFonts(const unsigned char *data)
+      |               ^~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2641:16: warning: unused function 'stbtt_GetFontVMetricsOS2' [-Wunused-function]
+ 2641 | STBTT_DEF int  stbtt_GetFontVMetricsOS2(const stbtt_fontinfo *info, int *typoAscent, int *typoDescent, int *typoLineGap)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2652:16: warning: unused function 'stbtt_GetFontBoundingBox' [-Wunused-function]
+ 2652 | STBTT_DEF void stbtt_GetFontBoundingBox(const stbtt_fontinfo *info, int *x0, int *y0, int *x1, int *y1)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2622:16: warning: unused function 'stbtt_GetCodepointKernAdvance' [-Wunused-function]
+ 2622 | STBTT_DEF int  stbtt_GetCodepointKernAdvance(const stbtt_fontinfo *info, int ch1, int ch2)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:1641:15: warning: unused function 'stbtt_GetCodepointBox' [-Wunused-function]
+ 1641 | STBTT_DEF int stbtt_GetCodepointBox(const stbtt_fontinfo *info, int codepoint, int *x0, int *y0, int *x1, int *y1)
+      |               ^~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2317:16: warning: unused function 'stbtt_GetKerningTableLength' [-Wunused-function]
+ 2317 | STBTT_DEF int  stbtt_GetKerningTableLength(const stbtt_fontinfo *info)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2332:15: warning: unused function 'stbtt_GetKerningTable' [-Wunused-function]
+ 2332 | STBTT_DEF int stbtt_GetKerningTable(const stbtt_fontinfo *info, stbtt_kerningentry* table, int table_length)
+      |               ^~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:1589:15: warning: unused function 'stbtt_GetCodepointShape' [-Wunused-function]
+ 1589 | STBTT_DEF int stbtt_GetCodepointShape(const stbtt_fontinfo *info, int unicode_codepoint, stbtt_vertex **vertices)
+      |               ^~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2672:16: warning: unused function 'stbtt_FreeShape' [-Wunused-function]
+ 2672 | STBTT_DEF void stbtt_FreeShape(const stbtt_fontinfo *info, stbtt_vertex *v)
+      |                ^~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2711:15: warning: unused function 'stbtt_GetCodepointSVG' [-Wunused-function]
+ 2711 | STBTT_DEF int stbtt_GetCodepointSVG(const stbtt_fontinfo *info, int unicode_codepoint, const char **svg)
+      |               ^~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3708:16: warning: unused function 'stbtt_FreeBitmap' [-Wunused-function]
+ 3708 | STBTT_DEF void stbtt_FreeBitmap(unsigned char *bitmap, void *userdata)
+      |                ^~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3797:26: warning: unused function 'stbtt_GetCodepointBitmap' [-Wunused-function]
+ 3797 | STBTT_DEF unsigned char *stbtt_GetCodepointBitmap(const stbtt_fontinfo *info, float scale_x, float scale_y, int codepoint, int *width, int *height, int *xoff, int *yoff)
+      |                          ^~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3802:16: warning: unused function 'stbtt_MakeCodepointBitmap' [-Wunused-function]
+ 3802 | STBTT_DEF void stbtt_MakeCodepointBitmap(const stbtt_fontinfo *info, unsigned char *output, int out_w, int out_h, int out_stride, float scale_x, float scale_y, int codepoint)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3787:16: warning: unused function 'stbtt_MakeCodepointBitmapSubpixelPrefilter' [-Wunused-function]
+ 3787 | STBTT_DEF void stbtt_MakeCodepointBitmapSubpixelPrefilter(const stbtt_fontinfo *info, unsigned char *output, int out_w, int out_h, int out_stride, float scale_x, float scale_y, float shift_x, float shift_y, int oversample_x, int oversample_y, float *sub_x, float *sub_y, int codepoint)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:2749:16: warning: unused function 'stbtt_GetCodepointBitmapBox' [-Wunused-function]
+ 2749 | STBTT_DEF void stbtt_GetCodepointBitmapBox(const stbtt_fontinfo *font, int codepoint, float scale_x, float scale_y, int *ix0, int *iy0, int *ix1, int *iy1)
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:3753:26: warning: unused function 'stbtt_GetGlyphBitmap' [-Wunused-function]
+ 3753 | STBTT_DEF unsigned char *stbtt_GetGlyphBitmap(const stbtt_fontinfo *info, float scale_x, float scale_y, int glyph, int *width, int *height, int *xoff, int *yoff)
+      |                          ^~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4767:16: warning: unused function 'stbtt_FreeSDF' [-Wunused-function]
+ 4767 | STBTT_DEF void stbtt_FreeSDF(unsigned char *bitmap, void *userdata)
+      |                ^~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4762:27: warning: unused function 'stbtt_GetCodepointSDF' [-Wunused-function]
+ 4762 | STBTT_DEF unsigned char * stbtt_GetCodepointSDF(const stbtt_fontinfo *info, float scale, int codepoint, int padding, unsigned char onedge_value, float pixel_dist_scale, int *width, int *height, int *xoff, int *yoff)
+      |                           ^~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4959:15: warning: unused function 'stbtt_FindMatchingFont' [-Wunused-function]
+ 4959 | STBTT_DEF int stbtt_FindMatchingFont(const unsigned char *fontdata, const char *name, int flags)
+      |               ^~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4964:15: warning: unused function 'stbtt_CompareUTF8toUTF16_bigendian' [-Wunused-function]
+ 4964 | STBTT_DEF int stbtt_CompareUTF8toUTF16_bigendian(const char *s1, int len1, const char *s2, int len2)
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+kz_port/vendor/stb_truetype.h:4824:23: warning: unused function 'stbtt_GetFontNameString' [-Wunused-function]
+ 4824 | STBTT_DEF const char *stbtt_GetFontNameString(const stbtt_fontinfo *font, int *length, int platformID, int encodingID, int languageID, int nameID)
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~
+30 warnings generated.
+[287/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/renderer.cpp.o
+[288/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/window.cpp.o
+[289/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/platform/vfs.cpp.o
+[290/520] Building CXX object port/CMakeFiles/dc_host.dir/web/src/memory.cpp.o
+[291/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/resources.cpp.o
+[292/520] Building CXX object port/CMakeFiles/dc_host.dir/__/tools/kazarov/src/cpp/gfx/thread.cpp.o
+[293/520] Embedding the WGSL shaders
+[294/520] Building CXX object port/CMakeFiles/dc_vk_webgpu.dir/web/vulkan/device.cpp.o
+[295/520] Building CXX object port/CMakeFiles/dc_vk_webgpu.dir/web/vulkan/objects.cpp.o
+[296/520] Building CXX object port/CMakeFiles/dc_vk_webgpu.dir/web/vulkan/commands.cpp.o
+[297/520] Building CXX object port/CMakeFiles/dc_vk_webgpu.dir/build/web/web/wgsl.cpp.o
+[298/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/collisionmdt.cpp.o
+[299/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dataalloc.cpp.o
+[300/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/chararead.cpp.o
+[301/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/collisiondata.cpp.o
+[302/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/cloth.cpp.o
+[303/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dataalloc2_1.cpp.o
+[304/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dngmessageman.cpp.o
+[305/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/clothread.cpp.o
+[306/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dngstatusdata.cpp.o
+[307/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/clsmes.cpp.o
+[308/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dispctrl.cpp.o
+[309/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dataset.cpp.o
+[310/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dranmapfield.cpp.o
+[311/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dun/movechara.cpp.o
+[312/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dataread.cpp.o
+[313/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dungeoneventdata.cpp.o
+[314/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dungeoneventman.cpp.o
+[315/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dun/gameloop.cpp.o
+../../src/game/dun/gameloop.cpp:3760:12: warning: destination for this 'memcpy' call is a pointer to class containing a dynamic class 'CCharacter'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+ 3760 |     memcpy(&MasekiEffect[1], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |     ~~~~~~ ^
+../../src/game/dun/gameloop.cpp:3760:12: note: explicitly cast the pointer to silence this warning
+ 3760 |     memcpy(&MasekiEffect[1], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |            ^
+      |            (void*)
+../../src/game/dun/gameloop.cpp:3762:12: warning: destination for this 'memcpy' call is a pointer to class containing a dynamic class 'CCharacter'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+ 3762 |     memcpy(&MasekiEffect[2], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |     ~~~~~~ ^
+../../src/game/dun/gameloop.cpp:3762:12: note: explicitly cast the pointer to silence this warning
+ 3762 |     memcpy(&MasekiEffect[2], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |            ^
+      |            (void*)
+../../src/game/dun/gameloop.cpp:3764:12: warning: destination for this 'memcpy' call is a pointer to class containing a dynamic class 'CCharacter'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+ 3764 |     memcpy(&MasekiEffect[3], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |     ~~~~~~ ^
+../../src/game/dun/gameloop.cpp:3764:12: note: explicitly cast the pointer to silence this warning
+ 3764 |     memcpy(&MasekiEffect[3], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |            ^
+      |            (void*)
+../../src/game/dun/gameloop.cpp:3766:12: warning: destination for this 'memcpy' call is a pointer to class containing a dynamic class 'CCharacter'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+ 3766 |     memcpy(&MasekiEffect[4], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |     ~~~~~~ ^
+../../src/game/dun/gameloop.cpp:3766:12: note: explicitly cast the pointer to silence this warning
+ 3766 |     memcpy(&MasekiEffect[4], &MasekiEffect[0], sizeof(CSHOT_EFFECT));
+      |            ^
+      |            (void*)
+4 warnings generated.
+[316/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dungeonparts.cpp.o
+[317/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editarea.cpp.o
+[318/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/dungeonmap.cpp.o
+../../src/game/dungeonmap.cpp:2505:51: warning: variable 'event_x' is uninitialized when used here [-Wuninitialized]
+ 2505 |                 this->events[event_no].origin_x = event_x;
+      |                                                   ^~~~~~~
+../../src/game/dungeonmap.cpp:2382:18: note: initialize the variable 'event_x' to silence this warning
+ 2382 |     int   event_x;
+      |                  ^
+      |                   = 0
+../../src/game/dungeonmap.cpp:2506:51: warning: variable 'event_y' is uninitialized when used here [-Wuninitialized]
+ 2506 |                 this->events[event_no].origin_z = event_y;
+      |                                                   ^~~~~~~
+../../src/game/dungeonmap.cpp:2383:18: note: initialize the variable 'event_y' to silence this warning
+ 2383 |     int   event_y;
+      |                  ^
+      |                   = 0
+2 warnings generated.
+[319/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/eastking.cpp.o
+[320/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/edit_in.cpp.o
+[321/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/ebattle.cpp.o
+[322/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/edit.cpp.o
+[323/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editground.cpp.o
+../../src/game/editground.cpp:154:12: warning: destination for this 'memcpy' call is a pointer to dynamic class 'CMapParts'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+  154 |     memcpy(target, source, sizeof(CMapParts));
+      |     ~~~~~~ ^
+../../src/game/editground.cpp:154:12: note: explicitly cast the pointer to silence this warning
+  154 |     memcpy(target, source, sizeof(CMapParts));
+      |            ^
+      |            (void*)
+../../src/game/editground.cpp:382:16: warning: destination for this 'memcpy' call is a pointer to dynamic class 'CMapParts'; vtable pointer will be overwritten [-Wdynamic-class-memaccess]
+  382 |         memcpy(target, &river_parts[1], sizeof(CMapParts));
+      |         ~~~~~~ ^
+../../src/game/editground.cpp:382:16: note: explicitly cast the pointer to silence this warning
+  382 |         memcpy(target, &river_parts[1], sizeof(CMapParts));
+      |                ^
+      |                (void*)
+2 warnings generated.
+[324/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editpartsdata.cpp.o
+[325/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editpartsinfo.cpp.o
+[326/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editmapscript.cpp.o
+[327/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/effectgroup.cpp.o
+[328/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/effect.cpp.o
+[329/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/fakepointlight.cpp.o
+[330/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/fader.cpp.o
+[331/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editloop.cpp.o
+[332/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/fireomni.cpp.o
+[333/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/fish.cpp.o
+[334/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/effectmacro.cpp.o
+[335/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editloop3.cpp.o
+[336/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/editmenu.cpp.o
+[337/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/hit_machingun_effect.cpp.o
+[338/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/hitmark.cpp.o
+[339/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/healeffect.cpp.o
+[340/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/hitvalue.cpp.o
+[341/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/itembombeffect.cpp.o
+[342/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/fishing.cpp.o
+[343/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/literals.cpp.o
+[344/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/langset.cpp.o
+[345/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/frame.cpp.o
+[346/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mainselect.cpp.o
+[347/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/map.cpp.o
+[348/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/gamepad.cpp.o
+[349/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mapobject.cpp.o
+[350/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mapparts.cpp.o
+[351/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mathutil.cpp.o
+[352/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mainitemmodel.cpp.o
+[353/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/main.cpp.o
+[354/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/gameutil.cpp.o
+[355/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/itemdata.cpp.o
+[356/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/memcard.cpp.o
+[357/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menu_draw.cpp.o
+[358/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menuetc.cpp.o
+[359/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/memorycardaccess.cpp.o
+[360/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menuiconautoget.cpp.o
+[361/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menuitemstep.cpp.o
+[362/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menu_misc.cpp.o
+[363/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menu_dungeon.cpp.o
+../../src/game/menu_dungeon.cpp:2572:42: warning: non-overlapping comparisons always evaluate to false [-Wtautological-overlap-compare]
+ 2572 |     if ((item_no > ITEM_WEAPON_SCORPION) && (item_no < ITEM_WEAPON_SUPER_STEVE)) {
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
+[364/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menu_manual.cpp.o
+[365/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/npcharacter.cpp.o
+[366/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/mglib.cpp.o
+[367/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/object.cpp.o
+[368/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/menu_save.cpp.o
+../../src/game/menu_save.cpp:1234:21: warning: variable 'slot' is used uninitialized whenever 'if' condition is false [-Wsometimes-uninitialized]
+ 1234 |                 if (MiniMenu.cursor < MiniMenu.event_item_num) {
+      |                     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+../../src/game/menu_save.cpp:1258:33: note: uninitialized use occurs here
+ 1258 |                 for (int i = 0; slot != nullptr && MiniMenu.usable[i] >= ITEM_DUNGEON_START && i < 13; i++) {
+      |                                 ^~~~
+../../src/game/menu_save.cpp:1234:17: note: remove the 'if' if its condition is always true
+ 1234 |                 if (MiniMenu.cursor < MiniMenu.event_item_num) {
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+../../src/game/menu_save.cpp:1232:26: note: initialize the variable 'slot' to silence this warning
+ 1232 |                 s16 *slot;
+      |                          ^
+      |                           = nullptr
+1 warning generated.
+[369/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/objanime.cpp.o
+[370/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/objectframe.cpp.o
+[371/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/objectframe2.cpp.o
+[372/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/randomitem.cpp.o
+[373/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/motionmodel.cpp.o
+[374/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/monstorunit.cpp.o
+[375/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/savedata.cpp.o
+[376/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/runeffect.cpp.o
+[377/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/nowload.cpp.o
+[378/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/shot_firebar.cpp.o
+[379/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/runscript_opcodes.cpp.o
+[380/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/scriptinterpreter.cpp.o
+[381/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/shot_utils.cpp.o
+[382/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/runscript.cpp.o
+[383/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/shot_effect.cpp.o
+[384/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/stealitem.cpp.o
+[385/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/sound.cpp.o
+[386/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/shot_freefuncs.cpp.o
+[387/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/shop.cpp.o
+[388/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/spritetable.cpp.o
+[389/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/stockitem.cpp.o
+[390/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/bombeffect.cpp.o
+[391/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/snd.cpp.o
+[392/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/cursol.cpp.o
+[393/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/textureanime.cpp.o
+[394/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/majinbeem.cpp.o
+[395/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/dispfade.cpp.o
+[396/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/logo.cpp.o
+[397/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/op_a.cpp.o
+[398/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/sysmes.cpp.o
+[399/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/op_b.cpp.o
+[400/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/op_d.cpp.o
+[401/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/op_c.cpp.o
+[402/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/seireiking.cpp.o
+[403/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/rushmovi.cpp.o
+[404/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/scfader.cpp.o
+[405/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/script.cpp.o
+[406/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/sprite.cpp.o
+[407/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/texture.cpp.o
+[408/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/tisound.cpp.o
+[409/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/opening.cpp.o
+[410/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/vudata.cpp.o
+[411/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/vutext.cpp.o
+[412/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/title.cpp.o
+[413/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/weaponeffect.cpp.o
+[414/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/weapon_buildup.cpp.o
+[415/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/weaponelement.cpp.o
+[416/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/title/titleloop.cpp.o
+[417/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/water.cpp.o
+[418/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/wind.cpp.o
+[419/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/zz_off.cpp.o
+[420/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/visualshadow.cpp.o
+[421/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/visualvu1.cpp.o
+[422/520] Building CXX object port/CMakeFiles/dc_ps2.dir/src/game/weaponlevelup.cpp.o
+[423/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/identity.cpp.o
+[424/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/presence.cpp.o
+[425/520] Building CXX object port/CMakeFiles/dc_port.dir/src/battlemenu/main_ring.cpp.o
+[426/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/gameloop.cpp.o
+[427/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/icon_retail.cpp.o
+[428/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/runtime.cpp.o
+[429/520] Building CXX object port/CMakeFiles/dc_port.dir/src/battlemenu/move_menu.cpp.o
+[430/520] Building CXX object port/CMakeFiles/dc_port.dir/src/app/presentation.cpp.o
+[431/520] Building CXX object port/CMakeFiles/dc_port.dir/src/battlemenu/strings.cpp.o
+[432/520] Building CXX object port/CMakeFiles/dc_port.dir/src/battlemenu/weapon_menu.cpp.o
+[433/520] Building CXX object port/CMakeFiles/dc_port.dir/src/dialog/npc.cpp.o
+[434/520] Building CXX object port/CMakeFiles/dc_port.dir/src/input/dualsense.cpp.o
+[435/520] Building CXX object port/CMakeFiles/dc_port.dir/src/input/camera_zoom.cpp.o
+[436/520] Building CXX object port/CMakeFiles/dc_port.dir/src/input/first_person_walk.cpp.o
+[437/520] Building CXX object port/CMakeFiles/dc_port.dir/src/dialog/framework.cpp.o
+[438/520] Building CXX object port/CMakeFiles/dc_port.dir/src/input/mouse_collision.cpp.o
+[439/520] Building CXX object port/CMakeFiles/dc_port.dir/src/data/data_read.cpp.o
+[440/520] Building CXX object port/CMakeFiles/dc_port.dir/src/input/mouse_look.cpp.o
+[441/520] Building CXX object port/CMakeFiles/dc_port.dir/src/item/framework.cpp.o
+[442/520] Building CXX object port/CMakeFiles/dc_port.dir/src/options/draw.cpp.o
+[443/520] Building CXX object port/CMakeFiles/dc_port.dir/src/localize/localize_texture.cpp.o
+[444/520] Building CXX object port/CMakeFiles/dc_port.dir/src/options/menu_option.cpp.o
+[445/520] Building CXX object port/CMakeFiles/dc_port.dir/src/options/screen.cpp.o
+[446/520] Building CXX object port/CMakeFiles/dc_port.dir/src/data/model_gltf.cpp.o
+[447/520] Building CXX object port/CMakeFiles/dc_port.dir/src/item/host.cpp.o
+[448/520] Building CXX object port/CMakeFiles/dc_port.dir/src/options/rows.cpp.o
+[449/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/png_image.cpp.o
+[450/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/touch_overlay.cpp.o
+[451/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/config.cpp.o
+[452/520] Building CXX object port/CMakeFiles/dc_port.dir/src/localize/localize.cpp.o
+[453/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/carls_slingshot.cpp.o
+[454/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/data_archive.cpp.o
+[455/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/datapacks.cpp.o
+[456/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/mayor_supplies.cpp.o
+[457/520] Building CXX object port/CMakeFiles/dc_port.dir/src/platform/native_config.cpp.o
+[458/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/quests.cpp.o
+[459/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/custom_shop.cpp.o
+[460/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/draw2d.cpp.o
+[461/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/draw3d.cpp.o
+[462/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/host.cpp.o
+[463/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/draw3d_visual.cpp.o
+[464/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/shadowclip.cpp.o
+[465/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/gs_state.cpp.o
+[466/520] Building CXX object port/CMakeFiles/dc_port.dir/src/save/save_slots.cpp.o
+[467/520] Building CXX object port/CMakeFiles/dc_port.dir/src/quest/framework.cpp.o
+[468/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/credits_text.cpp.o
+[469/520] Building CXX object port/CMakeFiles/dc_port.dir/src/save/save_state.cpp.o
+[470/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/gametext.cpp.o
+[471/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/caption_text.cpp.o
+[472/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/glyph_draw.cpp.o
+[473/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/captionfont.cpp.o
+[474/520] Building CXX object port/CMakeFiles/dc_port.dir/src/title/title_draw.cpp.o
+[475/520] Building CXX object port/CMakeFiles/dc_port.dir/src/title/title_menu.cpp.o
+[476/520] Building CXX object port/CMakeFiles/dc_port.dir/src/render/texture_registry.cpp.o
+[477/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/framework/dialogs.cpp.o
+[478/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/framework/buttons.cpp.o
+[479/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/framework/surfaces.cpp.o
+[480/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/framework/text.cpp.o
+[481/520] Building CXX object port/CMakeFiles/dc_port.dir/src/text/textwipe.cpp.o
+[482/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/area_card.cpp.o
+[483/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/name_mouse_layout.cpp.o
+[484/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/framework/widgets.cpp.o
+[485/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/journal_chest.cpp.o
+[486/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/name_mouse.cpp.o
+[487/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/libvu0.cpp.o
+[488/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/menu_pointer.cpp.o
+[489/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/sifrpc.cpp.o
+[490/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/libpad.cpp.o
+[491/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/eekernel.cpp.o
+[492/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/stubs/libgraph.cpp.o
+[493/520] Building CXX object port/CMakeFiles/dc_port.dir/src/ui/menu_mouse.cpp.o
+[494/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/stubs/libdma.cpp.o
+[495/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/stubs/libpkt.cpp.o
+[496/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/libcdvd.cpp.o
+[497/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/libgraph.cpp.o
+[498/520] Building CXX object port/CMakeFiles/dc_port.dir/web/src/storage.cpp.o
+[499/520] Building CXX object port/CMakeFiles/dc_port.dir/web/src/discord.cpp.o
+[500/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/sifdev.cpp.o
+[501/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/libmc.cpp.o
+[502/520] Building CXX object port/CMakeFiles/dc_port.dir/web/src/touch.cpp.o
+[503/520] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+In file included from _deps/googletest-src/googletest/src/gtest-all.cc:38:
+In file included from _deps/googletest-src/googletest/include/gtest/gtest.h:64:
+In file included from _deps/googletest-src/googletest/include/gtest/gtest-assertion-result.h:46:
+In file included from _deps/googletest-src/googletest/include/gtest/gtest-message.h:57:
+_deps/googletest-src/googletest/include/gtest/internal/gtest-port.h:686:5: warning: 'GTEST_HAS_DEATH_TEST' is not defined, evaluates to 0 [-Wundef]
+  686 | #if GTEST_HAS_DEATH_TEST || \
+      |     ^
+1 warning generated.
+[504/520] Building CXX object port/CMakeFiles/dc_port.dir/__/tools/kazarov/src/cpp/sce/unimplemented.cpp.o
+[505/520] Building CXX object port/CMakeFiles/webgpu_probe.dir/web/probe/webgpu_probe.cpp.o
+[506/520] Building CXX object port/CMakeFiles/dc_vk_gl.dir/web/gl/device.cpp.o
+[507/520] Building CXX object port/CMakeFiles/dc_vk_gl.dir/web/gl/objects.cpp.o
+[508/520] Building CXX object port/CMakeFiles/dc_vk_gl.dir/web/gl/commands.cpp.o
+[509/520] Linking CXX static library lib/libgtest.a
+[510/520] Building CXX object port/CMakeFiles/dc_port.dir/web/src/exit.cpp.o
+[511/520] Building CXX object port/CMakeFiles/dc_vk_gl.dir/web/gl/shaders.cpp.o
+[512/520] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[513/520] Linking CXX static library lib/libgtest_main.a
+[514/520] Linking CXX executable webgpu_probe.js
+em++: warning: -pthread + ALLOW_MEMORY_GROWTH may run non-wasm code slowly, consider -sGROWABLE_ARRAYBUFFERS=2 [-Wpthreads-mem-growth]
+[515/520] Building CXX object port/CMakeFiles/darkcloud.dir/src/main.cpp.o
+[516/520] Building CXX object port/CMakeFiles/dc_port.dir/web/src/firstrun.cpp.o
+[517/520] Linking CXX executable darkcloud.js
+em++: warning: -pthread + ALLOW_MEMORY_GROWTH may run non-wasm code slowly, consider -sGROWABLE_ARRAYBUFFERS=2 [-Wpthreads-mem-growth]
+[518/520] Building CXX object port/CMakeFiles/darkcloud_gl.dir/src/main.cpp.o
+[519/520] Linking CXX executable darkcloud_gl.js
+em++: warning: -pthread + ALLOW_MEMORY_GROWTH may run non-wasm code slowly, consider -sGROWABLE_ARRAYBUFFERS=2 [-Wpthreads-mem-growth]

@@ -1,0 +1,57 @@
+isolated: true
+status: Ready.
+[log] 2026-10-27T23:14:13.377Z Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36
+[log] darkcloud --data /opfs/chronicle/data --save /opfs/chronicle/save --headless --offscreen --frames 30 (WebGPU, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver))
+[log] GetITEM No === 258
+[log] get weapon!! 258
+[log] GetITEM No === 258
+[log] get weapon!! 258
+[log] config: saved /opfs/chronicle/save/config.json
+[log] Vulkan: using WebGPU google swiftshader (Vulkan 1.3.0), offscreen
+[log] Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+[log] Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+[log] gfx: shader statistics ''
+[log] webgpu: no dual-source blending: those blends are drawn from one source
+[log] compiling shaders 0/13116
+[log] compiling shaders 3279/13116
+[log] compiling shaders 6731/13116
+[log] compiling shaders 9838/13116
+[log] compiling shaders 13116/13116
+[log] gfx: 13116 pipelines ready in 0.16 s
+[log] the data has no languages.json; run dcdata extract again
+[log] GetITEM No === 258
+[log] get weapon!! 258
+[log] File open error "meswin/systeme.bin"
+[log]  
+[log]  
+[log] etc.cpp:753: assertion failed: FALSE
+[log] exit=4
+--- page log ---
+2026-10-27T23:14:13.377Z Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36
+darkcloud --data /opfs/chronicle/data --save /opfs/chronicle/save --headless --offscreen --frames 30 (WebGPU, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver))
+GetITEM No === 258
+get weapon!! 258
+GetITEM No === 258
+get weapon!! 258
+config: saved /opfs/chronicle/save/config.json
+Vulkan: using WebGPU google swiftshader (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+webgpu: no dual-source blending: those blends are drawn from one source
+compiling shaders 0/13116
+compiling shaders 3279/13116
+compiling shaders 6731/13116
+compiling shaders 9838/13116
+compiling shaders 13116/13116
+gfx: 13116 pipelines ready in 0.16 s
+the data has no languages.json; run dcdata extract again
+GetITEM No === 258
+get weapon!! 258
+File open error "meswin/systeme.bin"
+ 
+ 
+etc.cpp:753: assertion failed: FALSE
+exit=4
+
+exit=0

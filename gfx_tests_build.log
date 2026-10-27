@@ -1,0 +1,29 @@
+[0/2] Re-checking globbed directories...
+[1/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_frame_edge_test.cpp.o
+[2/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_cached_target_test.cpp.o
+[3/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_displaylist_test.cpp.o
+[4/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/web/test/gfx_tests_main.cpp.o
+[5/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_pairing_test.cpp.o
+[6/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_resource_lifetime_test.cpp.o
+[7/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_tim2_test.cpp.o
+[8/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/web/test/gfx_tests_main.cpp.o
+[9/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_cached_target_test.cpp.o
+[10/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_validation_test.cpp.o
+[11/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_displaylist_test.cpp.o
+[12/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_resource_retirement_test.cpp.o
+[13/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_frame_edge_test.cpp.o
+[14/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_depth_copy_test.cpp.o
+[15/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_pairing_test.cpp.o
+[16/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_depth_copy_test.cpp.o
+[17/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_resource_lifetime_test.cpp.o
+[18/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_resource_retirement_test.cpp.o
+[19/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_tim2_test.cpp.o
+[20/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_validation_test.cpp.o
+[21/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_mesh_dc2_test.cpp.o
+[22/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests.dir/__/tools/kazarov/src/cpp/tests/gfx_misc_test.cpp.o
+[23/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_mesh_dc2_test.cpp.o
+[24/27] Building CXX object port/CMakeFiles/kazarov_gfx_tests_gl.dir/__/tools/kazarov/src/cpp/tests/gfx_misc_test.cpp.o
+[25/27] Linking CXX executable kazarov_gfx_tests.js
+em++: warning: -pthread + ALLOW_MEMORY_GROWTH may run non-wasm code slowly, consider -sGROWABLE_ARRAYBUFFERS=2 [-Wpthreads-mem-growth]
+[26/27] Linking CXX executable kazarov_gfx_tests_gl.js
+em++: warning: -pthread + ALLOW_MEMORY_GROWTH may run non-wasm code slowly, consider -sGROWABLE_ARRAYBUFFERS=2 [-Wpthreads-mem-growth]
