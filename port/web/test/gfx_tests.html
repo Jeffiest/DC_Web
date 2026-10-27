@@ -12,7 +12,8 @@
 </style>
 </head>
 <body>
-<!-- Kazarov's renderer tests on WebGPU (port/web/test/gfx_tests_main.cpp); ?args= passes GoogleTest's arguments.
+<!-- Kazarov's renderer tests on WebGPU, or with ?renderer=gl on WebGL2 (port/web/test/gfx_tests_main.cpp); ?args=
+     passes GoogleTest's arguments.
      The site carries this page too, so a device whose GPU draws the game wrong can show which cases it fails. -->
 <canvas id="canvas" width="640" height="480"></canvas>
 <pre id="log"></pre>
@@ -51,7 +52,9 @@
         onAbort: (reason) => log(`abort: ${reason}`),
     };
     const script = document.createElement('script');
-    script.src = 'kazarov_gfx_tests.js';
+    const gl = new URLSearchParams(location.search).get('renderer') === 'gl';
+    log(`tests: on ${gl ? 'WebGL2' : 'WebGPU'}`);
+    script.src = gl ? 'kazarov_gfx_tests_gl.js' : 'kazarov_gfx_tests.js';
     document.body.appendChild(script);
 })();
 </script>

@@ -3,8 +3,8 @@
 # The game and Kazarov's host code build to WebAssembly unchanged where they can:
 # - SDL3 is built from source for Emscripten.
 # - Browsers have no Vulkan. The renderer compiles against Vulkan's headers, and vulkan/ implements the
-#   commands it uses on WebGPU (Emscripten's emdawnwebgpu port); weak stubs that fail stand for the rest
-#   (gen_vk_stubs.py).
+#   commands it uses on WebGPU (Emscripten's emdawnwebgpu port), gl/ on WebGL2; weak stubs that fail stand for
+#   the rest (gen_vk_stubs.py).
 # - The PS2 threads are Emscripten fibers (sce/eekernel_threads.cpp), which need Asyncify.
 # - The game runs on a pthread (PROXY_TO_PTHREAD), so its blocking waits do not stall the page.
 
@@ -63,14 +63,41 @@ add_custom_command(OUTPUT ${DC_WGSL}
     VERBATIM)
 
 # Kazarov's host library with the arena memory replaced (Emscripten's mmap has no reservations or guard
-# pages) and Vulkan on WebGPU added.
+# pages).
 function(dc_web_host target)
     set_source_files_properties(${KZ_PORT_ROOT}/platform/memory.cpp PROPERTIES HEADER_FILE_ONLY ON)
-    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/memory.cpp
-        ${DC_WEB_DIR}/vulkan/device.cpp ${DC_WEB_DIR}/vulkan/objects.cpp ${DC_WEB_DIR}/vulkan/commands.cpp
-        ${DC_WGSL})
-    target_include_directories(${target} PRIVATE ${DC_WEB_DIR}/vulkan)
-    target_compile_options(${target} PRIVATE --use-port=emdawnwebgpu)
+    target_sources(${target} PRIVATE ${DC_WEB_DIR}/src/memory.cpp)
+endfunction()
+
+# The two Vulkans the renderer is linked with, each an object library so the stubs' weak definitions never
+# stand in for its commands: Vulkan on WebGPU (vulkan/, Emscripten's emdawnwebgpu port) for darkcloud, and
+# Vulkan on WebGL2 (gl/) for darkcloud_gl, which the page loads where WebGPU draws the game wrong or slowly
+# (docs/WEB.md). Both match the renderer's SPIR-V, compiled for dc_host.
+function(dc_web_vulkan host)
+    add_library(dc_vk_webgpu OBJECT
+        ${DC_WEB_DIR}/vulkan/device.cpp ${DC_WEB_DIR}/vulkan/objects.cpp ${DC_WEB_DIR}/vulkan/commands.cpp ${DC_WGSL})
+    add_library(dc_vk_gl OBJECT
+        ${DC_WEB_DIR}/gl/device.cpp ${DC_WEB_DIR}/gl/objects.cpp ${DC_WEB_DIR}/gl/commands.cpp
+        ${DC_WEB_DIR}/gl/shaders.cpp)
+    target_include_directories(dc_vk_webgpu PRIVATE ${DC_WEB_DIR}/vulkan ${CMAKE_BINARY_DIR}/kz_port/generated)
+    target_include_directories(dc_vk_gl PRIVATE ${DC_WEB_DIR}/gl ${CMAKE_BINARY_DIR}/kz_port/generated)
+    target_compile_options(dc_vk_webgpu PRIVATE --use-port=emdawnwebgpu)
+    foreach(layer dc_vk_webgpu dc_vk_gl)
+        target_link_libraries(${layer} PRIVATE Vulkan::Headers)
+        # The SPIR-V headers are made with the host library.
+        add_dependencies(${layer} ${host})
+    endforeach()
+endfunction()
+
+# What a target linking the WebGPU or the WebGL2 Vulkan takes: the layer's objects and its link options.
+function(dc_web_link_vulkan target renderer)
+    if(renderer STREQUAL "gl")
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:dc_vk_gl>)
+        target_link_options(${target} PRIVATE -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2)
+    else()
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:dc_vk_webgpu>)
+        target_link_options(${target} PRIVATE --use-port=emdawnwebgpu)
+    endif()
 endfunction()
 
 # The desktop-only units, replaced.
@@ -102,11 +129,10 @@ add_custom_target(dc_web_site
     COMMENT "Copying the web page")
 
 # What the page loads. The game runs on a pthread; the main thread keeps the page responsive, and the canvas
-# is handed to the game's thread, where WebGPU draws to it. WasmFS mounts the browser's storage
+# is handed to the game's thread, where WebGPU or WebGL2 draws to it. WasmFS mounts the browser's storage
 # (src/storage.cpp). lang/ and glyphs/, which the game reads beside its executable, are preloaded into the
 # root: the executable is ./this.program there.
 set(DC_WEB_LINK_OPTIONS
-    --use-port=emdawnwebgpu
     -sOFFSCREENCANVAS_SUPPORT=1
     "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas"
     -sWASMFS=1
@@ -142,9 +168,10 @@ add_custom_command(TARGET webgpu_probe POST_BUILD
     VERBATIM)
 add_dependencies(webgpu_probe dc_web_site)
 
-# Kazarov's renderer tests against Vulkan on WebGPU, for the browser (test/gfx_tests.html). Not built by
-# default: `cmake --build --preset web --target kazarov_gfx_tests`. The render thread and depth planes
-# cases need what the web leaves out (a worker thread on the device, bindless textures).
+# Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, for the browser (test/gfx_tests.html, whose
+# ?renderer=gl loads the second). Not built by default: `cmake --build --preset web --target kazarov_gfx_tests
+# kazarov_gfx_tests_gl`. The render thread and depth planes cases need what the web leaves out (a worker thread
+# on the device, bindless textures).
 function(dc_web_gfx_tests)
     FetchContent_Declare(googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
@@ -155,26 +182,35 @@ function(dc_web_gfx_tests)
     FetchContent_MakeAvailable(googletest)
     file(GLOB tests CONFIGURE_DEPENDS ${KZ_PORT_ROOT}/tests/gfx_*_test.cpp)
     list(FILTER tests EXCLUDE REGEX "gfx_(render_thread|depth_planes)_test\\.cpp$")
-    add_executable(kazarov_gfx_tests EXCLUDE_FROM_ALL ${DC_WEB_DIR}/test/gfx_tests_main.cpp ${tests})
-    set_target_properties(kazarov_gfx_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-    target_include_directories(kazarov_gfx_tests PRIVATE ${KZ_PORT_INCLUDE_ROOT}/tests ${KZ_PORT_INCLUDE_ROOT}
-        ${CMAKE_BINARY_DIR}/kz_port/generated)
-    target_link_libraries(kazarov_gfx_tests PRIVATE dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan
-        fastgltf::fastgltf nlohmann_json::nlohmann_json GTest::gtest)
-    target_compile_options(kazarov_gfx_tests PRIVATE --use-port=emdawnwebgpu)
-    target_link_options(kazarov_gfx_tests PRIVATE
-        --use-port=emdawnwebgpu
-        -sPROXY_TO_PTHREAD=1
-        -sASYNCIFY=1
-        -sALLOW_MEMORY_GROWTH=1
-        -sINITIAL_MEMORY=268435456
-        -sSTACK_SIZE=4194304
-        -sDEFAULT_PTHREAD_STACK_SIZE=4194304
-        -sWASMFS=1
-        -sEXIT_RUNTIME=1
-        -sENVIRONMENT=web,worker
-        -Wl,--error-limit=0)
-    add_custom_command(TARGET kazarov_gfx_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/test/gfx_tests.html ${CMAKE_BINARY_DIR}
-        VERBATIM)
+    foreach(renderer webgpu gl)
+        set(target kazarov_gfx_tests)
+        if(renderer STREQUAL "gl")
+            set(target kazarov_gfx_tests_gl)
+        endif()
+        add_executable(${target} EXCLUDE_FROM_ALL ${DC_WEB_DIR}/test/gfx_tests_main.cpp ${tests})
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+        target_include_directories(${target} PRIVATE ${KZ_PORT_INCLUDE_ROOT}/tests ${KZ_PORT_INCLUDE_ROOT}
+            ${CMAKE_BINARY_DIR}/kz_port/generated)
+        target_link_libraries(${target} PRIVATE dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan
+            fastgltf::fastgltf nlohmann_json::nlohmann_json GTest::gtest)
+        dc_web_link_vulkan(${target} ${renderer})
+        if(renderer STREQUAL "gl")
+            # WebGL2 draws offscreen into a context on the page's canvas.
+            target_link_options(${target} PRIVATE -sOFFSCREENCANVAS_SUPPORT=1 "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas")
+        endif()
+        target_link_options(${target} PRIVATE
+            -sPROXY_TO_PTHREAD=1
+            -sASYNCIFY=1
+            -sALLOW_MEMORY_GROWTH=1
+            -sINITIAL_MEMORY=268435456
+            -sSTACK_SIZE=4194304
+            -sDEFAULT_PTHREAD_STACK_SIZE=4194304
+            -sWASMFS=1
+            -sEXIT_RUNTIME=1
+            -sENVIRONMENT=web,worker
+            -Wl,--error-limit=0)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/test/gfx_tests.html ${CMAKE_BINARY_DIR}
+            VERBATIM)
+    endforeach()
 endfunction()
