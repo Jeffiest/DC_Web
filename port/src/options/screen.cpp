@@ -5,39 +5,38 @@
 #include <memory>
 #include <optional>
 
-#include "area_card.hpp"
+#include "app/gameloop.hpp"
 #include "battlemenu/strings.hpp"
 #include "clsmes.hpp"
 #include "dataread.hpp"
-#include "dialog_framework.hpp"
-#include "gameloop.hpp"
+#include "dialog/framework.hpp"
 #include "gamepad.hpp"
 #include "gameutil.hpp"
 #include "gfx/gfx.hpp"
-#include "localize.hpp"
+#include "localize/localize.hpp"
 #include "mainselect.hpp"
 #include "memcard.hpp"
 #include "menu_draw.hpp"
-#include "menu_manual_port.hpp"
+#include "menu_manual.hpp"
 #include "menuetc.hpp"
 #include "platform/display.hpp"
 #include "platform/input.hpp"
 #include "platform/window.hpp"
-#include "quests/quests.hpp"
+#include "quest/quests.hpp"
 #include "snd.hpp"
 #include "sound.hpp"
 #include "texture.hpp"
 #include "title/title_menu.hpp"
-#include "ui_framework.hpp"
+#include "ui/area_card.hpp"
+#include "ui/framework.hpp"
 
-#define PAD_GLYPH_L1 "{L1}"
-#define PAD_GLYPH_R1 "{R1}"
-#define PAD_GLYPH_CIRCLE "{circle}"
-#define PAD_GLYPH_TRIANGLE "{triangle}"
-#define PAD_GLYPH_CROSS "{cross}"
-#define PAD_GLYPH_SQUARE "{square}"
+namespace dc::options {
 
-namespace options {
+using namespace dc::game;
+using namespace dc::battlemenu;
+using namespace dc::localize;
+using namespace dc::platform;
+using namespace dc::quest;
 
 Screen g_screen;
 
@@ -54,13 +53,15 @@ constexpr int kExitHelp = 999;
 constexpr int kPageHelp = 900;
 constexpr int kRowHelp = 1000;
 
-constexpr const char *kShortcutsText = PAD_GLYPH_SQUARE " Reset page\n" PAD_GLYPH_TRIANGLE " Undo changes\n" PAD_GLYPH_CIRCLE
-                                                        " Close";
+constexpr const char *kGlyphL1 = "{L1}";
+constexpr const char *kGlyphR1 = "{R1}";
+
+constexpr const char *kShortcutsText = "{square} Reset page\n{triangle} Undo changes\n{circle} Close";
 constexpr const char *kSaveHelpText = "Could not save.\nChanges apply now.\nClose to retry writing\nconfig.json.";
 constexpr const char *kDisplayHelpText = "The display could not\nchange, and kept the\nmode it had. Try\nanother mode or size.";
-constexpr const char *kTurnPageText = PAD_GLYPH_L1 " " PAD_GLYPH_R1 " turn the page.";
-constexpr const char *kExitHelpText = PAD_GLYPH_CROSS " Close\n" PAD_GLYPH_SQUARE " This page's defaults\n" PAD_GLYPH_TRIANGLE
-                                                      " Undo every change\n" PAD_GLYPH_CIRCLE " Close from any row";
+constexpr const char *kTurnPageText = "{L1} {R1} turn the page.";
+constexpr const char *kExitHelpText =
+    "{cross} Close\n{square} This page's defaults\n{triangle} Undo every change\n{circle} Close from any row";
 constexpr const char *kDisplayNowText = "The display could not\nchange as asked. It is\nnow %1";
 constexpr const char *kFullscreenNowText = "fullscreen.";
 constexpr const char *kWindowNowText = "a %1 x %2\nwindow.";
@@ -110,9 +111,7 @@ void ScrollToCursor() {
 }
 
 void ShowPageTab() {
-    if (g_screen.page < g_screen.first_tab) {
-        g_screen.first_tab = g_screen.page;
-    }
+    g_screen.first_tab = std::min(g_screen.first_tab, g_screen.page);
     while (g_screen.page > LastVisibleTab()) {
         ++g_screen.first_tab;
     }
@@ -291,7 +290,7 @@ bool Inside(float x, float y, int left, int top, int right, int bottom) {
 
 void RunMouse() {
     InputMenuMouse mouse = InputTakeMenuMouse();
-#if defined(__ANDROID__)
+#ifdef __ANDROID__
     if (InputTouchOverlayVisible()) {
         mouse.dx = mouse.dy = mouse.wheel = 0.0f;
     }
@@ -397,15 +396,9 @@ void RunMouse() {
                 }
             } else if (row.action != nullptr) {
                 BeginBinding(over_row);
-            } else if (x < kValueX - 8) {
-                // Clicking label selects row
-            } else {
-                int val_center = (kValueX + kValueRight) / 2;
-                if (x < val_center) {
-                    Step(row, -1, false);
-                } else {
-                    Step(row, 1, false);
-                }
+            } else if (x >= kValueX - 8) {
+                int value_center = (kValueX + kValueRight) / 2;
+                Step(row, x < value_center ? -1 : 1, false);
             }
         }
     }
@@ -445,8 +438,12 @@ void RunKeys() {
     }
     ScrollToCursor();
 
-    int direction = (moves & PAD_LEFT) != 0 ? -1 : (moves & PAD_RIGHT) != 0 ? 1
-                                                                            : 0;
+    int direction = 0;
+    if ((moves & PAD_LEFT) != 0) {
+        direction = -1;
+    } else if ((moves & PAD_RIGHT) != 0) {
+        direction = 1;
+    }
 
     if ((actions & PAD_CIRCLE) != 0) {
         Close();
@@ -488,32 +485,32 @@ void RunKeys() {
 
 Texts::Texts() {
     left.SetText("<");
-    left.SetColor(UI::ColorWhite);
+    left.SetColor(ui::ColorWhite);
     right.SetText(">");
-    right.SetColor(UI::ColorWhite);
-    l1.SetText(PAD_GLYPH_L1);
-    l1.SetColor(UI::ColorWhite);
-    r1.SetText(PAD_GLYPH_R1);
-    r1.SetColor(UI::ColorWhite);
+    right.SetColor(ui::ColorWhite);
+    l1.SetText(kGlyphL1);
+    l1.SetColor(ui::ColorWhite);
+    r1.SetText(kGlyphR1);
+    r1.SetColor(ui::ColorWhite);
 
     shortcuts.SetText(LocalizeText("options.shortcuts", kShortcutsText));
-    shortcuts.SetColor(UI::ColorWhite);
+    shortcuts.SetColor(ui::ColorWhite);
 
     help.Set(kSaveHelp, LocalizeText("options.help.save_failed", kSaveHelpText));
     help.Set(kDisplayHelp, LocalizeText("options.help.display_kept", kDisplayHelpText));
     help.Set(kExitHelp, LocalizeText("options.help.exit", kExitHelpText));
 
     int index = 0;
-    for (int p = 0; p < static_cast<int>(Pages().size()); ++p) {
-        const Page &page = Pages()[p];
-        tabs.emplace_back(LocalizeText(PageKey(page.name), page.name), UI::ColorWhite);
-        help.Set(kPageHelp + p, LocalizeText(PageKey(page.name) + ".help", page.help) + "\n" +
-                                    LocalizeText("options.help.turn_page", kTurnPageText));
+    int page_index = 0;
+    for (const Page &page : Pages()) {
+        tabs.emplace_back(LocalizeText(PageKey(page.name), page.name), ui::ColorWhite);
+        help.Set(kPageHelp + page_index++, LocalizeText(PageKey(page.name) + ".help", page.help) + "\n" +
+                                               LocalizeText("options.help.turn_page", kTurnPageText));
         labels.emplace_back();
         values.emplace_back();
         for (const Row &row : page.rows) {
-            labels.back().emplace_back(LocalizeText("options." + std::string(row.key) + ".label", row.label), UI::ColorWhite);
-            values.back().emplace_back("", UI::ColorWhite, UI::Alignment::Center);
+            labels.back().emplace_back(LocalizeText("options." + std::string(row.key) + ".label", row.label), ui::ColorWhite);
+            values.back().emplace_back("", ui::ColorWhite, ui::Alignment::Center);
             if (row.help != nullptr) {
                 help.Set(kRowHelp + index, LocalizeText("options." + std::string(row.key) + ".help", row.help));
             }
@@ -527,6 +524,12 @@ namespace {
 std::unique_ptr<Texts> g_texts;
 int                    g_texts_language = -1;
 
+void RefreshTextsForLanguage() {
+    if (g_texts && g_texts_language != LanguageCode) {
+        g_texts.reset();
+    }
+}
+
 } // namespace
 
 Texts &GetTexts() {
@@ -535,12 +538,6 @@ Texts &GetTexts() {
         g_texts_language = LanguageCode;
     }
     return *g_texts;
-}
-
-void RefreshTextsForLanguage() {
-    if (g_texts && g_texts_language != LanguageCode) {
-        g_texts.reset();
-    }
 }
 
 const Page &CurrentPage() {
@@ -633,11 +630,11 @@ int Run() {
 
                 if (ReadBGSync() == 0) {
                     auto textures = std::make_unique<LOADTEXTURE_INFO2[]>(3);
-                    textures[0] = {const_cast<char *>("#frame_image_option#640#" SCREEN_HEIGHT_STR "#4"), 0, 0};
-                    textures[1] = {nullptr, 0, 0};
-                    textures[2] = {nullptr, 0, 0};
-                    textures[0].block_no = g_screen.block_no;
-                    textures[1].block_no = g_screen.block_no;
+                    textures[0] = {.name = const_cast<char *>("#frame_image_option#640#" SCREEN_HEIGHT_STR "#4"),
+                                   .block_no = g_screen.block_no,
+                                   .mipmap = 0};
+                    textures[1] = {.name = nullptr, .block_no = g_screen.block_no, .mipmap = 0};
+                    textures[2] = {.name = nullptr, .block_no = 0, .mipmap = 0};
                     BG_READ_INFO *file = GetReadBGFile(0);
                     textures[1].name = reinterpret_cast<char *>(GetPackFile(reinterpret_cast<u_int *>(file->buffer), const_cast<char *>("option.img"), nullptr));
                     TexManager.DeleteTextureBlock(g_screen.block_no);
@@ -696,23 +693,21 @@ int Run() {
     return result;
 }
 
-} // namespace options
-
 std::vector<std::pair<std::string, std::string>> OptionStrings() {
     std::vector<std::pair<std::string, std::string>> out = {
-        {"options.shortcuts",              options::kShortcutsText    },
-        {"options.help.save_failed",       options::kSaveHelpText     },
-        {"options.help.display_kept",      options::kDisplayHelpText  },
-        {"options.help.turn_page",         options::kTurnPageText     },
-        {"options.help.exit",              options::kExitHelpText     },
-        {"options.help.display_now",       options::kDisplayNowText   },
-        {"options.display.fullscreen_now", options::kFullscreenNowText},
-        {"options.display.window_now",     options::kWindowNowText    },
+        {"options.shortcuts",              kShortcutsText    },
+        {"options.help.save_failed",       kSaveHelpText     },
+        {"options.help.display_kept",      kDisplayHelpText  },
+        {"options.help.turn_page",         kTurnPageText     },
+        {"options.help.exit",              kExitHelpText     },
+        {"options.help.display_now",       kDisplayNowText   },
+        {"options.display.fullscreen_now", kFullscreenNowText},
+        {"options.display.window_now",     kWindowNowText    },
     };
-    for (auto &entry : options::RowStrings()) {
+    for (auto &entry : RowStrings()) {
         out.push_back(std::move(entry));
     }
-    for (auto &entry : areacard::Strings()) {
+    for (auto &entry : ui::area_card::Strings()) {
         out.push_back(std::move(entry));
     }
     for (auto &entry : BattleMenuStrings()) {
@@ -721,10 +716,10 @@ std::vector<std::pair<std::string, std::string>> OptionStrings() {
     for (auto &entry : JournalStrings()) {
         out.push_back(std::move(entry));
     }
-    for (auto &entry : TitleMenu::Strings()) {
+    for (auto &entry : title::menu::Strings()) {
         out.push_back(std::move(entry));
     }
-    for (auto &entry : Dialog::Strings()) {
+    for (auto &entry : dialog::Strings()) {
         out.push_back(std::move(entry));
     }
     for (auto &entry : QuestStrings()) {
@@ -732,3 +727,5 @@ std::vector<std::pair<std::string, std::string>> OptionStrings() {
     }
     return out;
 }
+
+} // namespace dc::options

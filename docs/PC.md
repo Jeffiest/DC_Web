@@ -115,7 +115,7 @@ release build; a debug build always asks for it), `DC_PRESENT_STATS=1` (print
 draws per tick and render times at exit, and what the FPS counter said last
 when it is on), and SDL's own variables.
 
-Exit statuses (`port/src/exitcodes.hpp`): 0 when the window was closed or
+Exit statuses (`port/src/app/exitcodes.hpp`): 0 when the window was closed or
 `--frames` ran out, 1 when the window, the renderer or the screenshot failed,
 2 for bad arguments, 3 when the data directory is missing or holds no file
 and no disc was given at the first-run prompt (one line names it and the
@@ -149,6 +149,7 @@ key is optional; these are the defaults:
         "qte_always_win": false,    // button-prompt events (event battles) still play, but always end in a perfect
         "element_quick_select": false, // D-pad Up in a dungeon opens the quick-change menu as an element picker
         "swap_keeps_lock_on": false, // switching characters with SELECT keeps the lock-on
+        "autosave": true,           // write the autosave on arriving in a town or on a dungeon floor
         "text_wipe": false,         // developer tool: F9 splits the screen between picture text and runtime text (docs/TEXTWIPE.md)
         "save_cursor_position": true, // the game's own options, for every save (see "The Options screen")
         "message_speed": "normal",  // normal or fast
@@ -175,7 +176,8 @@ key is optional; these are the defaults:
         "detail_distance": 0,       // how far full detail reaches (world units); 0: at any distance
         "shadow_distance": 0,       // how far town parts cast full shadows (world units); 0: at any distance
         "anisotropy": 0,            // anisotropic filtering of 3D textures: 0 (off), 2, 4, 8 or 16 samples
-        "soft_focus": true          // the game's farside soft focus
+        "soft_focus": true,         // the game's farside soft focus
+        "cloth": "original"         // original: the PS2's cloth; enhanced: also kept out of the body (docs/MODEL_FRAMEWORK.md)
     },
     "audio": {
         "master_volume": 1.0,       // 0 to 1
@@ -213,7 +215,7 @@ key is optional; these are the defaults:
 }
 ```
 
-Discord Rich Presence (`port/src/presence.cpp`, `port/src/platform/discord.cpp`) speaks Discord's
+Discord Rich Presence (`port/src/app/presence.cpp`, `port/src/platform/discord.cpp`) speaks Discord's
 local IPC protocol over its Unix socket (a named pipe on Windows), so it needs no Discord library. It shows the character
 played and the town, or the dungeon and floor, and reconnects whenever Discord starts. Discord
 names the game after Chronicle's Discord application, whose id is `kDiscordClientId`
@@ -250,7 +252,7 @@ the fainter `shadow_mode_2` (0x20), and a part past that casts none, so a
 shadow lightens and then goes as the camera backs away. A part deeper than
 300 also takes the cheaper volume program, and one with a `draw_distance`
 drops its shadow past it. A part within `shadow_distance` belongs to the near
-band with the precise program (`port/src/editground.cpp`). The characters'
+band with the precise program (`port/src/game/editground.cpp`). The characters'
 shadows have no such distances, the overhead view of georama mode keeps its
 own faint shadows, and a map whose `SHADOW_LEVEL` is 0 still has none.
 
@@ -261,7 +263,7 @@ it drew few of them far enough for that to show. The villagers that
 shadows, and the part shadows that `shadow_distance` moves into the near band
 past `shadow_near` are drawn before the soft focus instead, which softens
 them with the scenery around them (`EdDrawBeyondRetailReach`,
-`port/src/editloop.cpp`). The player, the villagers retail draws and the
+`port/src/game/editloop.cpp`). The player, the villagers retail draws and the
 shadows of its own bands keep retail's place after it.
 
 `video.vsync` is shorthand for `present_mode`: `true` is `fifo`, `false`
@@ -319,7 +321,7 @@ dungeon's `PadInput_OK` is cross and `PadInput_NO` circle,
 | R | R2 | first-person look (`dun/gameloop.cpp:4354`) |
 | C, Backspace | select | switch character (`dun/gameloop.cpp:3185`) |
 | Return | start | pause (`dun/gameloop.cpp:3045`); the title's prompts |
-| arrows | d-pad | left and right pick the active item in the dungeon (`dun/gameloop.cpp:3218`); up opens the element picker when `game.element_quick_select` is on and the weapon has more than one element to pick between (`port/src/menu_dungeon.cpp`); menus |
+| arrows | d-pad | left and right pick the active item in the dungeon (`dun/gameloop.cpp:3218`); up opens the element picker when `game.element_quick_select` is on and the weapon has more than one element to pick between (`port/src/game/menu_dungeon.cpp`); menus |
 | V; middle click, B | L3; R3 | debug and editor functions only |
 | IJKL | right stick | the camera from the keyboard |
 | F3 | none | the FPS counter on and off (see "The FPS counter") |
@@ -410,7 +412,7 @@ Each key-down of a toggle's key counts once, however briefly it is held.
   also press the d-pad exactly when the game did not read pad 1's left
   stick (`CGamePad::GetLX`/`GetLY`, also called by `GetLXf`, `AllOn` and
   `UpDate`'s menu mode) between its last two pad reads.
-  `port/src/gamepad.cpp` replaces `pad_button_read` and `GetLX`/`GetLY`
+  `port/src/game/gamepad.cpp` replaces `pad_button_read` and `GetLX`/`GetLY`
   with retail's bodies plus the notes the host needs, and routes pad 2
   debug button reads to pad 1. Menus with
   `MenuModeOn(120)` (the title, the language select, the save screens, the
@@ -431,7 +433,7 @@ Controller-only first-person look retains its retail controls.
 
 The mouse turns each camera the right stick turns, by the angle it moved:
 `mouse_sensitivity` degrees per count, with no dead zone, no steps and no
-full deflection to cap it (`port/src/camera_port.cpp`). The dungeon's,
+full deflection to cap it (`port/src/input/mouse_look.cpp`). The dungeon's,
 the interior's and the georama view's cameras and the first-person views
 read it in the stick's units, added to the stick's reading, so their own
 conditions see both alike; the town's walk camera takes it apart (below). A
@@ -443,7 +445,7 @@ a second, and one past half a turn would go the short way round, backwards.
 That suits the stick's small steady steps, not the mouse, so the mouse's
 share of a turn is applied at once: when the camera's next `AddAngle` in the
 same pad read is exactly the delta of the reading the mouse went into, the
-port's replacement (`port/src/camerafollow.cpp`) turns the angle and the eye
+port's replacement (`port/src/game/camerafollow.cpp`) turns the angle and the eye
 about the point it looks at by that share immediately. Any other `AddAngle`
 on that camera, or the next pad read, ends the reading unused; mouse and
 stick that cancel turn nothing. The stick's share, the following of the
@@ -611,7 +613,7 @@ While `DebugMode` is set, Start and Select on pad 1 go to the developer menu
 at once from every mode: the language select, the attract movie, the
 title, the opening, a town or an interior, the dungeon loader, a dungeon
 and the save screen (`GameDeveloperMenuRequested`,
-`port/src/gameloop.cpp`, after every frame of the main loop). The frame the
+`port/src/app/gameloop.cpp`, after every frame of the main loop). The frame the
 second of the two goes down ends the mode where it stands: there is no fade
 and the town is not saved back to the save data; sound stops, the pad is
 unlocked and a pending map jump or start event is dropped
@@ -739,7 +741,7 @@ is added; then `RunGame`. After it returns: the screenshot, then
 `main.cpp` also forwards the names MWCC gives the calls in retail `main`
 (below).
 
-`RunGame` (`port/src/gameloop.cpp`) is retail `main` (`ps2/src/main.cpp`)
+`RunGame` (`port/src/app/gameloop.cpp`) is retail `main` (`ps2/src/main.cpp`)
 with the hardware taken out, line for line otherwise:
 
 - `init_all` is reduced to `InitCDFile`, `MGInit`, `InitMemoryFile`,
@@ -798,7 +800,7 @@ rate, with motion interpolated between ticks (`tools/kazarov/src/cpp/gfx/README.
    lists at alpha = the elapsed fraction of the tick and presents them, as fast
    as `present_mode` and `max_fps` allow. A display frame replays the newest
    list's drawing only, into its own image, with each `CFrame`'s model matrix
-   (`frame_draw.cpp` tags its draws with the frame's address; a visual drawn
+   (`frame.cpp` tags its draws with the frame's address; a visual drawn
    outside one with its record) and the camera interpolated between the two
    ticks. A frame drawn at several places in a tick (a town's tiles and parts
    share theirs) is matched place by place, not in draw order. A tick that did not wait, or presented nothing, presents its
@@ -886,8 +888,9 @@ that mode's `case`: the developer menu sets `mode` itself and returns 1.
 
 The host side is Kazarov's `tools/kazarov/src/cpp` (`gfx`, `audio`, `platform`, `sce`); `port/src/platform` keeps the game's config, firstrun, discord and save_state.
 They build as `dc_host` without `port.h` or the game's include paths, so no
-game header or SDK type reaches them. Game types meet them only in the
-replacement units.
+game header or SDK type reaches them. Game types meet them only in
+`port/src`: the game units in `port/src/game` and the platform layer beside
+them.
 
 - **Window** (`platform/window`): SDL3 window, resizable, high pixel density,
   optionally fullscreen; `WindowSetMode` changes its size and fullscreen
@@ -900,7 +903,7 @@ replacement units.
   reports a close, and forwards pixel-size changes to the renderer.
   `WindowAddEventHook` lets input see every event.
 - **Input** (`platform/input`, `platform/mouse`, `sce/libpad.cpp`,
-  `gamepad.cpp`): two DualShock 2-shaped pads from SDL gamepads, the
+  `port/src/game/gamepad.cpp`): two DualShock 2-shaped pads from SDL gamepads, the
   keyboard and the mouse, with rumble. libpad's nine
   functions read them: buttons active-low in bytes 2-3, sticks in 4-7,
   `scePadGetState` stable, `scePadInfoMode` DualShock. `InputSetOverride`
@@ -946,7 +949,7 @@ The logical 640x480 frame is centred in the window at `min(W / 640, H / 480)`
 pixels per unit, so the HUD keeps its place relative to the frame at any window
 shape. With `video.aspect` `auto` the rest of the window is not bars:
 
-- **3D.** `Draw3DEyeToClip` (`mglib.cpp`) maps the game's projection, logical
+- **3D.** `Draw3DEyeToClip` (`port/src/render/draw3d.cpp`) maps the game's projection, logical
   `(320 + 800 x / z, 240 + 800 y / z)` (`MGSetRenderInfo`'s scale over the
   frame's 240 half-rows), through the target's logical mapping. The frame's rows
   fill the window's height, so the vertical field of view is retail's
@@ -954,7 +957,7 @@ shape. With `video.aspect` `auto` the rest of the window is not bars:
   2 atan(240 W / H / 800): 16:9 shows 107 logical units more on each side. A
   window narrower than 4:3 keeps the frame's width (retail's horizontal field of
   view) and shows more above and below, so the HUD always fits.
-- **Culls.** `frame_draw.cpp`'s screen-bound test and `MGClipVertex` (so
+- **Culls.** `frame.cpp`'s screen-bound test and `MGClipVertex` (so
   `MGClipBox`) take their half extents from what the current target shows
   (`Draw3DVisibleExtent`, from `gfx::VisibleLogicalRect`) instead of 320 by 240:
   a model past the 4:3 edge is drawn at 16:9 and dropped at 4:3. The GS guard
@@ -979,8 +982,8 @@ shape. With `video.aspect` `auto` the rest of the window is not bars:
   `tools/kazarov/src/cpp/gfx/README.md`, "Aspect"): the dungeon's status panel (life, weapon
   and water to the top left, the quick items top centre, the floor plate and the
   mini map to the top right, the weapon's portrait and gauge to the bottom left;
-  `DrawGame`, `port/src/dun/gameloop.cpp`) and the town's clock (top right;
-  `EdDrawClock`, `port/src/editloop.cpp`). Menus, message windows, the Georama
+  `DrawGame`, `port/src/game/dun/gameloop.cpp`) and the town's clock (top right;
+  `EdDrawClock`, `port/src/game/editloop.cpp`). Menus, message windows, the Georama
   editor's panels and 2D placed from 3D projections stay in the frame.
 - **Frame grabs** (`frame_image`, `frame_buff` and the other `frame_*`
   placeholders, and the water's `water` and `water_buff`; `MGPortFrameTarget`)
@@ -988,7 +991,7 @@ shape. With `video.aspect` `auto` the rest of the window is not bars:
   sides; the canonical and display images are the window's size. The game's
   other 640xN target (`blender`) keeps its size at the render
   scale.
-- **Depth of field** (`DepthOfField`, `port/src/effectmacro.cpp`; the towns'
+- **Depth of field** (`DepthOfField`, `port/src/game/effectmacro.cpp`; the towns'
   heat haze is its jittered second pass) is not retail's two shrunk copies of
   the whole frame, which blurred whatever stood in front of a focus plane into
   the scenery behind it and came back as blocks. Each pass blurs only what
@@ -1010,7 +1013,7 @@ shape. With `video.aspect` `auto` the rest of the window is not bars:
   gives instead of the effect starting at a line partway up the view. The near
   pass keeps its narrower range around the near focus plane. `frame_image` is no
   longer written.
-- **Water** (`port/src/water_draw.cpp`) refracts the frame at its own
+- **Water** (`port/src/game/water.cpp`) refracts the frame at its own
   resolution instead of the game's field copy, and only from where water
   shows: a ripple's sample that lands on a bank or a character in front of the
   water gives way to the pixel's own colour. `MGMoveImage` takes a whole
@@ -1026,7 +1029,7 @@ shape. With `video.aspect` `auto` the rest of the window is not bars:
   screen's sky model, its cloud (whose animation parks spheres just outside
   the frame's sides; it is spread across, not enlarged) and the attract
   movie's turning title card are drawn larger by as much as the view is wider
-  (`TitlePortBackdropScale`, `port/src/title/title_port.cpp`).
+  (`TitlePortBackdropScale`, `port/src/title/title_draw.cpp`).
 - **The FPS counter** is the host's and is never carried past the frame
   (`gfx::RenderOptions::host`).
 - **Game logic** is unchanged: `MGRotTransPers*` answer in retail's GS and
@@ -1039,10 +1042,11 @@ drops 2D it projects outside 0..640 (effects, name tags) still does; at a
 `ui_scale` other than 1 the 2D the game places from 3D projections moves with
 the HUD.
 
-The game's drawing reaches it through replacement units, in four groups that
-share small internal headers:
+The game's drawing reaches it through the game units in `port/src/game` and
+the renderer glue in `port/src/render` (`dc::render`), in four groups, each
+around one `render/` header:
 
-- **`mglib_port.hpp`** (`mglib.cpp`, `mglib_port.cpp`, `mglib_math.cpp`):
+- **`render/gs_state.hpp`** (`game/mglib.cpp`, `render/gs_state.cpp`):
   every `MG*` function. The GS register shadows the game sets
   (`MGSetGsTEST/ZBUF/ALPHA/TEXA`, `MGSetWindowRect`, and the clears, fills
   and stretches that leave them set) become the current `gfx::DrawState`
@@ -1055,8 +1059,8 @@ share small internal headers:
   "do not wait twice" rule. Pick-Z reads the canonical render's depth buffer.
   `MGSetRenderInfo` keeps retail's matrices; the field squeeze is undone
   where the game's rects reach the renderer.
-- **`texture_port.hpp`** (`texture.cpp`, `texture_port.cpp`,
-  `textureanime.cpp`, `nowload.cpp`): TIM2 (IDTEX4, IDTEX8, RGB16/24/32,
+- **`render/texture_registry.hpp`** (`game/texture.cpp`,
+  `render/texture_registry.cpp`, `game/textureanime.cpp`, `game/nowload.cpp`): TIM2 (IDTEX4, IDTEX8, RGB16/24/32,
   mip levels, the IM2 swizzle undone) decoded into renderer textures with
   index textures and 256-entry palettes; a registry keyed by unique TBP0/CBP
   values so any TEX0 the game hands around resolves to one image;
@@ -1069,13 +1073,16 @@ share small internal headers:
   appended after compaction. A name lookup across all blocks, which prefers
   the highest entry, can therefore pick differently from retail when two
   live blocks share a texture name.
-- **`draw2d_port.hpp`** (`snd.cpp`, `gameutil_sprite.cpp`, `clsmes.cpp`,
-  `spritetable.cpp`, `dispctrl.cpp`, `editloop_sprite.cpp`): the sprite
+- **`render/draw2d.hpp`** (`render/draw2d.cpp`, `game/snd.cpp`,
+  `game/gameutil.cpp`, `game/clsmes.cpp`, `game/spritetable.cpp`,
+  `game/dispctrl.cpp`, `game/editloop.cpp`): the sprite
   primitives, `SetClut`, message windows, sprite tables and the debug font
   as glyph quads, mapped into the current target (render targets hold field
   rows).
-- **`draw3d.hpp`** (`frame_draw.cpp`, `visualvu1.cpp`, `visualshadow.cpp`,
-  `cloth_draw.cpp`, `water_draw.cpp`, the `*_math.cpp` units): MDT data built
+- **`render/draw3d.hpp`** (`render/draw3d.cpp`, `render/draw3d_visual.cpp`,
+  `render/shadowclip.cpp`, `game/frame.cpp`, `game/visualvu1.cpp`,
+  `game/visualshadow.cpp`, `game/cloth.cpp`, `game/water.cpp`,
+  `game/mathutil.cpp`): MDT data built
   into meshes keyed by the game's vu_data block (the record dies with the
   block), `DrawVu1` submitting meshes with the constants the VU1 header
   carried (matrices, four lights, ambient, material, fog), shadow volumes
@@ -1090,7 +1097,7 @@ share small internal headers:
 - The long tail on top of those: `dun/gameloop.cpp` (`DunMainDraw`,
   `LoaderLoop`), `effectmacro.cpp`, `runeffect.cpp`, `fireomni.cpp`,
   `fishing.cpp`, `shot_freefuncs.cpp`, `battlemenu.cpp`, `clothread.cpp`,
-  `langset.cpp`, and `editloop_init.cpp` (`EditInit`, its town objects
+  `langset.cpp`, and `editloop.cpp` (`EditInit`, its town objects
   carved out of `EtcDataBuffer` at host sizes where retail's quadword counts
   are the PS2's).
 
@@ -1099,9 +1106,9 @@ share small internal headers:
 All music and effects are sequenced. `tools/kazarov/src/cpp/audio` decodes VAG ADPCM,
 parses HD banks and SQ sequences, and runs a sixteen-port MIDI player into a
 48-voice synth with envelopes and an approximated reverb (`audio::Mixer`).
-`port/src/sound.cpp` replaces `CSound` (bank and sequence transfers, play,
+`port/src/game/sound.cpp` replaces `CSound` (bank and sequence transfers, play,
 stop, fades, volumes, effect messages) on that mixer, and
-`gameutil_midi.cpp` answers the EZMIDI RPC commands for anything that still
+`gameutil.cpp` answers the EZMIDI RPC commands for anything that still
 sends them. `main` starts the output; `CSound::Init` starts it too if it is
 not running.
 
@@ -1194,14 +1201,19 @@ state write explicitly record the current game's clear flag.
 
 The autosave is `<save>/saves/autosave/save.dat`, the same image as a
 numbered save. It is written over whenever a town starts without an event,
-the only place retail lets the game be saved, and never by the save screen.
-The load screen lists it first, its board reading "Auto"; loading it leaves
-`last_save` on the last numbered save. Headless and `--jump` runs do not
-write it.
+and once on each dungeon floor as the floor starts (`BT_REQUEST_GO_DUNGEON`),
+never by the save screen. A floor's autosave records the dungeon's map number
+(`DUNGEON_MAP_BASE` plus the dungeon); loading it enters that dungeon as from
+town but keeps the party's status and the dungeon's event flags, and answers
+the entrance's floor list with the saved floor through `InitDunEnterMenu`'s
+otherwise unused direct mode. Its board names the dungeon's town. The load
+screen lists it first, its board reading "Auto"; loading it leaves
+`last_save` on the last numbered save. `game.autosave` (Options, Game page)
+turns it off; headless and `--jump` runs never write it.
 
-`port/src/memorycardaccess.cpp` replaces the operations of
+`port/src/game/memorycardaccess.cpp` replaces the operations of
 `CMemoryCardAccess` with plain reads and writes of these files
-(`port/src/save_slots.cpp` names and lists them, `port/src/platform/save_state.cpp`
+(`port/src/save/save_slots.cpp` names and lists them, `port/src/save/save_state.cpp`
 reads and writes `state.json`); each finishes in the step that starts it. Every write goes through `FilesWrite`
 (`tools/kazarov/src/cpp/platform/files.cpp`): a temporary file of its own beside the
 target, `<target>.<16 hex digits>.tmp`, created exclusively, written,
@@ -1238,7 +1250,7 @@ The card the save screens still check is always there, formatted and with room,
 and so is its save directory; format, unformat, the write test and the
 conversion of NTSC 1.0 saves do nothing.
 
-The save screens (`port/src/memcard.cpp`, `port/src/menu_save.cpp`) keep
+The save screens (`port/src/game/memcard.cpp`, `port/src/game/menu_save.cpp`) keep
 retail's steps, less the card:
 
 - The card choice is gone: the screen opens on its list. In town, the pause
@@ -1315,7 +1327,7 @@ device prefix stripped (the debug dump `edit.cpp` writes to `host0:`), and
 
 ## Game text
 
-`port/src/gametext.cpp` writes the port's own text in the game's message
+`port/src/text/gametext.cpp` writes the port's own text in the game's message
 font, so menus the port adds can match the game's. A message is an s16 code
 per character ending in `MES_CODE_END` (-0xFF); a space is
 `MES_CODE_SPACE` (-0xFE) and a line break `MES_CODE_NEWLINE` (-0x100). The
@@ -1346,7 +1358,7 @@ draw function; `Width` gives its width for aligning a value.
 Both have retail's fixed sizes. A window lays out at most `MES_WIN_LINE_MAX`
 (720) characters, counting the end and what a `{name1}`, `{value}` or `{insert1}` name, value or system
 message code expands to; retail's `SetMesWinTbl` writes on past the table, so
-the port's (`port/src/clsmes.cpp`) takes no more, and `GameText::Set` gives back
+the port's (`port/src/game/clsmes.cpp`) takes no more, and `GameText::Set` gives back
 -1, draws nothing and has a width of 0 for a text that did not fit. A line past
 the window's ten `line_pos` entries draws in the block layout, as a line
 without one does. A message file is s16 throughout: an id is -0x8000 to
@@ -1360,7 +1372,7 @@ disc's text as the fallback: see `docs/LOCALIZATION.md`.
 ## The Options screen
 
 The game's Options screen, from the title, the town menu and the dungeon menu,
-is the port's settings screen (`port/src/menu_option.cpp` replaces
+is the port's settings screen (`port/src/options/menu_option.cpp` replaces
 `InitMenuOption`, `MenuOptionKey`, `DrawMenuOption` and
 `OptionMenuFadeOutStart` and hands them to `port/src/options/`: `rows` defines
 the pages and their rows, `screen` runs input and help, `draw` lays it out). It keeps the game's frame, cursor, sounds, EXIT
@@ -1382,8 +1394,8 @@ help. Retail's screen-position row is gone: `MGAdjustScreen` moves nothing on PC
 
 | Page | Rows |
 |---|---|
-| Game | save cursor position, clock, time speed, dungeon map, enemy damage, party damage, enemy HP, names, Discord Rich Presence, element quick select, swap keeps lock-on |
-| Display | window mode, resolution (the monitor's own and the sizes that fit it), V-Sync (`fifo`, `mailbox`, `immediate`), frame limit, aspect ratio, interface size (`ui_scale`), smooth motion (`interpolation`), FPS counter, FPS info (`fps_detail`), anisotropic filter (`anisotropy`), soft focus |
+| Game | save cursor position, clock, time speed, dungeon map, enemy damage, party damage, enemy HP, names, Discord Rich Presence, element quick select, swap keeps lock-on, autosave |
+| Display | window mode, resolution (the monitor's own and the sizes that fit it), V-Sync (`fifo`, `mailbox`, `immediate`), frame limit, aspect ratio, interface size (`ui_scale`), smooth motion (`interpolation`), FPS counter, FPS info (`fps_detail`), anisotropic filter (`anisotropy`), soft focus, cloth (`cloth`) |
 | Audio | volume, sound (mono, stereo or surround), soundtrack (PS2 or custom) |
 | Controls | vibration, mouse sensitivity (in hundredths below 1 and tenths above, whatever its unit), invert mouse Y, vertical return, mouse wheel zoom, reset zoom (its binding), stick sensitivity, invert stick X and Y, gyro, gyro sensitivity, invert gyro X and Y |
 | Text | language, message speed, button symbols (original or new), symbols shown (glyph device), text font (sharp or original), text shadow, symbol shadow, area name shadow, floor label shadow, boss name shadow |
@@ -1485,7 +1497,7 @@ the pad when a pad button or the left stick is used.
   when it closes (or as it opens, from the book before it) acts only once
   released, so no click reaches the next screen.
 
-The hit areas (`port/src/name_mouse_layout.cpp`) are the places
+The hit areas (`port/src/ui/name_mouse_layout.cpp`) are the places
 `DrawNameTemplete`, `DrawCharaName` and `NameEnterDraw` draw at, for PAL's
 languages: the alphabet keyboard with the accented rows of French, German,
 Italian and Spanish, the symbol keyboard without its blank keys, and each
@@ -1508,14 +1520,14 @@ which retail only sets on the way out, so `TitleLoop`'s handling of the other ro
 
 Quit in the pause menu, in a town or a dungeon, asks "Return to the title?" and on Yes goes back to
 the title screen instead of the desktop. The main loop leaves the mode where it stands, as the
-developer menu does (`TakeBattleMenuTitleRequest`, `port/src/gameloop.cpp`): it waits for loads in
+developer menu does (`TakeBattleMenuTitleRequest`, `port/src/app/gameloop.cpp`): it waits for loads in
 flight, stops the sound and jumps to map 800, so the title starts as it does at start-up. Nothing is
 saved on the way.
 
 ## The mouse in the pause menu
 
 The pause menu (the ring of pages in a dungeon, and the same ring in town) takes the mouse as a
-pointer the way the Register Name screen does, through `MenuPointer` (`port/src/menu_pointer.cpp`):
+pointer the way the Register Name screen does, through `MenuPointer` (`port/src/ui/menu_pointer.cpp`):
 its relative motion, mapped through the 2D's own mapping, drives the game's hand, which
 `DrawMenuObjectVibe` now draws at the pointer while it is in use, brackets and all staying on the
 control the pointer is over. A hover moves the game's own cursor (state the pad would set, and the
@@ -1565,7 +1577,7 @@ allocated afterwards lies under the object's tail. At retail's four quadwords
 the collision's `mesh_count` landed on the x of the first triangle built
 behind it, which opened holes in dungeon floors. An allocation that is cast
 rather than placed has no size to go by and is sized in `port/src` instead
-(`Quadwords<T>` in `editloop_init.cpp`).
+(`Quadwords<T>` in `editloop.cpp`).
 
 ## Pointers and 32-bit integers
 
@@ -1589,11 +1601,11 @@ else changed:
 |---|---|---|
 | `DunMoveChara`, `BtCheckDamageProc` | `dun/movechara.cpp` | addresses of `NowDngMap`'s parts and of the active item counters on a `uintptr_t` |
 | `CDungeonMap::BuildCharaSpecialParts`, `SetCharaDoor` | `dungeonmap.cpp` | the key door's cell on a `uintptr_t` |
-| `BtGetTreasureboxBig_Init`/`_Loop`, `BtGetTreasureboxSmall_Init`/`_Loop`, `BtGetGateKey_Init`/`_Loop`, `BtEscape_Init`/`_Loop` | `btitem.cpp` | the files read between the two halves kept as pointers, not in `itemOpenItemMds`, `itemOpenItemImg` and `escape_chr` |
-| `_ITEM_USE_WINDOW`, `BtMiniItemSelect_Loop` | `btsysscript.cpp`, `btitem.cpp` | the script slot the choice goes to kept as a pointer (`btitem_port.hpp`) and written through the host's `RS_STACKDATA`, whose value is at byte 8 |
-| `BtSystemScriptLoad`, `BtSystemScriptRun` | `btsysscript.cpp` | the event script kept as a pointer, not in `BtEventData` |
+| `BtGetTreasureboxBig_Init`/`_Loop`, `BtGetTreasureboxSmall_Init`/`_Loop`, `BtGetGateKey_Init`/`_Loop`, `BtEscape_Init`/`_Loop` | `btitem.cpp` | the files read between the two halves kept as pointers, where retail keeps them in `itemOpenItemMds`, `itemOpenItemImg` and `escape_chr` |
+| `_ITEM_USE_WINDOW`, `BtMiniItemSelect_Loop` | `btsysscript.cpp`, `btitem.cpp` | the script slot the choice goes to kept as a pointer (`btitem.hpp`) and written through the host's `RS_STACKDATA`, whose value is at byte 8 |
+| `BtSystemScriptLoad`, `BtSystemScriptRun` | `btsysscript.cpp` | the event script kept as a pointer, where retail keeps it in `BtEventData` |
 | `PortWorldMapCommand`, `PortEdEventMenuMode` | `editloop3.cpp` | the world-map result destination stays a native-width script pointer until the town menu finishes |
-| `EditInit`, `InitWorkBuffer` | `editloop_init.cpp` | arena starts rounded on the whole pointer |
+| `EditInit`, `InitWorkBuffer` | `editloop.cpp` | arena starts rounded on the whole pointer |
 | `CommandWATER_SHAKE` | `editmapscript.cpp` | the wave slot on a `uintptr_t` |
 | `CEditGround::DrawPartsCursor` | `editground.cpp` | the preview frame `LoadObjectParts` keeps in an `s32` matched against the part's own frames |
 | `FishingExchangeKey` | `shop.cpp` | the attachment slots on a `uintptr_t` |
@@ -1601,8 +1613,8 @@ else changed:
 
 Records read from the disc with pointer-sized fields are decoded into host
 records rather than used in place: `.pts` part definitions
-(`eparts_port.cpp`, for `LoadPTS` in `editloop_parts.cpp` and `GetFuncPoint`
-in `edit_in_parts.cpp`; `EdInitToEPInfo`, `editloop3.cpp`, lays its own out
+(`EPartsLoad` in `editpartsinfo.cpp`, for `LoadPTS` in `editloop.cpp` and
+`GetFuncPoint` in `edit_in.cpp`; `EdInitToEPInfo`, `editloop3.cpp`, lays its own out
 past the host header) and the event scripts' function records and stacks
 (`runscript.cpp`). The wind a title scene stores in `CCharacter::wind`, an
 `int`, is recovered by `CCharacter::ClothStep` with `PortImagePointer`, which
@@ -1615,21 +1627,22 @@ widens it against the image's own address.
 `PS2_UNIMPLEMENTED()` (`port/include/port.h`), which prints the function,
 file and line and aborts. They stay stubs by design: the port does not
 emulate DMA chains, VIF/GIF packets or the GS, so a call that reaches one
-is a drawing path no replacement unit covers yet.
+is a drawing path the port has not replaced yet.
 
 Everything else from the SDK is implemented in `tools/kazarov/src/cpp/sce/`: libvu0 in
 C++ (static constructors call it before `main`), libpad, libmc, sifdev,
 eekernel (`FlushCache` and friends do nothing, `Exit` exits), libcdvd's
 `sceCdInit`/`sceCdMmode` and sifrpc's IOP boot and module loads (no-ops).
-The Metrowerks runtime calls are in `port/src/runtime.cpp`: `mwInit` does
-nothing; `LoadOverlay` reconstructs selected title objects when switching to
-the title overlay; `mwLoadOverlay` succeeds, `__assert` prints and exits with
-status 4, `exit__2` exits. The same file replaces the stand-ins in `ps2/src`
-for what the PS2 runtime generated that use names only the PS2 link defines:
-four constructors and `__unexpected` become functions that call
-`PS2_UNIMPLEMENTED()`, and `std::exception`'s virtual table and the overlay
-address table become empty tables. Nothing in the port reaches them, but a
-COFF link wants every name an object uses defined.
+The Metrowerks runtime calls are in the game unit that declares them:
+`mwInit` (`port/src/game/mathutil.cpp`) does nothing; `LoadOverlay`
+(`port/src/game/main.cpp`) reconstructs selected title objects when switching
+to the title overlay; `mwLoadOverlay` succeeds. `__assert` prints and exits
+with status 4 and `exit__2` exits (`port/src/app/runtime.cpp`, global). What
+the PS2 runtime generated under names only the PS2 link defines is defined
+beside its declaration: `__unexpected` calls `PS2_UNIMPLEMENTED()`, and
+`std::exception`'s virtual table (`mathutil.cpp`) and the overlay address
+table (`literals.cpp`) are empty tables. Nothing in the port reaches them,
+but a COFF link wants every name an object uses defined.
 
 None of the 44 aborting stub functions is linked into `darkcloud`, and neither is
 `Ps2Unimplemented` itself: `--gc-sections` keeps only what `main` reaches,
@@ -1638,11 +1651,6 @@ disassemble `port/build/pc/darkcloud` (`llvm-objdump -d`), collect the functions
 with a `call` to a stub's address and map them to their source with
 `llvm-addr2line`; static helpers inlined into a caller show under that
 caller.
-
-At the last count `port/src` tagged 330 definitions `PORT_OVERRIDE`, each
-replacing one of `ps2/src`'s, and the final link held 4,145 of the game's own
-(`llvm-nm` of the `dc_ps2` objects' external definitions against the
-executable's symbols).
 
 ## Known gaps
 
@@ -1705,19 +1713,14 @@ The port defines every shared object of a mismatched class with the real
 one: op_a's `OP_GroundMap`, `OP_BuildingMap`, `OP_BuildingMap2`,
 `OP_AnimeSeq[32]` and `CFire`, op_b's `OP_NornMapObj[76]` and
 `OP_NornMapObj2[87]`, op_c's `Water`, rushmovi's `Water__2` and `CFire__4`.
-Every function that indexes or sizes them is the port's, compiled against
-the real headers: the long-tail copies of op_a, op_b, op_c, opening and
-rushmovi, `port/src/title/title.cpp` (all of title.cpp's scene set-ups and
-draws), `opening_mds.cpp` (`OPAnalyz`, `OPMdsLoad` and the definition
-reader's state) and op_d's `OpD_InitProcess`, `OpD_InitProcess2` and
-`OpD_DrawProcess`, which reach op_d's statics through names its stub header
-gives them. The smoke pools are sized from the host `CEffect` (288 bytes,
+Every function that indexes or sizes them is compiled against the real
+headers: the port's title units (`port/src/game/title/*.cpp`) use the host
+classes instead of declaring their own. The smoke pools are sized from the host `CEffect` (288 bytes,
 where retail asked for fifty 256-byte ones).
 
-The port's definitions of those objects are tagged `PORT_OVERRIDE`, so the
-title units' own are left out and only the port's constructors run over them
-at start-up, never the title units' at the PS2 strides. `LoadOverlay`
-(`port/src/runtime.cpp`) does what retail's overlay loader did when a mode
+Only the host classes' constructors run over those objects at start-up,
+never the title units' at the PS2 strides. `LoadOverlay`
+(`port/src/game/main.cpp`) does what retail's overlay loader did when a mode
 needs TITLE.BIN and DUN.BIN (or nothing) was loaded before:
 `TitleOverlayConstruct` zeroes those objects and constructs them again (and
 initialises the maps, as op_a's constructor did).
@@ -1726,189 +1729,130 @@ initialises the maps, as op_a's constructor did).
 
 The root `CMakeLists.txt` only picks the platform:
 
-- `ps2/src` is the game's code, exactly as the PS2 build compiles it, and
-  nothing else. Port accommodations never live in `ps2/src` or `ps2/include`;
-  the one exception is the `#ifndef PORT` around functions written in
-  assembly (below).
-  `ps2/CMakeLists.txt` (with `ps2/cmake/`) is the PS2 build.
-- `port/src` is code only the port compiles. `port/CMakeLists.txt` is the
-  port's build. `main.cpp` and `gameloop.cpp` start the game;
-  `platform/`, `gfx/` and `audio/` are the host side; `sce/` implements the
-  SDK; `stubs/sce/` holds the stubs left; `<unit>.cpp` (and `dun/`) replace
-  functions of `ps2/src/<unit>.cpp`, sometimes split as `<unit>_math.cpp`,
-  `<unit>_draw.cpp` or `<unit>_port.cpp`; `linknames.cpp` supplies link-time
-  names (below); `tests/` is `darkcloud_tests`, GoogleTest cases that ctest
-  runs one process each.
+- `ps2/src` and `ps2/include` are the matching decompilation, built only by
+  `ps2/CMakeLists.txt` (with `ps2/cmake/`). The port does not compile them.
+- `port/src/game` and `port/include/game` are the port's own copy of the
+  game's code and headers, forked from `ps2/src` and `ps2/include`. Changes
+  the port needs are made there directly; nothing is shared with the PS2
+  build and nothing in them has to stay byte-identical to retail. All of it
+  is in namespace `dc::game`, except `types.h`, `common.h` and
+  `port/include/game/sce`, the SDK headers Kazarov's `sce` sources
+  implement, which stay global.
+- The rest of `port/src` is the platform layer, one directory per subsystem,
+  each its own namespace: `app/` (`dc::app`), `platform/`, `data/`,
+  `render/`, `input/`, `ui/`, `options/`, `title/`, `battlemenu/`, `dialog/`,
+  `quest/`, `item/`, `text/`, `localize/` and `save/` (`dc::platform`, `dc::data`,
+  `dc::render` and so on). A platform file includes another by its path under
+  `port/src` (`"render/draw2d.hpp"`) and a game header by its bare name
+  (`"btitem.hpp"`). `port/CMakeLists.txt` is the port's build. `main.cpp`,
+  the only file at the root, and `app/gameloop.cpp` start the game, and
+  `app/presentation.cpp` puts its frames on screen; `tests/` is
+  `darkcloud_tests` (`dc::test`), GoogleTest cases that ctest runs one
+  process each.
+- A few names stay global because something outside the port finds them by
+  name: `main`, `wmain` and `SDL_main`; `SettingsGet` and `SettingsChange`
+  (`platform/config.cpp`), which Kazarov's `dc_host` calls; the C and
+  Metrowerks runtime names in `app/runtime.cpp` (`__assert`, `rand`,
+  `srand`, `exit__2`); and the placement `operator new` for `u_long128`
+  arenas. `extern "C"` game names may sit inside `dc::game`, since C linkage
+  ignores the namespace.
 - `tools/dcdata` is the data extraction tool.
-- `ps2/include` holds the game's headers and, under `ps2/include/sce` and
-  `ps2/include/std`, the SDK and standard headers MWCC compiles against. Both
-  builds use them.
-- `port/include` holds headers only the port uses: `port.h`, included ahead
-  of every unit it compiles, and `stubs/` (below).
+- `port/include` holds `port.h`, included ahead of every unit the port
+  compiles.
 
-## How `port/src` takes precedence
+## The game's code in the port
 
-`port/src` tags every definition that replaces one of `ps2/src`'s with
-`PORT_OVERRIDE`, which `port/include/port.h` defines as nothing:
+`port/src/game/<unit>.cpp` is what the port compiles of `ps2/src/<unit>.cpp`.
+It was forked from the copy the old override build compiled, with the
+conditionals on `PORT`, `PAL`, `PAL_TIMING` and `NON_MATCHING` resolved for
+the PC (PAL, without PAL timing) and `PORT_RETURN`, `PORT_INIT` and `PORT_FIX`
+expanded. The port's replacements for retail functions live in the same unit,
+at the retail function's place: there is no second copy of a unit elsewhere in
+`port/src`. Where the port keeps retail's version for one path and its own for
+another, the retail body stays under a file-local name (menu_dungeon's
+`CharaChangeLoopRetail`, menu_save's `RetailEventItemSelectLoop`) and the
+port's takes the retail name. The game units are compiled as `dc_ps2` and the
+platform layer as `dc_port`, and the two are linked together.
 
-```cpp
-PORT_OVERRIDE void MGClearScreen(u_char r) {
-```
+The game units reach the platform layer through its headers (`render/draw3d.hpp`,
+`data/data_read.hpp` and the others). A unit that uses a subsystem puts
+`using namespace dc::render;` (and the like) inside its own `dc::game` block;
+headers never carry a using-directive and qualify instead
+(`render::PortTextureRef`, `game::CTexture`). A function is declared in the
+header of the unit or subsystem that defines it. A few call sites keep MWCC's habits
+spelled out: battlemenu passes each temporary `CRect_i_` to
+`DrawMenuColorGradation`'s non-const reference through `Ps2Lvalue`
+(`port/include/port.h`), and main's `InitSave` casts the string literal it
+hands `LoadFileMenuData`.
 
-`ps2/src` carries no mark of it. `port/CMakeLists.txt` builds the two halves
-like this, on every platform:
+The port fixes a few retail behaviours in the unit itself:
 
-1. `tools/kazarov/scripts/port_override.py list` reads the tags in `port/src` and writes
-   the name each tagged definition links under to
-   `port/build/pc/port_overrides.txt`: a function's qualified name and
-   parameter types, or the name alone for a variable and for a function with
-   C linkage.
-2. `port_override.py strip` writes a copy of every unit in `ps2/src` under
-   `port/build/pc/ps2_src` without its definitions of those names. A function
-   becomes its declaration, a member function is removed (its class declares
-   it; an explicit specialization keeps its declaration) and a variable
-   becomes an `extern` declaration. Lines keep their numbers and a `#line`
-   directive names the original, so diagnostics and debug information point
-   into `ps2/src`.
-3. `port_override.py check` stops the build if a listed name is defined by no
-   unit of `ps2/src`.
-4. The copies are compiled, with `PORT` defined.
-5. The units in `port/src` are compiled and linked with them.
+- The towns' bait-changing events in PAL retail attach only the eight baits
+  they list, so Carrot, Potato Cake, Minon, Battan and Petite Fish were taken
+  from the bag and never put on the hook. `ListBaitForScript`
+  (`port/src/game/fishing.cpp`) puts a bait the list lacks on it when the bait
+  picker closes, and the script attaches it as it does the others.
+- `EdRunEvent` (`port/src/game/editloop3.cpp`) returns `CRunScript::run`'s
+  result, which retail's leaves in `v0` for `EdEventInit` without a return
+  statement. Walking villagers in Muska Racka use its fixed ground model's
+  collision, so their feet follow the sculpted terrain instead of the editable
+  grid's flat polygons.
+- The dungeon's quick-change menu (`CharaChangeLoop`,
+  `port/src/game/menu_dungeon.cpp`) runs as an element picker when D-pad Up
+  opened it, and as retail's loop when SELECT did.
+- `CMapParts::DrawLOD` (`port/src/game/mapparts.cpp`): retail lifts a part off
+  the ground by its own distance from the eye, which leaves neighbouring road
+  tiles at different heights and the ground showing through the step between
+  them at any resolution above the PS2's; the port lifts other parts by the
+  height retail gives one 100 units away and roads by a shared 0.5-unit height
+  so the uneven ground cannot intermittently cover their surface as the camera
+  follows the player.
 
-Each name then has one definition. A replacement without a tag leaves the
-`ps2/src` definition in, and the link fails on the duplicate symbol, unless
-that definition is `inline` or Apple's linker drops it as dead code first. A tag
-whose signature `ps2/src` does not have fails the check: the two would be
-different symbols, both would link, and the game would go on calling
-`ps2/src`'s.
-
-To replace a function, define it in `port/src` with `PORT_OVERRIDE` in front and
-the signature `ps2/src` gives it: the parameter types are compared as they are
-spelled, names and default arguments aside. By convention it goes in the file
-that mirrors its unit: `port/src/mglib.cpp` holds the replacements for
-`ps2/src/mglib.cpp`. A name the unit's stub header renames (below) is tagged
-under its new name. What is replaced has to be a function with its body or a
-variable without constructor arguments (a pointer to a function, or an array
-of them, by the name inside its declarator), at file scope of a unit, with no
-preprocessor directive before its body, and an `#if` block in its body has to
-lie wholly inside it with every branch leaving the same braces open. It has to
-be one the port compiles: under `#ifdef` or `#ifndef` of `PORT` or `PAL`, in
-the branch the port takes; under any other condition, in every branch. The
-script stops the build on a definition it cannot take out whole, on an
-`inline` one it cannot read, which the link would not catch, and on a unit
-with a line continued by a backslash outside a preprocessor directive. A
-`static` function cannot be replaced this way; it keeps the body `ps2/src`
-gives it. Nor can one defined in a class body, a namespace or a header: the
-check finds nothing to replace. A variable takes one name per declaration,
-and its declaration has no comma outside `()`, `[]` and `{}`: angle brackets do not
-count, so a template type with a comma (`std::pair<int, int>`, or
-`make<int, int>()` in its initialiser) needs a `using` alias, and the script
-stops on one rather than guess. A replaced definition has to spell out its own
-boundaries: a macro that expands to a comma or a semicolon in it is not
-supported, and the script does not notice one.
-
-
-## Per-unit adjustments
-
-`port/include/stubs/<unit>.hpp`, if it exists, is included ahead of
-`ps2/src/<unit>.cpp`, after `port.h`, and nothing else. Only the port's build
-sees `port/include`; the PS2 build compiles nothing differently. It declares
-what the port defines in place of code `PORT` leaves out, and supplies or
-renames what the unit takes from MWCC or from the PS2 link alone:
-
-- `bound`, `cloth`, `collisionmdt`, `frame`, `gameutil`, `mglib`, `visualvu1`
-  and `water` get declarations of their `static` assembly functions, which
-  the port defines.
-- `battlemenu` and `editground` pass each temporary `CRect_i_` as an lvalue
-  (`Ps2Lvalue`, `port/include/port.h`): MWCC binds a temporary to the non-const
-  references of `DrawMenuColorGradation` and `CEditGround::CheckPartsRect`.
-- `editloop3` gives its static `EdSetVillagerNextPos` a global forwarder,
-  `PortEdSetVillagerNextPos`, for the port's `EdMoveVillager`, and declares
-  its static `EdEventScript` `extern` first, for the port's `EdRunEvent`
-  (`port/src/runscript.cpp`): retail's has no return statement and leaves
-  `CRunScript::run`'s result in `v0` for `EdEventInit`. Walking villagers in
-  Muska Racka use its fixed ground model's collision, so their feet follow
-  the sculpted terrain instead of the editable grid's flat polygons. It also
-  declares its static `p_use_item` `extern`, for the port's bait fix
-  (`ListBaitForScript`, `port/src/fish_port.hpp`): the towns' bait-changing
-  events in PAL retail attach only the eight baits they list, so Carrot,
-  Potato Cake, Minon, Battan and Petite Fish were taken from the bag and never
-  put on the hook. When the bait picker closes, a bait the list lacks is put on
-  it, and the script attaches it as it does the others.
-- `main` gets an overload of `LoadFileMenuData` for a `const char *`: one call
-  names its file with a comma expression ending in a string literal.
-- `mathutil` gets the Metrowerks runtime's own `std::exception` and
-  `std::bad_exception` renamed apart from the host library's, and
-  `__exception_magic`, which MWCC provides inside an exception handler.
-- `menu_dungeon` renames its `CharaChangeLoop` to `CharaChangeLoopRetail`. The
-  port's `CharaChangeLoop` (`port/src/menu_dungeon.cpp`) runs the dungeon's
-  quick-change menu as an element picker when D-pad Up opened it, and this
-  unit's loop when SELECT did.
-- `menu_save` and `memcard` export statics the other calls: memcard's
-  `SaveMenuFunc` table names menu_save's eighteen `SaveMenuKey*` steps and
-  menu_save calls memcard's `ExitSaveSelect`. The port's `SaveMenuFunc`
-  (`port/src/memcard.cpp`) names six of memcard's own steps as well. Each
-  header defines a global forwarder under the external name (an asm label),
-  which also keeps clang from dropping the unused static.
-- `title/rushmovi` declares title.cpp's `DataLoad`, `DrawProcA`..`I` and
-  `DrawProcTitle` static; its header defines those statics as forwarders to
-  the global ones.
-- `mapparts` has its `CMapParts::DrawLOD` replaced (`port/src/mapparts.cpp`):
-  retail lifts a part off the ground by its own distance from the eye, which
-  leaves neighbouring road tiles at different heights and the ground showing
-  through the step between them at any resolution above the PS2's; the port
-  lifts other parts by the height retail gives one 100 units away and roads by
-  a shared 0.5-unit height so the uneven ground cannot intermittently cover
-  their surface as the camera follows the player.
-- `title/op_d` declares the state and the helpers `OpD_InitProcess`,
-  `OpD_InitProcess2` and `OpD_DrawProcess` share with the rest of the unit
-  `extern` under `OpD_*` names before the unit declares them `static`, and
-  gives the static helpers global forwarders, so the port's copies of those
-  three reach them.
-- The per-object renames below.
+Static construction draws from `rand()` (each `CFireOmni` and `CWind`, and the
+`CSaveData` constructors), and the game's random sequence follows from where
+those draws leave the generator. The game statics that draw carry
+`init_priority`, so the order no longer depends on the link order; see `rand`
+in `port/src/app/runtime.cpp`.
 
 ## Names the PS2 build renames
-
-`main.cpp` calls other units through the names MWCC gives them
-(`init_all__Fv`) and calls the overlays' entry points through their retail
-addresses (`func_01DAC1C0`). `port/src/main.cpp` forwards each one to the real
-function.
 
 The PS2 link binds some names through `ps2/config/pal/object_fixups.json` and the
 linker script rather than through the source. The port reproduces each:
 
-- **Per-object renames**, by `#define` in the unit's header: the opening
-  scenes' four `FaceChange(int)` become op_b's `FaceChange`, op_c's
-  `FaceChangeC`, op_d's `FaceChangeD` and rushmovi's `FaceChangeMovie`, the
-  names their neighbours call them by; the dungeon's `MainDraw` and
-  `MoveChara` become `DunMainDraw` and `DunMoveChara`, apart from editloop's
-  (`port/src/dun/gameloop.cpp` replaces `DunMainDraw`); edit_in's `Chara`,
-  `MainCamera`, `NowCamera`, `TalkCamera`, `NowTime`, `TexAnimeData`,
-  `camera_dist_mode`, `door_open_cnt`, `fix_chara_pos`, `fix_chara_rot`,
-  `goto_menu`, `goto_return_menu`, `key_counter` and `loop_counter`, which it
-  redeclares `static` after a header declares them `extern` (MWCC makes them
-  file-local, clang's `-fms-extensions` keeps them global), become
-  `EditIn_*`.
+- **Per-object names.** The opening scenes' four `FaceChange(int)` are op_b's
+  `FaceChange`, op_c's `FaceChangeC`, op_d's `FaceChangeD` and rushmovi's
+  `FaceChangeMovie`, the names their neighbours call them by; the dungeon's
+  `MainDraw` and `MoveChara` are `DunMainDraw` and `DunMoveChara`
+  (`port/src/game/dun/gameloop.cpp` and `port/src/game/dun/movechara.cpp`),
+  apart from editloop's. The port's units use these names directly.
 - **Pooled literals under extern names** (`BtAtraShortCharaFile`,
   `MdsExtension`, `gamemode_empty_string`, `allmenu_mes` and six more) and
-  **the title overlay's own `CRect<int>`** spelling of the rectangle in
-  `MGFillBox`, `MGMoveImage`, `MGStretchMoveImage`, `MoveImageTest` and the
-  `set2DSprite` overloads, plus op_c's `CWater::DrawVu1` and main's
-  `MAP_NPC_MODEL::operator=`: weak definitions and forwarders in
-  `port/src/linknames.cpp`.
-- **Aliases**, by `--defsym` (ld64's `-alias` on macOS) in
-  `port/CMakeLists.txt`: `draw_rect` = `draw_rect_store` and
-  `WorkBuffer__2` = `WorkBuffer`. `ItemPutListTbl12_bytes` is not an alias:
-  `port/include/stubs/dngstatusdata.hpp` turns `GetItem`'s folded PS2 byte
-  index into a typed `WeaponList` owner lookup.
+  main's `MAP_NPC_MODEL::operator=`: the literals are written where they are
+  used, and the operator is an ordinary definition in `port/src/game/main.cpp`.
+  The title overlay's own `CRect<int>` spelling of the rectangle in
+  `MGFillBox`, `MGMoveImage` and the `set2DSprite` overloads has adapters in
+  `port/src/game/title/title.cpp`, and `MoveImageTest`'s in
+  `port/src/game/title/op_a.cpp`.
+- **No linker aliases.** `draw_rect` is a real `CRect_i_` in
+  `port/src/game/ebattle.cpp`, and every user of `WorkBuffer` names it
+  through `dataset.hpp`. `ItemPutListTbl12_bytes` is not an alias: `GetItem`
+  (`port/src/game/dngstatusdata.cpp`) reads `WeaponList` directly instead of
+  the folded PS2 byte index.
   `EditGaijiTbl` is `GaijiDataTbl + 0x601C` on the PS2 link. The linker
   script places it inside `EditPartsData`, but the codes `clsmes.cpp`
   indexes it with (-0x300 and up) only ever land on the last word of a
   `GaijiDataTbl` entry, and `GaijiDataTbl` keeps its layout on the host
   where `EditPartsData`'s pointers grow. ld64 cannot alias with an offset,
-  so `linknames.cpp` defines it on every platform: storage for the 0x300
+  so `clsmes.cpp` defines it on every platform: storage for the 0x300
   entries below it, filled from `GaijiDataTbl` before `main`, with
-  `EditGaijiTbl` an assembler alias of the storage's end.
+  `EditGaijiTbl` a pointer to the storage's end.
+- **No names bound by their spelling.** No `asm` label or MWCC-named
+  forwarder binds anything. What a neighbouring unit reaches under a name
+  only the PS2 link gives is an ordinary external entity declared in its
+  unit's header (`SaveMenuKey*` and `ExitSaveSelect` in `memcard.hpp` and
+  `menu_save.hpp`, `EdEventScript` and `p_use_item` in `editloop3.hpp`).
+  Names with C linkage (`DrawVu1__6CWater…`, `mwLoadOverlay`) are declared
+  `extern "C"` inside `dc::game`, which leaves them unmangled.
 
 Data the title overlay's units type themselves with PS2 layouts: see "The
 title overlay's own class declarations".
@@ -1991,6 +1935,7 @@ The game reads extracted files from a plain directory or a sibling `data.zip` ar
 port/build/pc/dcdata extract "rom/pal/Dark Cloud (PAL).iso" data
 port/build/pc/dcdata pack data
 port/build/pc/dcdata list "rom/pal/Dark Cloud (PAL).iso"
+port/build/pc/dcdata publish-sound data
 ```
 
 `pack` takes an existing extracted directory and writes a ZIP archive beside it by default; a second output path is optional. It stores files without compression so the port can read them on Switch without a decompression cost. The runtime also reads standard deflated ZIP entries. ZIP64, encrypted and multi-disk archives are unsupported. The game gives `data.zip` priority over loose files when both exist. Do not modify an archive while the game is running.
@@ -2004,7 +1949,16 @@ lowercased with `/` separators and no leading separator, at its exact size,
 and copies the index itself to `<data>/data.hd2`. A file already present at
 its size is kept, so a rerun only repairs what is missing. When a path is
 listed twice, only the first is written, as the game only ever finds the
-first. `list` prints each file's sector, size and path.
+first. `list` prints each file's sector, size and path. `publish-sound`
+converts an extracted folder's sound packs into ChronicleTwo's bank, sample
+and sequence formats beside the originals, which the game still plays
+(`docs/AUDIO_FRAMEWORK.md`).
+`extract` also converts the models, motions, skin weights and bind poses to
+glTF beside the originals, indexed by `models.json`; the game rebuilds the
+retail records from them as it reads a file. `convert-models <raw> <out>`
+writes that conversion to a folder of its own, `bake-assets <raw> <data>`
+publishes it into extracted data, and `strip-models <data>` empties the
+converted originals (`docs/MODEL_FRAMEWORK.md`).
 
 The layout of `data/` or the root of `data.zip` is the disc archive's own: `dun/pack/maindat.pac`,
 `commenu/a_eng/savetex.pak`, `sound/bgm/...` and so on. Lookups fold case,

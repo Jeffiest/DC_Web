@@ -5,11 +5,17 @@
 #include <string>
 #include <vector>
 
-#include "localize.hpp"
-#include "localize_texture.hpp"
+#include "localize/localize.hpp"
+#include "localize/localize_texture.hpp"
 #include "mainselect.hpp"
 #include "platform_fixture.hpp"
-#include "texture_port.hpp"
+#include "render/texture_registry.hpp"
+
+namespace dc::test {
+
+using namespace dc::game;
+using namespace dc::localize;
+using namespace dc::render;
 
 namespace {
 
@@ -54,7 +60,7 @@ PortDecodedTexture Indexed(unsigned width, unsigned height) {
     texture.width = width;
     texture.height = height;
     texture.format = gfx::TextureFormat::Index8;
-    texture.levels.push_back(std::vector<uint8_t>(static_cast<size_t>(width) * height, 7));
+    texture.levels.emplace_back(static_cast<size_t>(width) * height, 7);
     return texture;
 }
 
@@ -154,3 +160,5 @@ TEST(LocalizeTexture, LeavesAWrongShapedPictureAndOtherTexturesAlone) {
 }
 
 } // namespace
+
+} // namespace dc::test

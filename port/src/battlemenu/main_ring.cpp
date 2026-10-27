@@ -1,7 +1,17 @@
+#include <array>
+#include <span>
+
 #include "battlemenu/internal.hpp"
 #include "battlemenu/strings.hpp"
-#include "save_slots.hpp"
+#include "save/save_slots.hpp"
 #include "savedata.hpp"
+
+namespace dc::battlemenu {
+
+using namespace dc::game;
+using namespace dc::localize;
+using namespace dc::text;
+using namespace dc::ui;
 
 namespace {
 
@@ -54,7 +64,7 @@ int quit_confirm_choice = static_cast<int>(QuitChoice::No);
 /**
  * Animated hand cursor for the Quit Game confirmation modal.
  */
-UI::Cursor quit_cursor;
+ui::Cursor quit_cursor;
 
 /**
  * Whether Quit was confirmed and the main loop has yet to go back to the title screen.
@@ -74,7 +84,7 @@ int saveload_modal_choice = static_cast<int>(SaveLoadChoice::Save);
 /**
  * Animated hand cursor for the Save/Load selection modal.
  */
-UI::Cursor saveload_cursor;
+ui::Cursor saveload_cursor;
 
 /**
  * Whether the save screen was opened in load mode from the town ring.
@@ -101,7 +111,7 @@ int GetMenuModeMax() {
 /**
  * Populates the array of sprite icon indices for the current Battle Menu mode.
  */
-void BtlMenuMekeIconInfo(int *icons, int /*menu_mode*/) {
+void BtlMenuMekeIconInfo(std::span<int, kTownRingIconCount> icons, int /*menu_mode*/) {
     constexpr s16 custom_draw_table[2][kTownRingIconCount] = {
         {0, 1, 2, 3, 7, 4, 6, 12, 0 },
         {0, 1, 2, 3, 8, 5, 4, 6,  12}
@@ -186,8 +196,8 @@ void DrawBtlMenuBar() {
     }
 
     NowGetGameFlagForBtlMenu(BtlMenuMode);
-    const int icon_count = GetMenuModeMax();
-    int       icons[kTownRingIconCount] = {};
+    const int                           icon_count = GetMenuModeMax();
+    std::array<int, kTownRingIconCount> icons{};
     BtlMenuMekeIconInfo(icons, BtlMenuMode);
 
     setbilinear(0);
@@ -248,13 +258,13 @@ void DrawBattleMainOverlay() {
         return;
     }
 
-    int icons[kTownRingIconCount] = {};
+    std::array<int, kTownRingIconCount> icons{};
     BtlMenuMekeIconInfo(icons, BtlMenuMode);
     const int       sel_icon = icons[MenuSelect[1]];
     MENU_ICON_INFO *info = GetMenuIconInfo(sel_icon);
 
-    UI::Label cap_lbl(GetBattleMenuCaption(MenuSelect[1], BtlMenuMode, ingame_load_active),
-                      UI::ColorWhite, UI::Alignment::Left, true, kCaptionToMessageRatio);
+    ui::Label cap_lbl(GetBattleMenuCaption(MenuSelect[1], BtlMenuMode, ingame_load_active),
+                      ui::ColorWhite, ui::Alignment::Left, true, kCaptionToMessageRatio);
     int       width = cap_lbl.GetWidth() + 0x52;
     if (info != nullptr && width < (info->label_width + 0x4A)) {
         width = info->label_width + 0x4A;
@@ -302,7 +312,7 @@ std::string QuitConfirmDescription() {
  * Draws the Quit Game confirmation modal.
  */
 void DrawQuitConfirmModal(int alpha) {
-    UI::ConfirmModal::Draw(
+    ui::ConfirmModal::Draw(
         QuitConfirmTitle(),
         QuitConfirmDescription(),
         LocalizeText("battlemenu.quit.yes", "YES"),
@@ -323,7 +333,7 @@ void DrawSaveLoadChoiceModal(int alpha) {
     std::string modal_prompt;
     GetLocalizedSaveLoadStrings(title, desc, save_btn, load_btn, modal_prompt);
 
-    UI::ConfirmModal::Draw(
+    ui::ConfirmModal::Draw(
         title,
         modal_prompt,
         save_btn,
@@ -484,12 +494,13 @@ void PortDrawBattleMenu() {
             MenuManualDraw();
             setbilinear(0);
             break;
+        default:
+            break;
     }
 
     CursorVibeCnt = (CursorVibeCnt + 1 >= 0x405F7E00) ? 0 : (CursorVibeCnt + 1);
 
-    // The character, weapon, item and Atla menus keep the game's own help window: the description the menu chose
-    // (a weapon's, a character's), in the game's text.
+    // These pages show the description they chose themselves in the game's own help window.
     bool game_help = false;
     switch (BattleMenuFlag) {
         case BTLMENU_STATE_CHARA:
@@ -505,6 +516,8 @@ void PortDrawBattleMenu() {
         case BTLMENU_STATE_ATLA_OPEN:
         case BTLMENU_STATE_ATLA_CLOSE:
             game_help = true;
+            break;
+        default:
             break;
     }
 
@@ -540,7 +553,7 @@ void PortDrawBattleMenu() {
         GetBattleMenuHelpData(MenuSelect[1], BtlMenuMode, title, desc);
 
         const int box_x = (HelpWinHead[0] > 0) ? static_cast<int>(HelpWinHead[0]) : (640 - kHelpBoxWidth - 20);
-        UI::HelpBox::DrawTitled(box_x, 452, kHelpBoxWidth, text_x, title, desc, BtlHelpWinAlpha);
+        ui::HelpBox::DrawTitled(box_x, 452, kHelpBoxWidth, text_x, title, desc, BtlHelpWinAlpha);
     }
 
     setbilinear(0);
@@ -635,20 +648,16 @@ int PortBattleMenuSelect() {
         return 1;
     }
 
-    const int old = MenuSelect[1];
-    const int max = GetMenuModeMax();
+    const int previous_selection = MenuSelect[1];
+    const int icon_count = GetMenuModeMax();
 
-    if (GamePad.Down(PAD_UP | PAD_LEFT) != 0) {
-        if (--MenuSelect[1] < 0) {
-            MenuSelect[1] = max - 1;
-        }
+    if (GamePad.Down(PAD_UP | PAD_LEFT) != 0 && --MenuSelect[1] < 0) {
+        MenuSelect[1] = icon_count - 1;
     }
-    if (GamePad.Down(PAD_RIGHT | PAD_DOWN) != 0) {
-        if (++MenuSelect[1] > max - 1) {
-            MenuSelect[1] = 0;
-        }
+    if (GamePad.Down(PAD_RIGHT | PAD_DOWN) != 0 && ++MenuSelect[1] > icon_count - 1) {
+        MenuSelect[1] = 0;
     }
-    if (old != MenuSelect[1]) {
+    if (previous_selection != MenuSelect[1]) {
         ComMenuSePlay(MENU_SOUND_CURSOR);
     }
 
@@ -661,9 +670,9 @@ int PortBattleMenuSelect() {
         };
         MenuSelect[0] = pages[BtlMenuMode][MenuSelect[1]];
         CommonMenuMes1.stay_frame = false;
-        CUserStatus *status = reinterpret_cast<CUserStatus *>(BtlMenuStatusPt);
-        const int    chara = status->cur_chara;
-        u_long128   *buffer = BtlMenuReadBuf;
+        auto      *status = reinterpret_cast<CUserStatus *>(BtlMenuStatusPt);
+        const int  chara = status->cur_chara;
+        u_long128 *buffer = BtlMenuReadBuf;
 
         switch (MenuSelect[0]) {
             case BTLMENU_PAGE_CHARA:
@@ -685,14 +694,14 @@ int PortBattleMenuSelect() {
                 break;
             case BTLMENU_PAGE_ATLA: {
                 BtlWakuMake2 = 1;
-                int blocks[2] = {BtlMenuReadBlock, MenuExtendReadBlock};
-                int map = (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON)
-                              ? status->cur_georama
-                              : GetNowMapTransAtraMap(MapNo);
+                std::array<int, 2> blocks = {BtlMenuReadBlock, MenuExtendReadBlock};
+                int                map = (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON)
+                                             ? status->cur_georama
+                                             : GetNowMapTransAtraMap(MapNo);
                 if (map < 0 || map >= 6) {
                     map = 0;
                 }
-                InitMenuAtora1(BtlMenuMode, map, blocks, buffer);
+                InitMenuAtora1(BtlMenuMode, map, blocks.data(), buffer);
                 InitMenuAtoraSelect(map);
                 break;
             }
@@ -718,20 +727,21 @@ int PortBattleMenuSelect() {
                 return 1;
             case BTLMENU_PAGE_MANUAL: {
                 BtlWakuMake2 = 0;
-                int blocks[3] = {MenuExtendReadBlock, BtlMenuExReadBlock, BtlMenuManualReadBlock};
-                Btl_BattleManualInit(blocks, buffer);
+                std::array<int, 3> blocks = {MenuExtendReadBlock, BtlMenuExReadBlock, BtlMenuManualReadBlock};
+                Btl_BattleManualInit(blocks.data(), buffer);
                 break;
             }
-            case BTLMENU_PAGE_QUIT:
+            case BTLMENU_PAGE_QUIT: {
                 quit_confirm_active = true;
                 quit_confirm_choice = static_cast<int>(QuitChoice::No);
-                {
-                    const UI::Rect no = UI::ConfirmModal::ButtonRect(QuitConfirmTitle(), QuitConfirmDescription(),
-                                                                     static_cast<int>(QuitChoice::No));
-                    quit_cursor.SnapTo(static_cast<float>(no.x - 34), static_cast<float>(no.y + 3));
-                }
+                const ui::Rect no_button = ui::ConfirmModal::ButtonRect(QuitConfirmTitle(), QuitConfirmDescription(),
+                                                                        static_cast<int>(QuitChoice::No));
+                quit_cursor.SnapTo(static_cast<float>(no_button.x - 34), static_cast<float>(no_button.y + 3));
                 ComMenuSePlay(MENU_SOUND_CONFIRM);
                 return 1;
+            }
+            default:
+                break;
         }
 
         BattleMenuFlag = MenuSelect[0] + BTLMENU_STATE_OPEN_OFFSET;
@@ -762,9 +772,9 @@ int BattleMenuQuitConfirmHit(float x, float y) {
         std::string load_btn;
         std::string prompt;
         GetLocalizedSaveLoadStrings(title, desc, save_btn, load_btn, prompt);
-        return UI::ConfirmModal::Hit(title, prompt, x, y);
+        return ui::ConfirmModal::Hit(title, prompt, x, y);
     }
-    return UI::ConfirmModal::Hit(QuitConfirmTitle(), QuitConfirmDescription(), x, y);
+    return ui::ConfirmModal::Hit(QuitConfirmTitle(), QuitConfirmDescription(), x, y);
 }
 
 bool TakeBattleMenuLoadRequest() {
@@ -784,3 +794,5 @@ bool TakeBattleMenuTitleRequest() {
 }
 
 void BattleMenuIconPosition(int index, float &x, float &y) { GetSafeIconPos(index, x, y); }
+
+} // namespace dc::battlemenu

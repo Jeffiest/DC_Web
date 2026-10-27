@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "identity.hpp"
+#include "app/identity.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -11,7 +11,7 @@
 #endif
 
 int main(int argc, char **argv) {
-    GameSetIdentity();
+    dc::app::GameSetIdentity();
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);

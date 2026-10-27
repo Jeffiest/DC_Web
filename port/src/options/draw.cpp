@@ -10,19 +10,23 @@
 #include "options/screen.hpp"
 #include "rect.hpp"
 #include "snd.hpp"
+#include "text/textwipe.hpp"
 #include "texture.hpp"
-#include "textwipe.hpp"
-#include "ui_framework.hpp"
+#include "ui/framework.hpp"
 
-namespace options {
+namespace dc::options {
+
+using namespace dc::game;
+using namespace dc::platform;
+using namespace dc::text;
 
 namespace {
 
 constexpr int bar_fade = 15;
 
-static UI::Cursor    s_cursor;
-static UI::Brackets  s_brackets;
-static UI::ScrollBar s_scrollbar;
+ui::Cursor    s_cursor;
+ui::Brackets  s_brackets;
+ui::ScrollBar s_scrollbar;
 
 void DrawSprite(int x, int y, int u, int v, int width, int height, int alpha) {
     DrawMenu2DSprite(g_screen.texture, CRect_i_(x, y, width, height), CRect_i_(u, v, width, height), alpha);
@@ -31,7 +35,7 @@ void DrawSprite(int x, int y, int u, int v, int width, int height, int alpha) {
 void DrawTabPlate(int alpha) {
     int left = L1X();
     int right = R1X() + GetTexts().r1.GetWidth();
-    UI::TabPlate::Draw(left, right, kTabY, alpha);
+    ui::TabPlate::Draw(left, right, kTabY, alpha);
 }
 
 void DrawScrollBar(int alpha) {
@@ -82,7 +86,7 @@ void DrawSelection(int alpha) {
                           : RowValue(row, config);
         }
 
-        int val_w = UI::Label(val_str).GetWidth();
+        int val_w = ui::Label(val_str).GetWidth();
         int val_center = (kValueX + kValueRight) / 2;
         int val_left = val_center - (val_w / 2);
         int val_right = val_left + val_w;
@@ -152,17 +156,17 @@ void DrawTabs(int alpha) {
     }
 
     if (has_left_tabs) {
-        texts.left.SetColor(active_dir < 0 ? UI::ColorYellow : UI::ColorWhite);
+        texts.left.SetColor(active_dir < 0 ? ui::ColorYellow : ui::ColorWhite);
         texts.left.Draw(kLabelX, kTabY, alpha / 2);
     }
     if (has_right_tabs) {
-        texts.right.SetColor(active_dir > 0 ? UI::ColorYellow : UI::ColorWhite);
+        texts.right.SetColor(active_dir > 0 ? ui::ColorYellow : ui::ColorWhite);
         texts.right.Draw(kTabsRight - texts.right.GetWidth(), kTabY, alpha / 2);
     }
 
     for (int t = g_screen.first_tab; t <= last; ++t) {
         bool shown = t == g_screen.page;
-        texts.tabs[t].SetColor(shown ? UI::ColorGold : UI::ColorWhite);
+        texts.tabs[t].SetColor(shown ? ui::ColorGold : ui::ColorWhite);
         texts.tabs[t].Draw(TabX(t), kTabY, shown ? alpha : alpha / 2);
     }
 }
@@ -178,20 +182,20 @@ void DrawRows(int alpha) {
         int        y = RowTop(r) + 2;
         bool       selected = (g_screen.row == r);
 
-        UI::Label &label = texts.labels[g_screen.page][r];
+        ui::Label &label = texts.labels[g_screen.page][r];
         label.Draw(kLabelX, y, alpha);
 
         std::string val_str;
-        if (row.activate != nullptr) {
-            val_str.clear();
-        } else if (row.action != nullptr && g_screen.binding_row == r) {
-            val_str = g_screen.binding_prompt;
-        } else {
-            val_str = RowValue(row, config);
+        if (row.activate == nullptr) {
+            if (row.action != nullptr && g_screen.binding_row == r) {
+                val_str = g_screen.binding_prompt;
+            } else {
+                val_str = RowValue(row, config);
+            }
         }
 
         if (!val_str.empty()) {
-            UI::Label val_lbl(val_str, selected ? UI::ColorYellow : UI::ColorWhite, UI::Alignment::Center);
+            ui::Label val_lbl(val_str, selected ? ui::ColorYellow : ui::ColorWhite, ui::Alignment::Center);
             int       val_w = val_lbl.GetWidth();
             int       val_center = (kValueX + kValueRight) / 2;
             int       val_left = val_center - (val_w / 2);
@@ -219,11 +223,11 @@ void DrawRows(int alpha) {
                 }
 
                 if (has_prev) {
-                    texts.left.SetColor(active_dir < 0 ? UI::ColorYellow : UI::ColorWhite);
+                    texts.left.SetColor(active_dir < 0 ? ui::ColorYellow : ui::ColorWhite);
                     texts.left.Draw(val_left - arrow_pad - texts.left.GetWidth(), y, alpha);
                 }
                 if (has_next) {
-                    texts.right.SetColor(active_dir > 0 ? UI::ColorYellow : UI::ColorWhite);
+                    texts.right.SetColor(active_dir > 0 ? ui::ColorYellow : ui::ColorWhite);
                     texts.right.Draw(val_right + arrow_pad, y, alpha);
                 }
             }
@@ -276,6 +280,8 @@ void Draw() {
         case OPTION_STEP_FADE_OUT:
             alpha = 0x80 - g_screen.step_count * 7;
             break;
+        default:
+            break;
     }
     alpha = std::clamp(alpha, 0, 0x80);
 
@@ -286,12 +292,11 @@ void Draw() {
     DrawTabPlate(alpha);
     DrawScrollBar(alpha);
 
-    // Draws EXIT using the unified TextureButton API:
     MenuTextureReload(g_screen.block_no);
-    UI::TextureButton::Draw(
-        UI::Rect(kExitX, kExitY, kExitWidth, kExitHeight),
+    ui::TextureButton::Draw(
+        ui::Rect(kExitX, kExitY, kExitWidth, kExitHeight),
         g_screen.texture,
-        UI::Rect(452, 224, kExitWidth, kExitHeight),
+        ui::Rect(452, 224, kExitWidth, kExitHeight),
         alpha);
 
     if (g_screen.step == OPTION_STEP_RUN) {
@@ -314,4 +319,4 @@ void Draw() {
     setbilinear(1);
 }
 
-} // namespace options
+} // namespace dc::options

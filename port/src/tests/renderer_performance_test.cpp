@@ -2,24 +2,29 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
-#include <cstring>
 #include <memory>
 #include <thread>
 #include <vector>
 
+#include "app/gameloop.hpp"
 #include "cloth.hpp"
-#include "draw3d.hpp"
 #include "frame.hpp"
-#include "gameloop.hpp"
 #include "gfx/displaylist.hpp"
 #include "gfx_fixture.hpp"
 #include "menu_draw.hpp"
 #include "menu_inventory.hpp"
 #include "platform/clock.hpp"
+#include "render/draw3d.hpp"
+#include "render/texture_registry.hpp"
 #include "renderinfo.hpp"
 #include "texture.hpp"
-#include "texture_port.hpp"
+
+namespace dc::test {
+
+using namespace dc::game;
+using namespace dc::render;
 
 TEST(ChroniclePresentation, FullSizePictureFillsWidescreenWithoutSamplingPastArtwork) {
     dc::test::GfxFixture fixture(1280, 720, 1.0f, dc::test::GfxOptions{.offscreen = true});
@@ -29,8 +34,9 @@ TEST(ChroniclePresentation, FullSizePictureFillsWidescreenWithoutSamplingPastArt
     image.levels.emplace_back(640 * 448 * 4, 255);
     for (unsigned y = 0; y < image.height; ++y) {
         for (unsigned x = 0; x < image.width; ++x) {
-            image.levels[0][(y * image.width + x) * 4] = static_cast<uint8_t>(y / 2);
-            image.levels[0][(y * image.width + x) * 4 + 1] = static_cast<uint8_t>(x / 3);
+            const size_t pixel = (static_cast<size_t>(y) * image.width + x) * 4;
+            image.levels[0][pixel] = static_cast<uint8_t>(y / 2);
+            image.levels[0][pixel + 1] = static_cast<uint8_t>(x / 3);
         }
     }
     const unsigned key = PortCreateTexture(image, PortTextureOwner::Manager, nullptr);
@@ -46,11 +52,11 @@ TEST(ChroniclePresentation, FullSizePictureFillsWidescreenWithoutSamplingPastArt
 }
 
 TEST(ChroniclePresentation, ClearedVisualBlocksAreRejectedBetweenSweeps) {
-    alignas(16) unsigned int block[16] = {};
-    Draw3DRegisterVisual(block, false);
-    ASSERT_NE(Draw3DFindVisual(block), nullptr);
+    alignas(16) std::array<unsigned int, 16> block = {};
+    Draw3DRegisterVisual(block.data(), false);
+    ASSERT_NE(Draw3DFindVisual(block.data()), nullptr);
     block[8] = 0;
-    EXPECT_EQ(Draw3DFindVisual(block), nullptr);
+    EXPECT_EQ(Draw3DFindVisual(block.data()), nullptr);
 }
 
 TEST(ChroniclePresentation, ClothTurnsWithItsAttachmentWithoutBlendingAcrossTheBody) {
@@ -60,7 +66,7 @@ TEST(ChroniclePresentation, ClothTurnsWithItsAttachmentWithoutBlendingAcrossTheB
 
     dc::test::GfxFixture fixture(64, 48, 1.0f, dc::test::GfxOptions{.offscreen = true});
     auto                 cloth = std::make_unique<Cloth>(2, 2, 1.0f);
-    auto                 block = std::make_unique<unsigned int[]>(kDraw3DBlockQuads * 4);
+    auto                 block = std::make_unique<unsigned int[]>(static_cast<size_t>(kDraw3DBlockQuads) * 4);
     cloth->vu_block[0] = cloth->vu_block[1] = block.get();
     cloth->polygon_divide[0] = 0;
     CFrame attachment;
@@ -120,24 +126,24 @@ TEST(ChroniclePresentation, AsyncPublishesAndStopsTheWorker) {
     ClockSetUnbounded(false);
     ClockSetTickRate(60);
     ClockReset();
-    GameSetPresentSettings({});
-    const auto before = GamePresentStatistics().display_frames;
+    app::GameSetPresentSettings({});
+    const auto before = app::GamePresentStatistics().display_frames;
     {
         gfx::RenderLease lease;
         gfx::BeginRecording();
-        const uint8_t color[] = {20, 40, 60, 128};
-        gfx::Clear(true, color, true, 0);
-        GameRenderTick(gfx::EndRecording());
+        const std::array<uint8_t, 4> color = {20, 40, 60, 128};
+        gfx::Clear(true, color.data(), true, 0);
+        app::GameRenderTick(gfx::EndRecording());
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (GamePresentStatistics().display_frames == before && std::chrono::steady_clock::now() < deadline) {
+    while (app::GamePresentStatistics().display_frames == before && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    GameStopPresentation();
-    EXPECT_GT(GamePresentStatistics().display_frames, before);
-    const auto stopped = GamePresentStatistics().display_frames;
+    app::GameStopPresentation();
+    EXPECT_GT(app::GamePresentStatistics().display_frames, before);
+    const auto stopped = app::GamePresentStatistics().display_frames;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    EXPECT_EQ(GamePresentStatistics().display_frames, stopped);
+    EXPECT_EQ(app::GamePresentStatistics().display_frames, stopped);
 }
 
 TEST(GfxGpuChroniclePresentation, AsyncPresentationReleasesDestroyedTexturesAtStop) {
@@ -146,25 +152,24 @@ TEST(GfxGpuChroniclePresentation, AsyncPresentationReleasesDestroyedTexturesAtSt
     ClockSetUnbounded(false);
     ClockSetTickRate(60);
     ClockReset();
-    GameSetPresentSettings({});
+    app::GameSetPresentSettings({});
     std::vector<std::weak_ptr<const gfx::DisplayList>> frames;
     constexpr unsigned                                 count = 40;
     {
-        // Keep the worker parked while recordings release their owned texture resources.
         gfx::RenderLease lease;
         for (unsigned tick = 0; tick < count; ++tick) {
             gfx::BeginRecording();
-            const uint8_t clear[] = {0, 0, 0, 128};
-            gfx::Clear(true, clear, true, 0);
+            const std::array<uint8_t, 4> clear = {0, 0, 0, 128};
+            gfx::Clear(true, clear.data(), true, 0);
             auto cpu_list = gfx::EndRecording();
             frames.emplace_back(cpu_list);
-            GameRenderTick(std::move(cpu_list));
+            app::GameRenderTick(std::move(cpu_list));
             const auto texture = gfx::CreateTexture({1, 1});
             ASSERT_NE(texture, gfx::kNullTexture);
             const auto texel = dc::test::Rgba(static_cast<uint8_t>(40 + tick), 80, 120);
             ASSERT_TRUE(gfx::UpdateTexture(texture, 0, 0, 0, 1, 1, &texel));
             gfx::BeginRecording();
-            gfx::Clear(true, clear, true, 0);
+            gfx::Clear(true, clear.data(), true, 0);
             gfx::TextureBinding binding;
             binding.texture = texture;
             const auto quad = dc::test::Quad(0, 0, 640, 480, {128, 128, 128, 128}, 0, 0, 1, 1);
@@ -172,7 +177,7 @@ TEST(GfxGpuChroniclePresentation, AsyncPresentationReleasesDestroyedTexturesAtSt
             gfx::DestroyTexture(texture);
             auto list = gfx::EndRecording();
             frames.emplace_back(list);
-            GameRenderTick(std::move(list));
+            app::GameRenderTick(std::move(list));
         }
         EXPECT_LE(std::ranges::count_if(frames, [](const auto &frame) { return !frame.expired(); }), 8);
     }
@@ -181,9 +186,9 @@ TEST(GfxGpuChroniclePresentation, AsyncPresentationReleasesDestroyedTexturesAtSt
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     EXPECT_TRUE(frames.front().expired());
-    GameStopPresentation();
-    for (size_t i = 0; i + 2 < frames.size(); ++i) {
-        EXPECT_TRUE(frames[i].expired()) << i;
+    app::GameStopPresentation();
+    for (size_t index = 0; index + 2 < frames.size(); ++index) {
+        EXPECT_TRUE(frames[index].expired()) << index;
     }
     ASSERT_TRUE(gfx::ReadbackFrame(fixture.pixels, fixture.width, fixture.height));
     EXPECT_TRUE(fixture.PixelNear(fixture.width / 2, fixture.height / 2, 40 + count - 1, 80, 120, 1));
@@ -216,9 +221,8 @@ TEST(ChroniclePresentation, CachedAdjacentStripsRetainOrderAfterMaterialChanges)
     ASSERT_TRUE(visual.strip_runs_cached);
     ASSERT_EQ(visual.strip_runs.size(), 3u);
 
-    RenderInfo info;
-    std::memset(&info, 0, sizeof(info));
-    float model[4][4] = {};
+    RenderInfo info = {};
+    float      model[4][4] = {};
     for (int axis = 0; axis < 4; ++axis) {
         model[axis][axis] = 1;
         info.view_scaled[axis][axis] = 1;
@@ -238,16 +242,16 @@ TEST(ChroniclePresentation, CachedAdjacentStripsRetainOrderAfterMaterialChanges)
         std::vector<Draw> draws;
         for (const auto &entry : list->entries) {
             if (const auto *mesh = std::get_if<gfx::detail::MeshEntry>(&entry)) {
-                draws.push_back({mesh->first_index, mesh->index_count, mesh->constants.diffuse[0]});
+                draws.push_back({.first_index = mesh->first_index, .index_count = mesh->index_count, .diffuse = mesh->constants.diffuse[0]});
             }
         }
         return draws;
     };
 
     const std::vector<Draw> expected_initial = {
-        {0, 6, 1.0f},
-        {6, 3, 0.5f},
-        {9, 3, 1.0f}
+        {.first_index = 0, .index_count = 6, .diffuse = 1.0f},
+        {.first_index = 6, .index_count = 3, .diffuse = 0.5f},
+        {.first_index = 9, .index_count = 3, .diffuse = 1.0f},
     };
     const auto first_draw = record_draws();
     ASSERT_EQ(first_draw.size(), expected_initial.size());
@@ -270,7 +274,7 @@ TEST(ChroniclePresentation, CachedAdjacentStripsRetainOrderAfterMaterialChanges)
     ASSERT_TRUE(visual.strip_runs.empty());
     const auto changed_draw = record_draws();
     ASSERT_EQ(changed_draw.size(), 4u);
-    const float expected_diffuse[] = {1.0f, 0.25f, 0.5f, 1.0f};
+    const std::array expected_diffuse = {1.0f, 0.25f, 0.5f, 1.0f};
     for (size_t i = 0; i < changed_draw.size(); i++) {
         EXPECT_EQ(changed_draw[i].first_index, i * 3);
         EXPECT_EQ(changed_draw[i].index_count, 3u);
@@ -278,3 +282,5 @@ TEST(ChroniclePresentation, CachedAdjacentStripsRetainOrderAfterMaterialChanges)
     }
     gfx::DestroyMesh(visual.mesh);
 }
+
+} // namespace dc::test

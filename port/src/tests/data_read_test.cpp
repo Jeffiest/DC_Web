@@ -1,6 +1,4 @@
 #include <gtest/gtest.h>
-#include <signal.h>
-#include <stdlib.h>
 
 #include <algorithm>
 #include <array>
@@ -12,24 +10,32 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "app/exitcodes.hpp"
 #include "audio/hdbank.hpp"
 #include "audio/sq.hpp"
+#include "data/data_read.hpp"
 #include "data_fixture.hpp"
 #include "dataalloc.hpp"
 #include "dataread.hpp"
-#include "dataread_port.hpp"
 #include "dataset.hpp"
-#include "exitcodes.hpp"
 #include "platform/audio.hpp"
 #include "platform/data_archive.hpp"
 #include "platform/paths.hpp"
 #include "platform_fixture.hpp"
+#include "render/texture_registry.hpp"
 #include "sound.hpp"
-#include "texture_port.hpp"
 
+namespace dc::test {
+
+using namespace dc::game;
+using namespace dc::app;
+using namespace dc::data;
+using namespace dc::platform;
+using namespace dc::render;
 using namespace datafix;
 
 namespace {
@@ -142,8 +148,8 @@ unsigned char *const           buffer = reinterpret_cast<unsigned char *>(buffer
 struct Mutable {
     std::string text;
 
-    explicit Mutable(const char *s)
-        : text(s) {}
+    explicit Mutable(const char *source)
+        : text(source) {}
 
     operator char *() {
         return text.data();
@@ -175,12 +181,7 @@ bool Equals(const void *data, const Bytes &expected) {
 }
 
 bool AllAre(const unsigned char *from, const unsigned char *to, unsigned char value) {
-    for (; from != to; from++) {
-        if (*from != value) {
-            return false;
-        }
-    }
-    return true;
+    return std::all_of(from, to, [value](unsigned char byte) { return byte == value; });
 }
 
 } // namespace
@@ -216,7 +217,7 @@ TEST(DataRead, Loadfile2ReadsExactSizeAndZeroFills) {
 }
 
 TEST(DataRead, ReadsStoredArchiveWithoutExtractedDirectory) {
-    fs::path dir = InstallStandardData("read_archive");
+    fs::path   dir = InstallStandardData("read_archive");
     const Disc disc = StandardDisc();
     dcdata::PackDirectory(dir / "data", dir / "data.zip");
     ASSERT_TRUE(DataArchivePresent(dir / "data"));
@@ -294,7 +295,7 @@ TEST(DataRead, ArchiveIntegrityUsesBaseAssetsBeforeNormalizedOverrides) {
     const Bytes    base = {1, 2, 3, 4};
     const Bytes    overlay = {5, 6};
     const Bytes    base_chr = {7, 8, 9};
-    Bytes overlay_chr(72);
+    Bytes          overlay_chr(72);
     std::memcpy(overlay_chr.data() + 4, "TIM2", 4);
     overlay_chr[10] = 1;
     overlay_chr[20] = 52;
@@ -526,7 +527,7 @@ TEST(DataArchive, RejectsPayloadWithWrongCrc) {
         archive.write(&byte, 1);
     }
     {
-        DataArchive archive(archive_path);
+        DataArchive               archive(archive_path);
         std::vector<std::uint8_t> output(4);
         ASSERT_FALSE(archive.Read(0, output));
     }
@@ -554,9 +555,9 @@ TEST(DataRead, Loadfile2FoldsCaseAndDevices) {
     Disc     disc = StandardDisc();
     int      size = -1;
 
-    const char *names[] = {"DUN/PACK/MainDat.PAC", "cdrom0:\\DUN\\PACK\\MAINDAT.PAC",
-                           "host:dun/pack/maindat.pac",
-                           "sim:/dun/pack/maindat.pac", "\\dun\\pack\\maindat.pac"};
+    constexpr std::array<const char *, 5> names = {"DUN/PACK/MainDat.PAC", R"(cdrom0:\DUN\PACK\MAINDAT.PAC)",
+                                                   "host:dun/pack/maindat.pac",
+                                                   "sim:/dun/pack/maindat.pac", R"(\dun\pack\maindat.pac)"};
     for (const char *name : names) {
         Clear();
         size = -1;
@@ -575,7 +576,7 @@ TEST(DataRead, Loadfile2FoldsCaseAndDevices) {
 
 TEST(DataRead, LoadfileMissingAsserts) {
     fs::path dir = InstallStandardData("read_assert");
-    int      size;
+    int      size = -1;
     KZ_ASSERT_EXIT([&] { LoadFile(Mutable("nothing/here.bin"), buffer, &size); }, kExitGameAssert);
     fs::remove_all(dir);
 }
@@ -615,7 +616,7 @@ TEST(DataRead, LoadfilebgCompletesSynchronously) {
     BG_READ_INFO *first = GetReadBGFile(0);
     ASSERT_TRUE(first && first->busy && first->id != 0 && first->done);
     ASSERT_TRUE(first->buffer == Quads(buffer) && first->size == 5000 && first->sectors == 3);
-    ASSERT_TRUE(std::strcmp(first->name, "DUN/PACK/MAINDAT.PAC") == 0);
+    ASSERT_TRUE(std::string_view(first->name) == "DUN/PACK/MAINDAT.PAC");
     ASSERT_TRUE(Equals(buffer, disc.files[0].data) && AllAre(buffer + 5000, buffer + 6144, 0));
     BG_READ_INFO *next = GetReadBGFile(1);
     ASSERT_TRUE(next && next->buffer == Quads(second) && next->size == 2047);
@@ -647,7 +648,7 @@ TEST(DataRead, PackLookupOnHost) {
     int      size = -1;
 
     Clear();
-    u_int *pack_data = reinterpret_cast<u_int *>(buffer);
+    auto *pack_data = reinterpret_cast<u_int *>(buffer);
     ASSERT_TRUE(LoadPackFile(Mutable("RMDAT/RMDAT1.PAK"), pack_data, &size) == 1);
     ASSERT_TRUE(size == static_cast<int>(pack.data.size()));
 
@@ -658,7 +659,7 @@ TEST(DataRead, PackLookupOnHost) {
 
     char  *name = nullptr;
     u_int *tex = GetPackFile(pack_data, 2, &name, &size);
-    ASSERT_TRUE(tex && std::strcmp(name, "tex.img") == 0 && size == 64 && Equals(tex, Pattern(64, 3)));
+    ASSERT_TRUE(tex && std::string_view(name) == "tex.img" && size == 64 && Equals(tex, Pattern(64, 3)));
     ASSERT_TRUE(GetPackFile(pack_data, 4, &name, &size) == nullptr);
 
     constexpr int max_files = 8;
@@ -666,7 +667,7 @@ TEST(DataRead, PackLookupOnHost) {
     auto          sizes = std::make_unique<int[]>(max_files);
     auto          names = std::make_unique<char *[]>(max_files);
     ASSERT_TRUE(GetPackFileExt(pack_data, Mutable("img"), files.get(), max_files, sizes.get(), names.get()) == 2);
-    ASSERT_TRUE(files[0] == tex && sizes[1] == 5 && std::strcmp(names[1], "face.IMG") == 0);
+    ASSERT_TRUE(files[0] == tex && sizes[1] == 5 && std::string_view(names[1]) == "face.IMG");
     ASSERT_TRUE(GetPackFileExt(pack_data, Mutable("IMG"), files.get(), 1, nullptr, nullptr) == 1);
 
     // The table is inside the sector-padded read, but the member's own range must still fit it.
@@ -697,14 +698,22 @@ TEST(DataRead, NestedPackLookupUsesEachMembersExactCapacity) {
     fs::path dir = InstallStandardData("read_nested_pack");
     Bytes    info = Pattern(37, 21);
     Bytes    model = Pattern(300, 22);
-    Bytes    leaf = MakePack({{"info.cfg", info}, {"trap01.mds", model}});
-    Bytes    middle = MakePack({{"trap01.chr", leaf}, {"sibling.bin", Pattern(1024, 23)}});
-    Bytes    outer = MakePack({{"maindat.pac", middle}});
+    Bytes    leaf = MakePack({
+        {"info.cfg",   info },
+        {"trap01.mds", model}
+    });
+    Bytes    middle = MakePack({
+        {"trap01.chr", leaf},
+        {"sibling.bin", Pattern(1024, 23)}
+    });
+    Bytes    outer = MakePack({
+        {"maindat.pac", middle}
+    });
     WriteBytes(dir / "data/nested.pac", outer);
     InitCDFile();
 
     Clear();
-    int size = 0;
+    int   size = 0;
     auto *outer_pack = reinterpret_cast<u_int *>(buffer);
     ASSERT_EQ(LoadFile2(Mutable("nested.pac"), buffer, &size, 0), 1);
     ASSERT_EQ(size, static_cast<int>(outer.size()));
@@ -720,7 +729,7 @@ TEST(DataRead, NestedPackLookupUsesEachMembersExactCapacity) {
     auto names = std::make_unique<char *[]>(1);
     ASSERT_EQ(GetPackFileExt(outer_pack, Mutable("pac"), files.get(), 1, sizes.get(), names.get()), 1);
     auto *middle_pack = files[0];
-    ASSERT_EQ(std::strcmp(names[0], "maindat.pac"), 0);
+    ASSERT_EQ(std::string_view(names[0]), "maindat.pac");
     ASSERT_EQ(sizes[0], static_cast<int>(middle.size()));
 
     auto *leaf_pack = GetPackFile(middle_pack, Mutable("trap01.chr"), &size);
@@ -732,10 +741,10 @@ TEST(DataRead, NestedPackLookupUsesEachMembersExactCapacity) {
     ASSERT_EQ(size, static_cast<int>(info.size()));
     ASSERT_TRUE(Equals(info_file, info));
 
-    char  *name = nullptr;
-    auto  *model_file = GetPackFile(leaf_pack, 1, &name, &size);
+    char *name = nullptr;
+    auto *model_file = GetPackFile(leaf_pack, 1, &name, &size);
     ASSERT_NE(model_file, nullptr);
-    ASSERT_EQ(std::strcmp(name, "trap01.mds"), 0);
+    ASSERT_EQ(std::string_view(name), "trap01.mds");
     ASSERT_EQ(size, static_cast<int>(model.size()));
     ASSERT_TRUE(Equals(model_file, model));
     ASSERT_TRUE(DataReadSourceRange(model_file, model.size(), source));
@@ -767,8 +776,8 @@ TEST(DataRead, NestedPackLookupUsesEachMembersExactCapacity) {
 
     // A malformed child entry may fit in its parent's remaining bytes, but cannot extend beyond
     // the exact size of the child archive returned above.
-    auto               *leaf_bytes = reinterpret_cast<unsigned char *>(leaf_pack);
-    const std::uint32_t too_far = static_cast<std::uint32_t>(leaf_size + 16);
+    auto      *leaf_bytes = reinterpret_cast<unsigned char *>(leaf_pack);
+    const auto too_far = static_cast<std::uint32_t>(leaf_size + 16);
     for (int byte = 0; byte < 4; ++byte) {
         leaf_bytes[72 + byte] = static_cast<unsigned char>(too_far >> (byte * 8));
     }
@@ -790,6 +799,106 @@ TEST(DataRead, NestedPackLookupUsesEachMembersExactCapacity) {
     EXPECT_FALSE(DataReadSourceRange(copied_member, 1, source));
     copied_member = copied_arena.Alloc(1);
     EXPECT_FALSE(DataReadSourceRange(copied_member, 1, source));
+    fs::remove_all(dir);
+}
+
+TEST(DataRead, ReadOverAnotherBuffersMemberReplacesItsSource) {
+    fs::path dir = InstallStandardData("read_over_member");
+    Bytes    head = Pattern(64, 30);
+    Bytes    lead = Pattern(128, 31);
+    Bytes    weapon = Pattern(300, 32);
+    // Larger than the member it covers, so a stale member record would be the tighter match.
+    Bytes portrait = Pattern(600, 33);
+    WriteBytes(dir / "data/menu.pac", MakePack({
+                                          {"head.bin",   head  },
+                                          {"lead.bin",   lead  },
+                                          {"weapon.chr", weapon}
+    }));
+    WriteBytes(dir / "data/portrait.bin", portrait);
+    InitCDFile();
+
+    Clear();
+    int   size = 0;
+    auto *pack = reinterpret_cast<u_int *>(buffer);
+    ASSERT_EQ(LoadFile2(Mutable("menu.pac"), buffer, &size, 0), 1);
+    auto *head_file = reinterpret_cast<unsigned char *>(GetPackFile(pack, Mutable("head.bin"), &size));
+    auto *lead_file = reinterpret_cast<unsigned char *>(GetPackFile(pack, Mutable("lead.bin"), &size));
+    auto *weapon_file = reinterpret_cast<unsigned char *>(GetPackFile(pack, Mutable("weapon.chr"), &size));
+    ASSERT_NE(head_file, nullptr);
+    ASSERT_NE(lead_file, nullptr);
+    ASSERT_NE(weapon_file, nullptr);
+    ASSERT_LE(head_file + head.size(), lead_file);
+    ASSERT_LE(lead_file + lead.size(), weapon_file);
+    DataReadSource source;
+    ASSERT_TRUE(DataReadSourceRange(weapon_file, weapon.size(), source));
+    EXPECT_EQ(source.member, "weapon.chr");
+
+    // A read into another buffer, starting inside one member and covering the next: those bytes
+    // now come from that file, as the shop's portrait does over the weapon menu's pack.
+    unsigned char *portrait_file = lead_file + 64;
+    ASSERT_LE(weapon_file + weapon.size(), portrait_file + portrait.size());
+    ASSERT_EQ(LoadFile2(Mutable("portrait.bin"), portrait_file, &size, 0), 1);
+    ASSERT_TRUE(DataReadSourceRange(weapon_file, weapon.size(), source));
+    EXPECT_EQ(source.path, "portrait.bin");
+    EXPECT_TRUE(source.member.empty());
+    EXPECT_EQ(source.offset, static_cast<std::size_t>(weapon_file - portrait_file));
+
+    // The pack keeps the bytes in front of the read, and only those.
+    ASSERT_TRUE(DataReadSourceRange(lead_file, 64, source));
+    EXPECT_EQ(source.member, "lead.bin");
+    EXPECT_FALSE(DataReadSourceRange(lead_file, lead.size(), source));
+    EXPECT_NE(GetPackFile(pack, Mutable("head.bin"), &size), nullptr);
+    EXPECT_EQ(GetPackFile(pack, Mutable("lead.bin"), &size), nullptr);
+    EXPECT_EQ(GetPackFile(pack, Mutable("weapon.chr"), &size), nullptr);
+    fs::remove_all(dir);
+}
+
+TEST(DataRead, CopyIntoOneArenaReplacesAnotherArenasCopyBeneathIt) {
+    fs::path dir = InstallStandardData("read_copy_over_copy");
+    Bytes    weapon = Pattern(96, 40);
+    Bytes    atla = Pattern(400, 41);
+    WriteBytes(dir / "data/menu.pac", MakePack({
+                                          {"weapon.img", weapon},
+                                          {"atla.img",   atla  }
+    }));
+    InitCDFile();
+
+    Clear();
+    int   size = 0;
+    auto *pack = reinterpret_cast<u_int *>(buffer);
+    ASSERT_EQ(LoadFile2(Mutable("menu.pac"), buffer, &size, 0), 1);
+    auto          *weapon_file = GetPackFile(pack, Mutable("weapon.img"), &size);
+    auto          *atla_file = GetPackFile(pack, Mutable("atla.img"), &size);
+    DataReadSource weapon_source;
+    DataReadSource atla_source;
+    ASSERT_TRUE(DataReadSourceRange(weapon_file, weapon.size(), weapon_source));
+    ASSERT_TRUE(DataReadSourceRange(atla_file, atla.size(), atla_source));
+
+    // Two arenas over the same memory, as the weapon menu's and the Atla pickup's both lie in read_buffer.
+    std::array<u_long128, 64> shared{};
+    CDataAlloc2<1>            menu_arena;
+    CDataAlloc2<1>            pickup_arena;
+    for (CDataAlloc2<1> *arena : {&menu_arena, &pickup_arena}) {
+        arena->base = reinterpret_cast<u_char *>(shared.data());
+        arena->buffer = arena->base;
+        arena->used = 0;
+        arena->limit = static_cast<int>(shared.size());
+    }
+    menu_arena.Alloc(4);
+    auto *weapon_copy = menu_arena.Alloc((static_cast<int>(weapon.size()) >> 4) + 1);
+    std::memcpy(weapon_copy, weapon_file, weapon.size());
+    ASSERT_TRUE(DataReadRegisterCopiedSource(weapon_copy, weapon.size(), &menu_arena, weapon_source));
+
+    // The pickup's larger copy starts in front of the menu's and covers it.
+    auto *atla_copy = pickup_arena.Alloc((static_cast<int>(atla.size()) >> 4) + 1);
+    ASSERT_LT(atla_copy, weapon_copy);
+    std::memcpy(atla_copy, atla_file, atla.size());
+    ASSERT_TRUE(DataReadRegisterCopiedSource(atla_copy, atla.size(), &pickup_arena, atla_source));
+
+    DataReadSource source;
+    ASSERT_TRUE(DataReadSourceRange(weapon_copy, 16, source));
+    EXPECT_EQ(source.member, "atla.img");
+    EXPECT_EQ(source.offset, atla_source.offset + static_cast<std::size_t>(weapon_copy - atla_copy));
     fs::remove_all(dir);
 }
 
@@ -848,15 +957,15 @@ TEST(DataRead, WritefileGoesToSaveHost0) {
 
 TEST(DataRead, PathsFromArguments) {
     PathTestScope paths;
-    fs::path    dir = TempDir("paths_args");
-    std::string data = (dir / "d").string();
-    std::string save = "--save=" + (dir / "s").string();
-    const char *argv[] = {"darkcloud", "--data", data.c_str(), "--frames",
-                          "3", save.c_str(), "--database", nullptr};
-    int         argc = PathsConsumeArgs(7, argv);
+    fs::path      dir = TempDir("paths_args");
+    std::string   data = (dir / "d").string();
+    std::string   save = "--save=" + (dir / "s").string();
+    const char   *argv[] = {"darkcloud", "--data", data.c_str(), "--frames",
+                            "3", save.c_str(), "--database", nullptr};
+    int           argc = PathsConsumeArgs(7, argv);
     ASSERT_TRUE(argc == 4);
-    ASSERT_TRUE(std::strcmp(argv[0], "darkcloud") == 0 && std::strcmp(argv[1], "--frames") == 0);
-    ASSERT_TRUE(std::strcmp(argv[2], "3") == 0 && std::strcmp(argv[3], "--database") == 0 && argv[4] == nullptr);
+    ASSERT_TRUE(std::string_view(argv[0]) == "darkcloud" && std::string_view(argv[1]) == "--frames");
+    ASSERT_TRUE(std::string_view(argv[2]) == "3" && std::string_view(argv[3]) == "--database" && argv[4] == nullptr);
     ASSERT_TRUE(PathsDataRoot() == dir / "d");
     ASSERT_TRUE(PathsSaveRoot() == dir / "s" && fs::is_directory(dir / "s"));
     fs::remove_all(dir);
@@ -864,7 +973,7 @@ TEST(DataRead, PathsFromArguments) {
 
 TEST(DataRead, PathsFromEnvironment) {
     PathTestScope paths;
-    fs::path dir = TempDir("paths_env");
+    fs::path      dir = TempDir("paths_env");
     dc::test::SetEnv("DC_DATA", (dir / "env_data"), 1);
     dc::test::SetEnv("DC_SAVE", (dir / "env_save"), 1);
     ASSERT_TRUE(PathsDataRoot() == dir / "env_data");
@@ -876,7 +985,7 @@ TEST(DataRead, PathsFromEnvironment) {
 
 TEST(DataRead, PathsDefaultToWorkingDirectory) {
     PathTestScope paths;
-    fs::path dir = TempDir("paths_cwd");
+    fs::path      dir = TempDir("paths_cwd");
     dc::test::UnsetEnv("DC_DATA");
     dc::test::UnsetEnv("DC_SAVE");
     fs::create_directories(dir / "data");
@@ -1124,3 +1233,5 @@ TEST(DataRead, MetadataSnapshotsPreserveImgOrdinalsInsidePackMembers) {
     EXPECT_FALSE(PortTextureEntryIndexFromSource(invalid).has_value());
     EXPECT_EQ(DataReadResolvedMetadataSnapshot("img.pak").get(), parent.get());
 }
+
+} // namespace dc::test
