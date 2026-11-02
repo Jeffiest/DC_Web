@@ -54,7 +54,7 @@ recovered, as `CCharacter::ClothStep` does with `PortImagePointer`) fixes the ro
 
 | site | function | state | class | expression | origin | use |
 |---|---|---|---|---|---|---|
-| port/src/game/dataset.cpp:463 | dc::game::LoadMDSFile | port | escapes | `reinterpret_cast < std :: uintptr_t >(data)` | parameter | argument: println |
+| port/src/game/dataset.cpp:469 | dc::game::LoadMDSFile | port | escapes | `reinterpret_cast < std :: uintptr_t >(data)` | parameter | argument: println |
 | port/src/game/edit_in.cpp:1719 | dc::game::LoadData | port | escapes | `reinterpret_cast < std :: intptr_t >(func_point[i].parts)` | field | argument to unknown: operator[] |
 | port/src/game/editloop.cpp:3429 | dc::game::MainEditMode | port | escapes | `reinterpret_cast < intptr_t >(& EdWind)` | image | store: Chara->wind |
 | port/src/game/editloop.cpp:5061 | dc::game::LoadObjectParts | port | escapes | `reinterpret_cast < intptr_t >(parts->frame[level])` | field | store: parts->preview_frame |

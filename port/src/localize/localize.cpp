@@ -22,9 +22,9 @@
 #include <unordered_map>
 #include <utility>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/data_read.hpp"
 #include "dataread.hpp"
+#include "dcdata.hpp"
 #include "mainselect.hpp"
 #include "options/menu_option.hpp"
 #include "platform/config.hpp"

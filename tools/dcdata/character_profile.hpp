@@ -13,6 +13,8 @@
 #include <string_view>
 #include <vector>
 
+#include "dcdata.hpp"
+
 namespace dcdata::profile {
 
 enum class Arg {
@@ -367,10 +369,7 @@ inline std::vector<Found> ReadCommands(std::string_view raw, std::string_view te
 }
 
 inline bool EndsWithFolded(std::string_view text, std::string_view suffix) {
-    return text.size() >= suffix.size() &&
-           std::equal(suffix.begin(), suffix.end(), text.end() - suffix.size(), [](char a, char b) {
-               return (a >= 'A' && a <= 'Z' ? a - 'A' + 'a' : a) == b;
-           });
+    return text.size() >= suffix.size() && EqualsFolded(text.substr(text.size() - suffix.size()), suffix);
 }
 
 // The typed commands of a character configuration or cloth file, as JSON, or "null" for a file the

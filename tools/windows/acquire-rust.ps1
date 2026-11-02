@@ -93,8 +93,8 @@ $cargo = Join-Path $prefix 'bin/cargo.exe'
 & $cargo fetch --locked --manifest-path (Join-Path $source 'tools/kazarov/Cargo.toml')
 if ($LASTEXITCODE) { throw 'Cargo dependency fetch failed' }
 $cxxbridgeArchive = Get-VerifiedArchive 'cxxbridge-1.0.205-windows-x64.zip' `
-    'https://github.com/Plarpoon/Kazarov/releases/download/deps-1/cxxbridge-1.0.205-windows-x64.zip' `
-    '8C9529BFBAAF423DBD3F2F9583C19EA6CA92E1E09D2E7B0C474799F57AA39A21'
+    "$KazarovDeps/cxxbridge-1.0.205-windows-x64.zip" `
+    '01E40671475C423D661EADEB5BA4C764B7C10E73C536DB010752FC756076B6F6'
 if (!(Test-Path -LiteralPath (Join-Path $prefix 'bin/cxxbridge.exe'))) {
     Expand-Archive -LiteralPath $cxxbridgeArchive -DestinationPath (Join-Path $prefix 'bin') -Force
 }

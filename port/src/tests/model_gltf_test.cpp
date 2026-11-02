@@ -18,9 +18,9 @@
 #include <string>
 #include <vector>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/data_read.hpp"
 #include "data/model_gltf.hpp"
+#include "dcdata.hpp"
 #include "platform/paths.hpp"
 #include "platform_fixture.hpp"
 

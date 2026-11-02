@@ -24,9 +24,9 @@
 #include <utility>
 #include <vector>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/model_gltf.hpp"
 #include "dataalloc.hpp"
+#include "dcdata.hpp"
 #include "platform/data_archive.hpp"
 #include "platform/load_work_profile.hpp"
 #include "platform/paths.hpp"

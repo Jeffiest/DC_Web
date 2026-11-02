@@ -14,8 +14,8 @@
 #include <string_view>
 #include <utility>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/data_read.hpp"
+#include "dcdata.hpp"
 #include "localize/localize.hpp"
 #include "platform/load_work_profile.hpp"
 #include "platform/paths.hpp"

@@ -180,11 +180,11 @@ elseif(EMSCRIPTEN)
     dc_web_port(dc_port)
 endif()
 target_link_libraries(dc_port PRIVATE dc_options SDL3::SDL3 Vulkan::Vulkan nlohmann_json::nlohmann_json fastgltf::fastgltf kz_port_headers)
-# port/src, the generated headers and the stb directories: captionfont.cpp rasterizes with
-# stb_truetype and platform/png_image.cpp decodes with stb_image, which Kazarov stages (or fetches)
-# for dc_host.
+# port/src, the generated headers, dcdata's header-only core and the stb directories: captionfont.cpp
+# rasterizes with stb_truetype and platform/png_image.cpp decodes with stb_image, which Kazarov stages
+# (or fetches) for dc_host.
 function(dc_port_includes target)
-    target_include_directories(${target} PRIVATE ${PORT_DIR} ${SHADER_HEADER_DIR})
+    target_include_directories(${target} PRIVATE ${PORT_DIR} ${SHADER_HEADER_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
     get_target_property(dc_host_includes dc_host INCLUDE_DIRECTORIES)
     foreach(include_dir IN LISTS dc_host_includes)
         if(EXISTS ${include_dir}/stb_truetype.h OR EXISTS ${include_dir}/stb_image.h)
@@ -227,7 +227,7 @@ endif()
 function(dc_link_game target)
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:dc_port> $<TARGET_OBJECTS:dc_ps2>)
     target_link_libraries(${target} PRIVATE dc_options dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan fastgltf::fastgltf)
-    target_include_directories(${target} PRIVATE ${PORT_DIR})
+    target_include_directories(${target} PRIVATE ${PORT_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
     target_compile_options(${target} PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-label
         -Wno-overloaded-virtual -Wno-unused-function)
     target_link_options(${target} PRIVATE ${DC_LINK_OPTIONS})

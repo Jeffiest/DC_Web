@@ -20,9 +20,10 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <utility>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/data_read.hpp"
+#include "dcdata.hpp"
 
 namespace dc::data::model_gltf {
 namespace {
@@ -57,20 +58,43 @@ State &Shared() {
     return state;
 }
 
+// The kinds of source models.json indexes that a bundle can rebuild.
+enum class SourceKind {
+    Model,
+    Animations,
+    Weights,
+    BindPoses,
+    MotionChannels,
+    Other
+};
+
+SourceKind KindOf(const Json &entry) {
+    const std::string kind = entry.value("kind", "");
+    if (kind == "model") {
+        return SourceKind::Model;
+    }
+    if (kind == "animations") {
+        return SourceKind::Animations;
+    }
+    if (kind == "weights") {
+        return SourceKind::Weights;
+    }
+    if (kind == "bind_poses") {
+        return SourceKind::BindPoses;
+    }
+    if (kind == "motion_channels") {
+        return SourceKind::MotionChannels;
+    }
+    return SourceKind::Other;
+}
+
+bool IsMotion(SourceKind kind) {
+    return kind == SourceKind::Animations || kind == SourceKind::MotionChannels;
+}
+
 // Kazarov names sources as the disc spells them; the port's loaders fold paths as the game does.
 std::string Key(std::string_view alias) {
     return dcdata::FoldPath(alias);
-}
-
-void LoadIndex(State &state);
-
-// Reads the index, again when the data has been indexed again since.
-void Refresh(State &state) {
-    // Reading the index may index the data, so the generation is taken after.
-    if (!state.indexed || state.generation != DataReadGeneration()) {
-        LoadIndex(state);
-        state.generation = DataReadGeneration();
-    }
 }
 
 // Forgets everything read from the data, with the state locked.
@@ -118,6 +142,15 @@ void LoadIndex(State &state) {
     }
     for (const auto &[alias, entry] : index.items()) {
         state.index.emplace(Key(alias), entry);
+    }
+}
+
+// Reads the index, again when the data has been indexed again since.
+void Refresh(State &state) {
+    // Reading the index may index the data, so the generation is taken after.
+    if (!state.indexed || state.generation != DataReadGeneration()) {
+        LoadIndex(state);
+        state.generation = DataReadGeneration();
     }
 }
 
@@ -214,22 +247,7 @@ private:
 
 // The CRC-32 (IEEE) of some bytes, as models.json records each source's.
 std::uint32_t Crc32(std::span<const std::uint8_t> bytes) {
-    static const std::array<std::uint32_t, 256> table = [] {
-        std::array<std::uint32_t, 256> out{};
-        for (std::uint32_t n = 0; n < 256; n++) {
-            std::uint32_t c = n;
-            for (int k = 0; k < 8; k++) {
-                c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            }
-            out[n] = c;
-        }
-        return out;
-    }();
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::uint8_t b : bytes) {
-        crc = table[(crc ^ b) & 0xFF] ^ (crc >> 8);
-    }
-    return crc ^ 0xFFFFFFFFu;
+    return ~dcdata::ZipCrcUpdate(0xFFFFFFFFu, bytes);
 }
 
 std::uint32_t U32(const Json &value) {
@@ -490,6 +508,13 @@ const Json &FromSource(const Json &list, std::string_view alias) {
     throw std::runtime_error("bundle lacks its source");
 }
 
+// The transform channel types of a MOT.
+enum class ChannelType : std::int32_t {
+    Rotation = 0,
+    Scale = 1,
+    Translation = 2
+};
+
 // One retail key being rebuilt: its reserved and value words.
 struct RetailKey {
     std::array<std::uint32_t, 3> reserved{};
@@ -582,26 +607,27 @@ void AddClip(Tracks &tracks, const Bundle &bundle, const Json &model, std::size_
             continue;
         }
         const auto [frame, helper] = found->second;
-        std::int32_t type;
+        ChannelType type;
         switch (channel.path) {
             case fastgltf::AnimationPath::Rotation:
-                type = 0;
+                type = ChannelType::Rotation;
                 break;
             case fastgltf::AnimationPath::Scale:
                 // A helper's scale keys only undo its authored scale.
                 if (helper) {
                     continue;
                 }
-                type = 1;
+                type = ChannelType::Scale;
                 break;
             case fastgltf::AnimationPath::Translation:
-                type = 2;
+                type = ChannelType::Translation;
                 break;
             default:
                 continue;
         }
         // A rebaked frame's rotation and scale clips hold its pose, not its keys; the sidecar keeps those.
-        if (whole.contains({frame, type}) || (type != 2 && model_frames[frame].value("rebaked", false))) {
+        if (whole.contains({frame, std::to_underlying(type)}) ||
+            (type != ChannelType::Translation && model_frames[frame].value("rebaked", false))) {
             continue;
         }
         const fastgltf::AnimationSampler &sampler = animation.samplers[channel.samplerIndex];
@@ -610,7 +636,7 @@ void AddClip(Tracks &tracks, const Bundle &bundle, const Json &model, std::size_
                                          [&](float time) { times.push_back(time); });
         // The clip gives back the keys inside its action; the sidecar keeps those on its ends, and
         // those the clip can't give back bit for bit, which win.
-        Track &track = TrackOf(tracks, frame, type, 0);
+        Track &track = TrackOf(tracks, frame, std::to_underlying(type), 0);
         auto   inside = [&](std::size_t k) -> RetailKey   *{
             const std::uint32_t at = start + static_cast<std::uint32_t>(std::lround(times.at(k) * 30.0f));
             if (at <= start || at >= end || track.keys.contains(at)) {
@@ -618,7 +644,7 @@ void AddClip(Tracks &tracks, const Bundle &bundle, const Json &model, std::size_
             }
             return &track.keys[at];
         };
-        if (type == 0) {
+        if (type == ChannelType::Rotation) {
             fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
                 bundle.asset, bundle.asset.accessors[sampler.outputAccessor], [&](fastgltf::math::fvec4 q, std::size_t k) {
                     if (RetailKey *key = inside(k)) {
@@ -647,7 +673,50 @@ void AddResidue(Tracks &tracks, Whole &whole, const Json &channels) {
     }
 }
 
-std::vector<std::uint8_t> Write(Tracks &tracks);
+// Writes rebuilt tracks as a MOT. Its channels keep the disc's key frames, and its order, which the
+// sidecar lists: the game reads every vertex channel of a frame at the key of the motion's first
+// channel, and blends towards keys by frame.
+std::vector<std::uint8_t> Write(Tracks &tracks) {
+    std::vector<const Track *> channels;
+    std::set<TrackId>          listed;
+    for (const TrackId &id : tracks.order) {
+        if (listed.insert(id).second) {
+            channels.push_back(&tracks.by_id.at(id));
+        }
+    }
+    // A sidecar that lists only the channels keeping keys leaves out a clip's channel whose keys all
+    // sit on its actions' ends; those follow in frame order.
+    for (const auto &[id, track] : tracks.by_id) {
+        if (!listed.contains(id) && !track.keys.empty()) {
+            channels.push_back(&track);
+        }
+    }
+    Record      record;
+    std::size_t at = 0;
+    for (std::size_t c = 0; c < channels.size(); c++) {
+        const Track &track = *channels[c];
+        record.Word(at, track.frame);
+        record.Word(at + 4, track.target);
+        record.Word(at + 8, static_cast<std::uint32_t>(track.type));
+        record.Word(at + 12, track.reserved[0]);
+        record.Word(at + 16, static_cast<std::uint32_t>(track.keys.size()));
+        record.Word(at + 20, c + 1 < channels.size() ? static_cast<std::uint32_t>(32 + track.keys.size() * 32) : 0);
+        record.Word(at + 24, track.reserved[1]);
+        record.Word(at + 28, track.reserved[2]);
+        at += 32;
+        for (const auto &[frame, key] : track.keys) {
+            record.Word(at, frame);
+            for (std::size_t w = 0; w < 3; w++) {
+                record.Word(at + 4 + w * 4, key.reserved[w]);
+            }
+            for (std::size_t w = 0; w < 4; w++) {
+                record.Word(at + 16 + w * 4, key.value[w]);
+            }
+            at += 32;
+        }
+    }
+    return record.Take();
+}
 
 // Rebuilds a character's MOT from its actions: each action's clip for the transforms, the
 // sidecar's channels for everything else, and the retail keys of frames glTF can't give back.
@@ -698,52 +767,6 @@ std::vector<std::uint8_t> Motion(State &state, const Bundle &own, const Json &re
     return Write(tracks);
 }
 
-// Writes rebuilt tracks as a MOT. Its channels keep the disc's key frames, and its order, which the
-// sidecar lists: the game reads every vertex channel of a frame at the key of the motion's first
-// channel, and blends towards keys by frame. Saget's vertex animation in the attract movie, rebuilt in
-// another order, wrote past his mesh and crashed its draw.
-std::vector<std::uint8_t> Write(Tracks &tracks) {
-    std::vector<const Track *> channels;
-    std::set<TrackId>          listed;
-    for (const TrackId &id : tracks.order) {
-        if (listed.insert(id).second) {
-            channels.push_back(&tracks.by_id.at(id));
-        }
-    }
-    // A sidecar from before the order was kept lists only the channels keeping keys, and leaves out a
-    // clip's channel whose keys all sit on its actions' ends.
-    for (const auto &[id, track] : tracks.by_id) {
-        if (!listed.contains(id) && !track.keys.empty()) {
-            channels.push_back(&track);
-        }
-    }
-    Record      record;
-    std::size_t at = 0;
-    for (std::size_t c = 0; c < channels.size(); c++) {
-        const Track &track = *channels[c];
-        record.Word(at, track.frame);
-        record.Word(at + 4, track.target);
-        record.Word(at + 8, static_cast<std::uint32_t>(track.type));
-        record.Word(at + 12, track.reserved[0]);
-        record.Word(at + 16, static_cast<std::uint32_t>(track.keys.size()));
-        record.Word(at + 20, c + 1 < channels.size() ? static_cast<std::uint32_t>(32 + track.keys.size() * 32) : 0);
-        record.Word(at + 24, track.reserved[1]);
-        record.Word(at + 28, track.reserved[2]);
-        at += 32;
-        for (const auto &[frame, key] : track.keys) {
-            record.Word(at, frame);
-            for (std::size_t w = 0; w < 3; w++) {
-                record.Word(at + 4 + w * 4, key.reserved[w]);
-            }
-            for (std::size_t w = 0; w < 4; w++) {
-                record.Word(at + 16 + w * 4, key.value[w]);
-            }
-            at += 32;
-        }
-    }
-    return record.Take();
-}
-
 // Rebuilds a motion a scene's own configuration links to it, published beside the scene: its
 // clip, named after the motion, covers it from frame 0, and the sidecar keeps the rest.
 std::vector<std::uint8_t> SceneMotion(const Bundle &bundle, std::string_view alias) {
@@ -784,12 +807,12 @@ const Json &ModelOf(const Bundle &bundle, const Json &entry) {
 std::unique_ptr<std::vector<std::uint8_t>> Build(State &state, std::string_view alias, const Json &entry) {
     const std::shared_ptr<const Bundle> holder = LoadBundle(state, entry.at("bundle").get<std::string>());
     const Bundle                       &bundle = *holder;
-    const std::string                  &kind = entry.at("kind").get_ref<const std::string &>();
+    const SourceKind                    kind = KindOf(entry);
     const bool                          character = bundle.sidecar.value("kind", "") == "character";
     auto                                bytes = [](std::vector<std::uint8_t> value) {
         return std::make_unique<std::vector<std::uint8_t>>(std::move(value));
     };
-    if (kind == "model") {
+    if (kind == SourceKind::Model) {
         return bytes(Scene(bundle, ModelOf(bundle, entry)));
     }
     // A motion is as long as the disc's, its tail zeros.
@@ -797,20 +820,26 @@ std::unique_ptr<std::vector<std::uint8_t>> Build(State &state, std::string_view 
         motion.resize(std::max<std::size_t>(motion.size(), entry.value("size", std::size_t{0})));
         return motion;
     };
-    if (character && kind == "animations") {
-        return bytes(padded(Motion(state, bundle, bundle.sidecar.at("resources").at(kind).at(entry.at("index").get<std::size_t>()))));
+    // A character's sidecar lists its resources by kind; the entry gives its index there.
+    auto resource = [&](const char *list) -> const Json & {
+        return bundle.sidecar.at("resources").at(list).at(entry.at("index").get<std::size_t>());
+    };
+    if (character && kind == SourceKind::Animations) {
+        return bytes(padded(Motion(state, bundle, resource("animations"))));
     }
-    if (character && (kind == "weights" || kind == "bind_poses")) {
-        const Json &resource = bundle.sidecar.at("resources").at(kind).at(entry.at("index").get<std::size_t>());
-        return bytes(kind == "weights" ? Channels(Pointers(resource.at("channels"))) : Matrices(resource.at("matrices")));
+    if (character && kind == SourceKind::Weights) {
+        return bytes(Channels(Pointers(resource("weights").at("channels"))));
     }
-    if (kind == "weights") {
+    if (character && kind == SourceKind::BindPoses) {
+        return bytes(Matrices(resource("bind_poses").at("matrices")));
+    }
+    if (kind == SourceKind::Weights) {
         return bytes(Channels(Pointers(FromSource(bundle.sidecar.at("weights"), alias).at("channels"))));
     }
-    if (kind == "bind_poses") {
+    if (kind == SourceKind::BindPoses) {
         return bytes(Matrices(FromSource(bundle.sidecar.at("bind_poses"), alias).at("matrices")));
     }
-    if (kind == "motion_channels") {
+    if (kind == SourceKind::MotionChannels) {
         return bytes(padded(SceneMotion(bundle, alias)));
     }
     return nullptr;
@@ -843,8 +872,7 @@ const std::vector<std::uint8_t> *RebuildLocked(State &state, std::string_view al
     try {
         bytes = Build(state, alias, entry->second);
         // Models, weights and bind poses come back as the disc has them, or not at all.
-        const std::string kind = entry->second.value("kind", "");
-        if (bytes != nullptr && kind != "animations" && kind != "motion_channels" && entry->second.contains("crc32") &&
+        if (bytes != nullptr && !IsMotion(KindOf(entry->second)) && entry->second.contains("crc32") &&
             Crc32(*bytes) != entry->second["crc32"].get<std::uint32_t>()) {
             throw std::runtime_error("rebuilt bytes don't match the disc's");
         }
@@ -878,18 +906,19 @@ const std::vector<std::uint8_t> *Rebuild(std::string_view alias) {
 
 namespace {
 
+// A pack entry: a 64-byte name, then the offset of its data, its size and the offset of the next
+// entry, each counted from the entry's start.
+constexpr std::size_t kPackDataOffset = 64;
+constexpr std::size_t kPackSize = 68;
+constexpr std::size_t kPackNext = 72;
+constexpr std::size_t kPackEntryHeader = 76;
+
 // The place of one pack member in a buffer: its entry, its bytes and the room before the next entry.
 struct Place {
     std::size_t entry;
     std::size_t start;
     std::size_t room;
 };
-
-std::uint32_t Read32(std::span<const std::uint8_t> bytes, std::size_t at) {
-    std::uint32_t value = 0;
-    std::memcpy(&value, bytes.data() + at, 4);
-    return value;
-}
 
 // Finds a member in the pack spanning `bytes`, by name or, after "#entry:", by position.
 std::optional<Place> Member(std::span<const std::uint8_t> bytes, std::string_view name) {
@@ -899,16 +928,16 @@ std::optional<Place> Member(std::span<const std::uint8_t> bytes, std::string_vie
         name = name.substr(0, marker);
     }
     std::size_t at = 0;
-    for (std::size_t index = 0; at + 76 <= bytes.size() && bytes[at] != 0; index++) {
-        const std::size_t offset = Read32(bytes, at + 64);
-        const std::size_t size = Read32(bytes, at + 68);
-        const std::size_t next = Read32(bytes, at + 72);
-        if (offset < 76 || next < 76 || next > bytes.size() - at || offset > next) {
+    for (std::size_t index = 0; at + kPackEntryHeader <= bytes.size() && bytes[at] != 0; index++) {
+        const std::size_t offset = dcdata::Le32(bytes.data() + at + kPackDataOffset);
+        const std::size_t size = dcdata::Le32(bytes.data() + at + kPackSize);
+        const std::size_t next = dcdata::Le32(bytes.data() + at + kPackNext);
+        if (offset < kPackEntryHeader || next < kPackEntryHeader || next > bytes.size() - at || offset > next) {
             return std::nullopt;
         }
         const char *entry_name = reinterpret_cast<const char *>(bytes.data() + at);
         const bool  match = wanted ? index == *wanted
-                                   : Key(std::string_view(entry_name, strnlen(entry_name, 64))) == Key(name);
+                                   : Key(std::string_view(entry_name, strnlen(entry_name, kPackDataOffset))) == Key(name);
         if (match) {
             // A converted member may have been emptied from the data; its room remains.
             return Place{at, at + offset, std::max(next - offset, size)};
@@ -917,10 +946,6 @@ std::optional<Place> Member(std::span<const std::uint8_t> bytes, std::string_vie
     }
     return std::nullopt;
 }
-
-} // namespace
-
-namespace {
 
 // Writes one source back where the disc has it in `bytes`: each "/member" of `rest` enters a pack,
 // "#offset:n" a scene inside the file or member.
@@ -972,11 +997,9 @@ void SpliceOne(State &state, const std::string &alias, const Json &entry, const 
         }
         return;
     }
-    // A motion goes in only as the disc has it. The sidecar doesn't yet keep the order of a motion's
-    // channels, and the game reads every vertex channel at the first channel's key: rebuilt in another
-    // order, Saget's vertex animation in the attract movie wrote past his mesh and crashed its draw.
-    const std::string &kind = entry.at("kind").get_ref<const std::string &>();
-    if ((kind == "animations" || kind == "motion_channels") && entry.contains("crc32") &&
+    // A motion goes in only as the disc has it: the game reads every vertex channel of a frame at the
+    // first channel's key, so a motion in another order reads the wrong vertices.
+    if (IsMotion(KindOf(entry)) && entry.contains("crc32") &&
         Crc32(*rebuilt) != entry["crc32"].get<std::uint32_t>()) {
         if (emptied && state.stripped) {
             Unrecoverable(alias + " can't be rebuilt from its glTF as the disc has it");
@@ -987,7 +1010,7 @@ void SpliceOne(State &state, const std::string &alias, const Json &entry, const 
     // A pack member's size becomes the rebuilt one; the game reads motions by their own chain.
     if (member) {
         const std::uint32_t size = static_cast<std::uint32_t>(rebuilt->size());
-        std::memcpy(place.data() - (member->start - member->entry) + 68, &size, 4);
+        std::memcpy(place.data() - (member->start - member->entry) + kPackSize, &size, sizeof(size));
     }
 }
 
@@ -1001,10 +1024,7 @@ void Splice(std::string_view path, std::span<std::uint8_t> bytes) {
     const std::string                                               file = Key(path);
     for (auto it = state.index.lower_bound(file); it != state.index.end() && it->first.starts_with(file); ++it) {
         const std::string_view rest = std::string_view(it->first).substr(file.size());
-        const std::string      kind = it->second.value("kind", "");
-        const bool             rebuildable = kind == "model" || kind == "animations" || kind == "weights" ||
-                                             kind == "bind_poses" || kind == "motion_channels";
-        if (rebuildable && (rest.empty() || rest.front() == '/' || rest.front() == '#')) {
+        if (KindOf(it->second) != SourceKind::Other && (rest.empty() || rest.front() == '/' || rest.front() == '#')) {
             sources.emplace_back(it->first, std::string(rest), &it->second);
         }
     }

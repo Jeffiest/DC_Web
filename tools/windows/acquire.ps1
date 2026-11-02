@@ -11,7 +11,7 @@ $downloads = @(
     @('llvm', 'https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip', 'E3AD77D117A4BEA19A7A3B333341824D79A5A371004A10E25B8504E7B3047666'),
     @('ninja', 'https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip', '07FC8261B42B20E71D1720B39068C2E14FFCEE6396B76FB7A795FB460B78DC65'),
     @('sdl', 'https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-devel-3.4.18-mingw.zip', 'CD98158C8D025A816F430A600B4E9526524E6219EE884EC72BD498B80FD3BF58'),
-    @('ffmpeg', 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-13-13-05/ffmpeg-n9.0.2-27-g7e93014c5b-win64-lgpl-shared-9.0.zip', '9DF4DB960F3F0CD3ED76BE0A2BE96265D00DB4C3BE2526A6D39B03C2B547100D'),
+    @('ffmpeg/kz-ffmpeg-9.0.2', "$KazarovDeps/kz-ffmpeg-9.0.2-windows-x64.zip", '895A273EB37BE751B87BE429BCD110B77410FA34BD91B675286FFA4EE935362A'),
     @('glslang', 'https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip', '82BF434E69B9BB4829DE7E2B4BC2C5E7A7861E53D66CF75E5CC70F5F694A8D9B'),
     @('vulkan', 'https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.zip', 'F4BE95220FF0EE0B1C620301FF4FE9AE48592D71F4C30F2D5C571351A153AE81')
 )
@@ -20,21 +20,22 @@ if ($VulkanLoader) {
 }
 $downloads | ForEach-Object -Parallel {
     $name,$url,$expected = $_
-    $archive = Join-Path $using:archives "$name.zip"
+    $leaf = Split-Path -Leaf $name
+    $archive = Join-Path $using:archives "$leaf.zip"
     $target = Join-Path $using:deps $name
     if (!(Test-Path $archive)) {
-        & curl.exe -fL --retry 3 -o $archive $url 2> (Join-Path $using:archives "$name-download.log")
+        & curl.exe -fL --retry 3 -o $archive $url 2> (Join-Path $using:archives "$leaf-download.log")
         if ($LASTEXITCODE) { throw "Download failed: $url" }
     }
     $hash = Get-FileHash $archive -Algorithm SHA256
     if ($hash.Hash -ne $expected) { throw "SHA-256 mismatch: $archive (expected $expected, got $($hash.Hash))" }
-    & $using:sevenZip x -y "-o$target" $archive > (Join-Path $using:archives "$name-extract.log")
+    & $using:sevenZip x -y "-o$target" $archive > (Join-Path $using:archives "$leaf-extract.log")
     if ($LASTEXITCODE) { throw "Extract failed: $archive" }
     $hash | Select-Object Path,Hash
 } -ThrottleLimit 4
-$ffmpegLicense = Join-Path $deps 'ffmpeg/ffmpeg-n9.0.2-27-g7e93014c5b-win64-lgpl-shared-9.0/LICENSE.txt'
-if ((Get-Content -LiteralPath $ffmpegLicense -TotalCount 1).Trim() -ne 'GNU LESSER GENERAL PUBLIC LICENSE') {
-    throw "FFmpeg archive is not the LGPL variant: $ffmpegLicense"
+$ffmpegStamp = Join-Path $deps 'ffmpeg/kz-ffmpeg-9.0.2/kz-ffmpeg.json'
+if ((Get-Content -LiteralPath $ffmpegStamp -Raw | ConvertFrom-Json).license -ne 'License: LGPL version 2.1 or later') {
+    throw "FFmpeg archive is not an LGPL build: $ffmpegStamp"
 }
 & "$PSScriptRoot/acquire-rust.ps1" -Root $root
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
