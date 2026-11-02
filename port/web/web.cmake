@@ -152,6 +152,24 @@ add_custom_command(TARGET webgpu_probe POST_BUILD
     VERBATIM)
 add_dependencies(webgpu_probe dc_web_site)
 
+# The animation editor's model converter (anim/): Kazarov's Rust core built for wasm32-unknown-emscripten with
+# dcdata's configuration reader, run in a worker by site/anim/. A build of its own (anim/CMakeLists.txt), without
+# the game's -pthread and JavaScript exceptions; its dc_anim_convert.js and .wasm land in anim/ beside the page.
+include(ExternalProject)
+ExternalProject_Add(dc_anim_convert
+    SOURCE_DIR ${DC_WEB_DIR}/anim
+    BINARY_DIR ${CMAKE_BINARY_DIR}/anim-build
+    CMAKE_GENERATOR ${CMAKE_GENERATOR}
+    CMAKE_ARGS
+        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DCMAKE_BUILD_TYPE=Release
+    BUILD_ALWAYS TRUE
+    INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_BINARY_DIR}/anim-build/dc_anim_convert.js ${CMAKE_BINARY_DIR}/anim-build/dc_anim_convert.wasm
+        ${CMAKE_BINARY_DIR}/anim)
+add_dependencies(dc_anim_convert dc_web_site)
+
 # Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, for the browser (test/gfx_tests.html, whose
 # ?renderer=gl loads the second). Not built by default: `cmake --build --preset web --target kazarov_gfx_tests
 # kazarov_gfx_tests_gl`. The render thread and depth planes cases need what the web leaves out (a worker thread

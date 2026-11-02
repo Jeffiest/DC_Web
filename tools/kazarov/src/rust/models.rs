@@ -6673,25 +6673,19 @@ pub fn convert_tree_dc1(
     let textures = super::textures::convert_tree_dc1(raw, output, jobs)?;
     // Checked before the models add their memory card icons' PNGs, which only the icons reference.
     super::textures::verify_tree(&output.join("data/textures"))?;
-    let models = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()
-        .map_err(|e| fail(e.to_string()))?
-        .install(|| {
-            convert_source_for(
-                &super::archive::SourceTree::directory_dc1(raw)?,
-                output,
-                &textures.documents,
-                game,
-                &Phase::noop(),
-            )
-        })?;
+    let models = super::in_pool(jobs, || {
+        convert_source_for(
+            &super::archive::SourceTree::directory_dc1(raw)?,
+            output,
+            &textures.documents,
+            game,
+            &Phase::noop(),
+        )
+    })?;
     if game.keep_source_records {
-        let checksums = rayon::ThreadPoolBuilder::new()
-            .num_threads(jobs)
-            .build()
-            .map_err(|e| fail(e.to_string()))?
-            .install(|| source_checksums(&super::archive::SourceTree::directory_dc1(raw)?))?;
+        let checksums = super::in_pool(jobs, || {
+            source_checksums(&super::archive::SourceTree::directory_dc1(raw)?)
+        })?;
         write_source_index(output, &models, &checksums)?;
     }
     Ok((textures, models))

@@ -64,6 +64,31 @@ impl From<serde_json::Error> for CoreError {
 
 pub type CoreResult<T> = Result<T, CoreError>;
 
+/// Runs `work` on a pool of `jobs` workers. Rust's standard library has no threads on the browser's WebAssembly
+/// (Emscripten), so there the calling thread is rayon's one global worker, made so the first time, and the work
+/// runs on it in place: a thread made a pool's worker stays one, so a second pool could not take it.
+pub(crate) fn in_pool<R: Send>(
+    jobs: usize,
+    work: impl FnOnce() -> CoreResult<R> + Send,
+) -> CoreResult<R> {
+    #[cfg(target_os = "emscripten")]
+    {
+        let _ = jobs;
+        // Err once the global pool exists, which is this one from an earlier call.
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .use_current_thread()
+            .build_global();
+        work()
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .map_err(|e| CoreError(e.to_string()))?
+        .install(work)
+}
+
 pub fn data_version() -> u64 {
     let value: serde_json::Value = serde_json::from_str(include_str!("../../data_version.json"))
         .expect("invalid data_version.json");
