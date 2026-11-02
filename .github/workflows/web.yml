@@ -63,6 +63,18 @@ jobs:
           rustup target add wasm32-unknown-emscripten
           rustup toolchain install 1.99.0 --profile minimal --target wasm32-unknown-emscripten
 
+      # A game link, Asyncify and wasm-opt over the whole game, outgrew the runner's memory once MoonMod was in it,
+      # and the runner shut down mid-link even with one link at a time (web.cmake). Swap lets it finish, slower.
+      - name: More swap for the game's link
+        run: |
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 24G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile > /dev/null
+          sudo swapon /mnt/swapfile
+          free -h
+
       # Saved under this run's key and restored from the newest, so each run starts from the last one's units.
       - name: Restore the compiler cache
         uses: actions/cache@v4
