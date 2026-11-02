@@ -56,6 +56,13 @@ jobs:
           "$HOME/emsdk/emsdk" activate "$EMSDK_VERSION"
           echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
 
+      # The animation editor's model converter (port/web/anim) builds Kazarov's Rust core for the browser: the
+      # default toolchain, which Corrosion runs, and Kazarov's pinned one, which its folder selects, both need it.
+      - name: Rust for the browser
+        run: |
+          rustup target add wasm32-unknown-emscripten
+          rustup toolchain install 1.99.0 --profile minimal --target wasm32-unknown-emscripten
+
       # Saved under this run's key and restored from the newest, so each run starts from the last one's units.
       - name: Restore the compiler cache
         uses: actions/cache@v4
