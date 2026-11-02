@@ -218,7 +218,8 @@ async function readText(directory, name) {
     }
 }
 
-// The stored mods, as [{id, name, version}].
+// The stored mods, as [{id, manifest, problem}]: problem says why mod.json can't be read, and the game will
+// list the mod as broken then.
 async function storedMods() {
     const mods = [];
     for await (const [id, handle] of (await modsDirectory()).entries()) {
@@ -226,14 +227,24 @@ async function storedMods() {
             continue;
         }
         let manifest = {};
+        let problem = null;
         try {
-            manifest = JSON.parse(await readText(handle, 'mod.json') ?? '{}');
-        } catch {
-            manifest = {};
+            const text = await readText(handle, 'mod.json');
+            if (text === null) {
+                problem = 'it has no mod.json';
+            } else {
+                manifest = JSON.parse(text);
+            }
+        } catch (error) {
+            problem = `its mod.json can't be read (${error.message})`;
         }
-        mods.push({id, name: manifest.name ?? id, version: manifest.version ?? ''});
+        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+            manifest = {};
+            problem ??= 'its mod.json is not an object';
+        }
+        mods.push({id, manifest, problem});
     }
-    return mods.sort((a, b) => a.id.localeCompare(b.id));
+    return mods.sort((a, b) => (a.manifest.name ?? a.id).localeCompare(b.manifest.name ?? b.id));
 }
 
 // Splits chosen files into mods: the files themselves when mod.json is at the top, else each top folder that
@@ -272,31 +283,82 @@ async function storeMods(files) {
     await enableMods(ids, true);
 }
 
-// Turns mods on or off for the next start in MoonMod's profile (save/moonmod/profile.json, which the game's Mods
-// menu also writes): a mod added here is on, one removed is forgotten.
-async function enableMods(ids, on) {
+// MoonMod's profile, save/moonmod/profile.json, which the game's Mods menu also writes: which mods are on for the
+// next start, and each mod's settings as {mod id: {setting id: value}}. The game reads it as it starts and keeps
+// a setting's default for any value that doesn't fit the setting (moonmod/runtime.cpp).
+async function profileFolder() {
     const save = await (await gameDirectory()).getDirectoryHandle('save', {create: true});
-    const folder = await save.getDirectoryHandle('moonmod', {create: true});
+    return save.getDirectoryHandle('moonmod', {create: true});
+}
+
+async function readProfile() {
     let profile = null;
     try {
-        profile = JSON.parse(await readText(folder, 'profile.json') ?? 'null');
+        profile = JSON.parse(await readText(await profileFolder(), 'profile.json') ?? 'null');
     } catch {
         profile = null;
     }
     if (!profile || typeof profile !== 'object' || profile.format_version !== 1) {
-        profile = {format_version: 1, enabled: {}, settings: {}, native_trusted: {}};
+        profile = {format_version: 1};
     }
-    profile.enabled = profile.enabled && typeof profile.enabled === 'object' ? profile.enabled : {};
-    for (const id of ids) {
-        if (on) {
-            profile.enabled[id] = true;
-        } else {
-            delete profile.enabled[id];
+    for (const part of ['enabled', 'settings', 'native_trusted']) {
+        if (!profile[part] || typeof profile[part] !== 'object' || Array.isArray(profile[part])) {
+            profile[part] = {};
         }
     }
-    const writable = await (await folder.getFileHandle('profile.json', {create: true})).createWritable();
-    await writable.write(JSON.stringify(profile, null, 2));
-    await writable.close();
+    return profile;
+}
+
+// Changes the profile with change(profile) and writes it, one change after another, so quick changes in a row
+// each see the one before. Gives the profile as written.
+let profileChanges = Promise.resolve();
+
+function updateProfile(change) {
+    const done = profileChanges.then(async () => {
+        const profile = await readProfile();
+        change(profile);
+        const writable = await (await (await profileFolder()).getFileHandle('profile.json', {create: true}))
+            .createWritable();
+        await writable.write(JSON.stringify(profile, null, 2));
+        await writable.close();
+        return profile;
+    });
+    profileChanges = done.catch(() => {});
+    return done;
+}
+
+// Turns mods on or off for the next start: a mod added here is on, and one removed is forgotten with its settings.
+async function enableMods(ids, on, forget = false) {
+    await updateProfile((profile) => {
+        for (const id of ids) {
+            if (on) {
+                profile.enabled[id] = true;
+            } else {
+                delete profile.enabled[id];
+                if (forget) {
+                    delete profile.settings[id];
+                }
+            }
+        }
+    });
+}
+
+// Whether the game starts with mods: off starts it with MOONMOD_NO_MODS=1, every mod off for that run while the
+// profile keeps its choices. Remembered in this browser only.
+function modsOn() {
+    try {
+        return localStorage.getItem('dc.mods') !== 'off';
+    } catch {
+        return true;
+    }
+}
+
+function setModsOn(on) {
+    try {
+        localStorage.setItem('dc.mods', on ? 'on' : 'off');
+    } catch {
+        // Not remembered; the switch still holds for this page.
+    }
 }
 
 async function modsFromFolder(list) {
@@ -312,29 +374,190 @@ async function modsFromZip(file) {
     return files;
 }
 
+function element(tag, properties = {}, ...children) {
+    const made = Object.assign(document.createElement(tag), properties);
+    made.append(...children);
+    return made;
+}
+
+// The mods a mod needs, with the ones they need in turn, among the stored mods.
+function needed(mod, byId, seen = new Set()) {
+    for (const id of mod.manifest.dependencies ?? []) {
+        if (!seen.has(id) && byId.has(id)) {
+            seen.add(id);
+            needed(byId.get(id), byId, seen);
+        }
+    }
+    return seen;
+}
+
+// One setting's control, as the game's Mods menu offers it (moonmod/manifest.cpp): a switch, a slider for a
+// whole number in a short range, a number box, a list of choices, or text. Each change is saved at once.
+function settingControl(setting, value, save) {
+    const range = Number.isFinite(setting.min) && Number.isFinite(setting.max);
+    switch (setting.type) {
+        case 'boolean': {
+            const box = element('input', {type: 'checkbox', checked: value === true});
+            box.addEventListener('change', () => save(box.checked));
+            return [box];
+        }
+        case 'integer':
+        case 'number': {
+            const step = setting.step > 0 ? setting.step : 1;
+            const fit = (number) => {
+                let fitted = range ? Math.min(setting.max, Math.max(setting.min, number)) : number;
+                if (setting.type === 'integer') {
+                    fitted = Math.round(fitted);
+                }
+                return fitted;
+            };
+            if (setting.type === 'integer' && range && (setting.max - setting.min) / step <= 200) {
+                const slider = element('input', {type: 'range', min: setting.min, max: setting.max, step, value});
+                const shown = element('output', {textContent: value});
+                slider.addEventListener('input', () => shown.textContent = slider.value);
+                slider.addEventListener('change', () => save(fit(Number(slider.value))));
+                return [slider, shown];
+            }
+            const box = element('input', {type: 'number', step: setting.type === 'integer' ? step : 'any', value});
+            if (range) {
+                Object.assign(box, {min: setting.min, max: setting.max});
+            }
+            box.addEventListener('change', () => {
+                const number = Number(box.value);
+                if (box.value === '' || !Number.isFinite(number)) {
+                    box.value = value;
+                    return;
+                }
+                value = fit(number);
+                box.value = value;
+                save(value);
+            });
+            return [box];
+        }
+        case 'choice': {
+            const list = element('select');
+            for (const choice of setting.choices ?? []) {
+                list.append(element('option', {value: choice, textContent: choice, selected: choice === value}));
+            }
+            list.addEventListener('change', () => save(list.value));
+            return [list];
+        }
+        default: {
+            const box = element('input', {type: 'text', maxLength: 256, value: value ?? ''});
+            box.addEventListener('change', () => save(box.value));
+            return [box];
+        }
+    }
+}
+
+// A setting's value in the profile when it fits the setting, else its default, as the game reads it.
+function settingValue(setting, stored) {
+    const fits = {
+        boolean: () => typeof stored === 'boolean',
+        integer: () => Number.isInteger(stored),
+        number: () => Number.isFinite(stored),
+        string: () => typeof stored === 'string' && stored.length <= 256,
+        choice: () => (setting.choices ?? []).includes(stored),
+    }[setting.type]?.() ?? false;
+    const inRange = typeof stored !== 'number' ||
+        ((setting.min ?? -Infinity) <= stored && stored <= (setting.max ?? Infinity));
+    return fits && inRange ? stored : setting.default;
+}
+
+function settingsPanel(mod, profile) {
+    const settings = Array.isArray(mod.manifest.settings) ? mod.manifest.settings : [];
+    if (settings.length === 0) {
+        return null;
+    }
+    const grid = element('div', {className: 'settings'});
+    const draw = () => {
+        grid.replaceChildren();
+        const chosen = profile.settings[mod.id] ?? {};
+        for (const setting of settings) {
+            const save = async (value) => {
+                const latest = await updateProfile((profile) => {
+                    profile.settings[mod.id] = {...(profile.settings[mod.id] ?? {}), [setting.id]: value};
+                });
+                profile.settings = latest.settings;
+            };
+            const name = element('div', {className: 'name', textContent: setting.name ?? setting.id});
+            if (setting.description) {
+                name.append(element('small', {textContent: setting.description}));
+            }
+            grid.append(name, element('div', {className: 'value'},
+                ...settingControl(setting, settingValue(setting, chosen[setting.id]), save)));
+        }
+    };
+    draw();
+    const reset = element('button', {className: 'secondary', textContent: 'Reset to defaults'});
+    reset.addEventListener('click', async () => {
+        const latest = await updateProfile((profile) => delete profile.settings[mod.id]);
+        profile.settings = latest.settings;
+        draw();
+    });
+    return element('details', {},
+        element('summary', {textContent: `Settings (${settings.length})`}), grid,
+        element('div', {className: 'row'}, reset));
+}
+
 async function refreshMods() {
     const list = $('mod-list');
-    list.replaceChildren();
+    list.classList.toggle('off', !modsOn());
     const mods = await storedMods();
+    const profile = await readProfile();
+    const byId = new Map(mods.map((mod) => [mod.id, mod]));
+    const open = new Set([...list.querySelectorAll('details[open]')].map((panel) => panel.dataset.mod));
+    list.replaceChildren();
     if (mods.length === 0) {
-        const none = document.createElement('li');
-        none.textContent = 'None yet.';
-        none.style.color = 'var(--dim)';
-        list.append(none);
+        list.append(element('li', {textContent: 'None yet.', style: 'color: var(--dim)'}));
     }
     for (const mod of mods) {
-        const item = document.createElement('li');
-        item.textContent = `${mod.name} ${mod.version} `;
-        const remove = document.createElement('button');
-        remove.className = 'secondary';
-        remove.textContent = 'Remove';
-        remove.style.padding = '2px 8px';
-        remove.addEventListener('click', async () => {
-            await (await modsDirectory()).removeEntry(mod.id, {recursive: true}).catch(() => {});
-            await enableMods([mod.id], false);
+        const on = profile.enabled[mod.id] === true;
+        const toggle = element('input', {type: 'checkbox', checked: on, disabled: mod.problem !== null});
+        toggle.addEventListener('change', async () => {
+            // A mod turned on brings the stored mods it needs with it.
+            await enableMods(toggle.checked ? [mod.id, ...needed(mod, byId)] : [mod.id], toggle.checked);
             await refreshMods();
         });
-        item.append(remove);
+        const manifest = mod.manifest;
+        const title = element('span', {}, element('strong', {textContent: manifest.name ?? mod.id}),
+            ' ', element('small', {textContent: [manifest.version, manifest.author && `by ${manifest.author}`]
+                .filter(Boolean).join(' · ')}));
+        const remove = element('button', {className: 'secondary', textContent: 'Remove'});
+        remove.addEventListener('click', async () => {
+            if (!confirm(`Remove ${manifest.name ?? mod.id} and its settings from this browser?`)) {
+                return;
+            }
+            await (await modsDirectory()).removeEntry(mod.id, {recursive: true}).catch(() => {});
+            await enableMods([mod.id], false, true);
+            await refreshMods();
+        });
+        const item = element('li', {},
+            element('div', {className: 'mod-head'}, element('label', {}, toggle, title), remove));
+        const note = (text, warn = false) =>
+            item.append(element('div', {className: warn ? 'mod-note warn' : 'mod-note', textContent: text}));
+        if (manifest.description) {
+            note(manifest.description);
+        }
+        if (mod.problem) {
+            note(`It can't load: ${mod.problem}.`, true);
+        }
+        for (const id of manifest.dependencies ?? []) {
+            if (!byId.has(id)) {
+                note(`It needs ${id}, which isn't added.`, true);
+            } else if (on && profile.enabled[id] !== true) {
+                note(`It needs ${byId.get(id).manifest.name ?? id}, which is off.`, true);
+            }
+        }
+        if (manifest.native_extension) {
+            note("Its native library doesn't run in the browser.", true);
+        }
+        const panel = settingsPanel(mod, profile);
+        if (panel) {
+            panel.dataset.mod = mod.id;
+            panel.open = open.has(mod.id);
+            item.append(panel);
+        }
         list.append(item);
     }
 }
@@ -567,9 +790,15 @@ function start() {
     const canvas = $('canvas');
     // Threads still running when the game exits can abort as it takes them down; the exit is what matters.
     let exited = false;
+    const withMods = modsOn();
+    if (!withMods) {
+        log('MOONMOD_NO_MODS=1: every mod is off for this run');
+    }
     window.Module = {
         arguments: args,
         canvas,
+        // ENV is the game script's own top-level variable, and Module.ENV where the build exports it.
+        preRun: withMods ? [] : [() => (Module.ENV ?? globalThis.ENV).MOONMOD_NO_MODS = '1'],
         print,
         printErr: print,
         onRuntimeInitialized() {
@@ -716,6 +945,11 @@ async function main() {
     };
     $('mod-folder').addEventListener('change', addMods(modsFromFolder));
     $('mod-zip').addEventListener('change', addMods((files) => modsFromZip(files[0])));
+    $('mods-on').checked = modsOn();
+    $('mods-on').addEventListener('change', async () => {
+        setModsOn($('mods-on').checked);
+        await refreshMods();
+    });
     $('start').addEventListener('click', start);
     $('forget').addEventListener('click', async () => {
         await removeAll();

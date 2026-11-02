@@ -131,7 +131,7 @@ set(DC_WEB_LINK_OPTIONS
     -sFORCE_FILESYSTEM=1
     -sEXIT_RUNTIME=1
     -sENVIRONMENT=web,worker,node
-    -sEXPORTED_RUNTIME_METHODS=FS,callMain
+    -sEXPORTED_RUNTIME_METHODS=FS,callMain,ENV
     -Wl,--error-limit=0)
 
 # The WebGPU probe (probe/): what the renderer's WebGPU backend will rely on, with the game's thread model.
