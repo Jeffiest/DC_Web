@@ -1,3 +1,4 @@
+#include "doorway_view.hpp"
 #include "common.h"
 
 #include <libgraph.h>
@@ -63,6 +64,7 @@
 #include "input/mouse_look.hpp"
 #include "itemdata.hpp"
 #include "mainselect.hpp"
+#include "main.hpp"
 #include "mapparts.hpp"
 #include "mathutil.hpp"
 #include "mds.hpp"
@@ -88,6 +90,10 @@
 #include "vutext.hpp"
 #include "weaponlevelup.hpp"
 #include "wind.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/choice_panel.hpp"
+#include "moonmod/map_screen.hpp"
 
 namespace dc::game {
 
@@ -168,9 +174,31 @@ int start_event_no;
 int          start_system_event;
 int          move_count;
 int          interior_test;
+
+// MoonMod: the house a developer's --jump house:<interior> goes into (SetDevHouseJump), or empty.
+char *DevHouseJump() {
+    static char house[16];
+    return house;
+}
+
+int &DevHouseStartEvent() {
+    static int event = -1;
+    return event;
+}
 char       **interior_name;
 int          oldGameMode;
 CEditGround *pEditGround;
+// MoonMod (quick passage, O2 C0): this town was walked into from a dungeon. Its walk frames are counted (an arrival
+// event pauses the count) and a few in, with the camera settled, the held picture goes.
+bool g_walked_in = false;
+int  g_walked_frames = 0;
+// MoonMod (open world): frames since the party last stood in the town's gate (the road asks once each time it walks in)
+int g_gate_away = 0;
+
+// With a mod's roads (world.set_roads), the town's gate never opens the world map; it asks the mod (game.town.road)
+// while the party walks free.
+bool TownRoadsOn() { return moonmod::ChronicleTownRoads() && MapNo >= 0 && MapNo < TOWN_COUNT; }
+bool TownRoadAsks() { return TownRoadsOn() && GameMode == ED_MODE_WALK && NextMapNo < 0 && !MoonModChoiceUp(); }
 CEditArea   *EditArea;
 CMapParts   *ObjParts;
 CMapParts   *RiverParts;
@@ -853,6 +881,111 @@ void FormatInto(char (&buffer)[N], std::format_string<Args...> format, Args &&..
 }
 } // namespace
 
+/**
+ * Loads and starts the map's music, its sound set and its sound sources.
+ */
+void EdStartMapSound() {
+    SndSetReadBuffer(read_buffer);
+
+    if (StartEventNo < 0) {
+        int bgm = EditMapInfo->bgm_no;
+
+        if (bgm >= 0) {
+            if (old_main_mode == 5) {
+                SndBgmLoad(0);
+            } else {
+                SndBgmLoad(bgm);
+            }
+
+            if (EditMapInfo->time_stop == 0) {
+                EdSetBgmVol(SaveData->GetNowTime());
+            } else {
+                SndBgmPlay(0);
+            }
+
+            SndStep();
+        }
+    }
+
+    int sound_set = EditMapInfo->sound_set_no;
+
+    if (sound_set < 0) {
+        if (SndGetNowSetNo() < 0) {
+            SndSoundLoad(0);
+        }
+    } else {
+        SndSoundLoad(sound_set);
+    }
+
+    EdInitSoundSrc();
+}
+
+/**
+ * Clears the town's per-visit state and runs its start event, once its data is in place.
+ */
+void EditInitFinish(bool resumed) {
+    EdClearSystemMes();
+    EdInitOpenItemBox(TreasureCursorOpen, TreasureCursor);
+    exit_loop = 0;
+    loop_counter = 0;
+    key_counter = 0;
+    sound_off_cnt = 1;
+    clear_screen = 0;
+    goto_dungeon = 0;
+    key_lock = false;
+    goto_menu = 0;
+    draw_npc_cursor = 0;
+    edit_mode_draw = 0;
+    edit_mode_grd_draw = 0;
+    depth_of_field = 1;
+    edit_mode_lighting = 0;
+    draw_sky = 1;
+    goto_cmp_event = 0;
+    goto_cmp_event_level = -1;
+    change_time_event = 0;
+    start_event_no = -1;
+    start_system_event = -1;
+    move_count = 0;
+    EdBeforeInBgmNo = -1;
+    EdDrawOffFlag = 0;
+    EdDrawOffMap = 0;
+    EdDrawOffMapShadow = 0;
+    EdThunderEffectFlag = 1;
+    EdPauseFlag = 0;
+    debug_menu_mode = 0;
+    EdSaveFrameImageInit();
+    EdInitMenu(ED_MENU_RESET);
+    BtSetMapJumpFloor(-1);
+    EBInitialize();
+    EdInitThunderEffect();
+    EdInitDrawDay();
+    if (!resumed) {
+        InitWorkBuffer(); // a resumed town's villagers stand in the buffers this would start again
+    }
+    int event_no = StartEventNo;
+
+    if (event_no < 0) {
+        RunEvent(128, nullptr);
+    } else {
+        RunEvent(event_no, nullptr);
+    }
+
+    StartEventNo = -1;
+    SaveData->GetDngStatus()->cur_chara = 0;
+    static int debug_flag_set = 0;
+
+    if (debug_flag_set == 0) {
+        EdDebugCameraFlag = 0;
+        EdDebugMoveFlag = 0;
+    }
+
+    debug_flag_set = 1;
+    ItemVolumeStep.CheckItemVolume();
+    DoorwayStandTownDoorOpen(MapNo, EdEventInfo.fixed_parts, EdEventInfo.fixed_parts_count); // MoonMod (L4)
+}
+
+void EditResume();
+
 int EditInit(void * /*param*/) {
     std::string map_path;
     std::string save_path;
@@ -896,6 +1029,25 @@ int EditInit(void * /*param*/) {
 
     bgm_play_flag = 0;
     bgm_play_start = 0;
+    // MoonMod (O2 C1): each place keeps its memory, and walked back through the dungeon's way out (L3) the town is
+    // gone back to as it was left, its villagers where they stood, rather than loaded again
+    const int world = moonmod::ChronicleConnectedWorld(MapNo);
+    if (DoorwayWalkingInto(MapNo) && ResumeDataWorld(world)) {
+        EditResume();
+        return 0;
+    }
+    // MoonMod (L4): the town's dungeon, built unseen first if it isn't there to go back to, so the cave stands in the
+    // town's door before the first visit (its world is kept as the town's own is made)
+    if (const int dungeon = DoorwayPrebuildWanted(MapNo); dungeon >= 0 || dungeon == -2) {
+        const int  cave = dungeon >= 0 ? dungeon : DoorwayTownDungeon(MapNo);
+        const bool there = DataWorldAvailable(moonmod::ChronicleConnectedWorld(cave)) &&
+                           SaveData->GetDngStatus()->cur_floor == 0;
+        if (dungeon >= 0 || !there) {
+            if (dungeon == -2) DoorwayReset(); // its doorway was the floor left behind
+            if (!DunPrebuild(cave)) DoorwayPrebuildFailed(MapNo);
+        }
+    }
+    SetNextDataWorld(world);
     InitializeDataBuffer();
     SetDataBuffer(&VisualData, 100);
     SetDataBuffer(&EtcDataBuffer, 40000);
@@ -905,7 +1057,7 @@ int EditInit(void * /*param*/) {
     SetDataBuffer(&EdScriptBuffer, 16000);
 #endif
     SetDataBuffer(&EPartsInfoBuff, 8000);
-    SetDataBuffer(&CharaBuffer, 115000);
+    SetDataBuffer(&CharaBuffer, 160000); // room for the dungeon bodies played in towns
     SetDataBuffer(&TextureData, 10);
     SetDataBuffer(&MotionData, 7900);
     SetDataBuffer(&EdMesBuffer, 13000);
@@ -917,7 +1069,8 @@ int EditInit(void * /*param*/) {
     EPartsInfoBuff.used = 0;
     EditArea = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CEditArea>(4)))) CEditArea[4];
     pEditGround = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CEditGround>(1)))) CEditGround;
-    ObjParts = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CMapParts>(24)))) CMapParts[24];
+    ObjParts = new (reinterpret_cast<u_long128 *>(
+        EtcDataBuffer.Alloc(Quadwords<CMapParts>(CHRONICLE_GEORAMA_PART_CAPACITY) + 1))) CMapParts[CHRONICLE_GEORAMA_PART_CAPACITY];
     MotionParts = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CCharacter>(4)))) CCharacter[4];
     RiverParts = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CMapParts>(16)))) CMapParts[16];
     RoadParts = new (reinterpret_cast<u_long128 *>(EtcDataBuffer.Alloc(Quadwords<CMapParts>(6)))) CMapParts[6];
@@ -964,39 +1117,7 @@ int EditInit(void * /*param*/) {
         interior_name[row][0] = '\0';
     }
 
-    SndSetReadBuffer(read_buffer);
-
-    if (StartEventNo < 0) {
-        int bgm = EditMapInfo->bgm_no;
-
-        if (bgm >= 0) {
-            if (old_main_mode == 5) {
-                SndBgmLoad(0);
-            } else {
-                SndBgmLoad(bgm);
-            }
-
-            if (EditMapInfo->time_stop == 0) {
-                EdSetBgmVol(SaveData->GetNowTime());
-            } else {
-                SndBgmPlay(0);
-            }
-
-            SndStep();
-        }
-    }
-
-    int sound_set = EditMapInfo->sound_set_no;
-
-    if (sound_set < 0) {
-        if (SndGetNowSetNo() < 0) {
-            SndSoundLoad(0);
-        }
-    } else {
-        SndSoundLoad(sound_set);
-    }
-
-    EdInitSoundSrc();
+    EdStartMapSound();
     EdEventInfo.world_coord_enable = false;
     EdEventInfo.main_character = Chara;
     EdEventInfo.main_texture_animation = CharaTexAnimeData;
@@ -1112,6 +1233,10 @@ int EditInit(void * /*param*/) {
     EdVillagerBuffer.base = reinterpret_cast<u_char *>(free_start);
     EdVillagerBuffer.limit = free_quads - 4;
     EdVillagerBuffer.used = 0;
+    // MoonMod (O2 C1, L3): the town's hand-laid arenas go with its world, as the carved ones do
+    for (CDataAlloc2<1> *arena : {&EdNPCBuffer, &EdVillagerBuffer, &EdWorkBuffer, &EdMenuBuffer}) {
+        KeepDataArena(arena);
+    }
     EdNPCReadBuffer = reinterpret_cast<u_long128 *>(EdNPCBuffer.base + EdNPCBuffer.used * 16 + (free_quads >> 1) * 16);
     const auto read_address = reinterpret_cast<std::uintptr_t>(EdNPCReadBuffer);
     EdNPCReadBuffer = reinterpret_cast<u_long128 *>(read_address + ((0x40 - (read_address & 0x3F)) & 0x3F));
@@ -1119,13 +1244,17 @@ int EditInit(void * /*param*/) {
     EdCreateVillagerTable(EditMapInfo);
     EdInitVillagerControl();
     EdInitVillagerTable(NowTime, EditMapInfo);
-    EdLoadMainChara("chara/c01d.chr", "info.cfg", &CharaBuffer);
+    moonmod::LoadChronicleTownCharacter();
     sceVu0FVECTOR start_position = {0.0f, 0.0f, 0.0f, 1.0f};
     sceVu0FVECTOR start_rotation = {0.0f, 0.0f, 0.0f, 0.0f};
     sceVu0FVECTOR fade;
     GameMode = ED_MODE_WALK;
     EdGetFadeColor(fade);
-    EdFadeIn(128, static_cast<float>(static_cast<int>(fade[0])), static_cast<float>(static_cast<int>(fade[1])), static_cast<float>(static_cast<int>(fade[2])));
+    // MoonMod (quick passage, O2 C0): walked out of a dungeon, the town is there at once, not faded in from black
+    g_walked_in = moonmod::ChronicleTakeWalkArrival();
+    g_walked_frames = 0;
+    EdFadeIn(g_walked_in ? 1 : 128, static_cast<float>(static_cast<int>(fade[0])), static_cast<float>(static_cast<int>(fade[1])),
+             static_cast<float>(static_cast<int>(fade[2])));
     Chara->SetPosition(start_position);
     Chara->SetRotation(start_rotation);
     float yaw = start_rotation[1] - PI_SHORT;
@@ -1202,62 +1331,46 @@ int EditInit(void * /*param*/) {
     CommonMenuMes1.SetBuff_system(SystemMes);
     CommonMenuMes2.SetBuff_system(SystemMes);
     CommonMenuMes3.SetBuff_system(SystemMes);
-    EdClearSystemMes();
-    EdInitOpenItemBox(TreasureCursorOpen, TreasureCursor);
-    exit_loop = 0;
-    loop_counter = 0;
-    key_counter = 0;
-    sound_off_cnt = 1;
-    clear_screen = 0;
-    goto_dungeon = 0;
-    key_lock = false;
-    goto_menu = 0;
-    draw_npc_cursor = 0;
-    edit_mode_draw = 0;
-    edit_mode_grd_draw = 0;
-    depth_of_field = 1;
-    edit_mode_lighting = 0;
-    draw_sky = 1;
-    goto_cmp_event = 0;
-    goto_cmp_event_level = -1;
-    change_time_event = 0;
-    start_event_no = -1;
-    start_system_event = -1;
-    move_count = 0;
-    EdBeforeInBgmNo = -1;
-    EdDrawOffFlag = 0;
-    EdDrawOffMap = 0;
-    EdDrawOffMapShadow = 0;
-    EdThunderEffectFlag = 1;
-    EdPauseFlag = 0;
-    debug_menu_mode = 0;
-    EdSaveFrameImageInit();
-    EdInitMenu(ED_MENU_RESET);
-    BtSetMapJumpFloor(-1);
-    EBInitialize();
-    EdInitThunderEffect();
-    EdInitDrawDay();
-    InitWorkBuffer();
-    int event_no = StartEventNo;
-
-    if (event_no < 0) {
-        RunEvent(128, nullptr);
-    } else {
-        RunEvent(event_no, nullptr);
-    }
-
-    StartEventNo = -1;
-    SaveData->GetDngStatus()->cur_chara = 0;
-    static int debug_flag_set = 0;
-
-    if (debug_flag_set == 0) {
-        EdDebugCameraFlag = 0;
-        EdDebugMoveFlag = 0;
-    }
-
-    debug_flag_set = 1;
-    ItemVolumeStep.CheckItemVolume();
+    EditInitFinish(false);
     return 0;
+}
+
+/**
+ * MoonMod (O2 C1, L3): EditInit for a town kept as it was left. Its arenas and textures are back (ResumeDataWorld);
+ * what the dungeon used in between (packets, sound, camera, fonts) is set up again, the save's parts and clock are
+ * read, and the event script is read again and its start event run, as on any arrival.
+ */
+void EditResume() {
+    SetPacketReadBuffer(30000, 140000);
+    MGSetRenderInfo(800.0f, 10.0f, 65535.0f);
+    EdStartMapSound();
+    EdEventInfo.main_character = Chara;
+    EdEventInfo.npcs = EdVillager;
+    EdEventInfo.edit_ground = pEditGround;
+    simple_event = 0;
+    LoadScript(); // the events start afresh, as on coming back out of a house
+    camera_dist_mode = 1;
+    NowCamera = &MainCamera;
+    EditMenuStatus.mode = EDIT_MENU_MODE_CLOSED;
+    EditMenuStatus.parts = -1;
+    EdDSetFont(&DebugFont__3);
+    EditLoad();
+    pEditGround->RemakeGrid();
+    GameMode = ED_MODE_UNK_0;
+    EdMoveCharaInit();
+    end_counter = 0;
+    door_open_cnt = 0;
+    EdStepTimeFlag = 1;
+    GameMode = ED_MODE_WALK;
+    sceVu0FVECTOR fade;
+    EdGetFadeColor(fade);
+    g_walked_in = moonmod::ChronicleTakeWalkArrival();
+    g_walked_frames = 0;
+    EdFadeIn(g_walked_in ? 1 : 128, static_cast<float>(static_cast<int>(fade[0])), static_cast<float>(static_cast<int>(fade[1])),
+             static_cast<float>(static_cast<int>(fade[2])));
+    EdEffectGroup.Clear();
+    EdInitMesParam();
+    EditInitFinish(true);
 }
 
 /**
@@ -1287,8 +1400,19 @@ struct ED_GRD_DATA {
 /**
  * Runs one frame of the editor and reports what it is to do next.
  */
+void SetDevHouseJump(std::string_view interior) {
+    // house:<interior>@<event>: the event the house starts with (as a door's start event), else its own
+    const std::size_t at = interior.find('@');
+    DevHouseStartEvent() = at == std::string_view::npos ? -1 : std::atoi(std::string(interior.substr(at + 1)).c_str());
+    interior = interior.substr(0, at);
+    std::snprintf(DevHouseJump(), 16, "%.*s", static_cast<int>(std::min<std::size_t>(interior.size(), 15)), interior.data());
+}
+
 int EditLoop() {
     goto_return_menu = 0;
+    // MoonMod: a mod's map screen (ui.map_open) reads the pad first and holds the town's controls while it is up.
+    MoonModMapStepTown(GameMode == ED_MODE_WALK);
+    MoonModChoiceStepTown(GameMode == ED_MODE_WALK); // and a mod's choice panel (ui.choice_open)
 
     // Pausing is a walking action: an event must not open the pause menu, which reads state only
     // valid outside an event, over itself.
@@ -1427,6 +1551,23 @@ int EditLoop() {
 
     EdInteriorFlag = 0;
 
+    // MoonMod: --jump house:<interior>, a developer's test (SetDevHouseJump)
+    if (GameMode == ED_MODE_WALK && loop_counter > 120 && DevHouseJump()[0] != '\0') {
+        const std::string_view house(DevHouseJump());
+        if (house.size() == 6 && house[0] == 'i' && house[3] == 'h') {
+            const int plot = (house[4] - '0') * 10 + (house[5] - '0') - 1;
+            if (SV_EDIT_PARTS_INFO *saved = SaveData->GetEditPartsInfo(MapNo, plot)) {
+                saved->completion_flags |= 1;
+            }
+            EditPartsInfo.SetCompEvent(plot, 1);
+        }
+        static char name[16];
+        std::snprintf(name, sizeof(name), "%s", DevHouseJump());
+        DevHouseJump()[0] = '\0';
+        GotoInterior(name, 0, 0, nullptr, DevHouseStartEvent());
+        return 0;
+    }
+
     if (interior_test != 0) {
         static int             select = 0;
         std::array<char *, 64> menu{};
@@ -1534,6 +1675,29 @@ int EditLoop() {
 
             break;
         case ED_MODE_WALK:
+            {
+                // MoonMod (O2 C1, L5): walked out of the dungeon's way out, the party stands at the town's door
+                float at[3];
+                float heading = 0.0f;
+                if (DoorwayArrival(at, heading)) {
+                    sceVu0FVECTOR position = {at[0], at[1], at[2], 1.0f};
+                    Chara->SetPosition(position);
+                    Chara->SetRotation(0.0f, heading, 0.0f);
+                    // the camera behind the party, looking out the way it faces (the follow camera's angle points
+                    // from the party to the camera)
+                    float yaw = heading + PI_SHORT;
+                    if (yaw > PI_SHORT) {
+                        yaw -= TWO_PI_SHORT;
+                    }
+                    MainCamera.SetAngleSoon(yaw);
+                    MainCamera.SetFollow(position[0], 14.0f + position[1], position[2]);
+                    MainCamera.Step(-1);
+                }
+            }
+            if (g_walked_in && ++g_walked_frames >= 4) {
+                g_walked_in = false;
+                moonmod::ChronicleWalkPlaceReady(); // the party stands in the town: the held picture can go
+            }
             if (loop_counter > 0) {
                 TownMouseBegin(&MainCamera, pEditGround, MapNo, GameMode);
                 if (EdCheckViewMode() == 0) {
@@ -1808,6 +1972,8 @@ int EditLoop() {
 
     TownZoomEnd();
     TownMouseApply(NowCamera, pEditGround, MapNo, GameMode);
+    moonmod::ApplyChronicleTownPartySwitch();
+    moonmod::ApplyChronicleTownCamera();
 
     sceVu0FMATRIX view;
     sceVu0FVECTOR eye;
@@ -1815,6 +1981,7 @@ int EditLoop() {
     NowCamera->GetCameraMatrix(view);
     NowCamera->GetPos(eye);
     MGSetViewMatrix(view, eye);
+    DoorwayCamera(); // MoonMod (O2 C2)
 
     if (GameMode != ED_MODE_GEORAMA && GameMode != ED_MODE_GEORAMA_MENU_INIT && GameMode != ED_MODE_RETURN_MENU_GEORAMA) {
         if (move_count > 0) {
@@ -2104,8 +2271,15 @@ int EditLoop() {
     if (GameMode != ED_MODE_EVENT) {
         auto *player = static_cast<CMainChara *>(Chara);
 
+        ++g_gate_away;
         if (player->move_info.landed != 0 && loop_counter > 10 && player->move_info.ground_poly.attr.ground_kind > 0) {
-            RunEvent(player->move_info.ground_poly.attr.ground_kind, NowCamera);
+            // MoonMod (open world): the gate's ground (its program 1, the world map) is the road with a mod's roads
+            if (player->move_info.ground_poly.attr.ground_kind == 1 && TownRoadsOn()) {
+                if (g_gate_away > 10 && TownRoadAsks()) moonmod::ChronicleTownRoad(MapNo);
+                g_gate_away = 0;
+            } else {
+                RunEvent(player->move_info.ground_poly.attr.ground_kind, NowCamera);
+            }
             player->move_info.ground_poly.attr.ground_kind = 0;
         }
     }
@@ -2311,6 +2485,38 @@ bool EdDrawBeyondRetailReach(int *far_marks, const GameDrawTrace &draw_trace) {
     return drawn;
 }
 
+} // namespace
+
+// MoonMod (O2 C1, L4): the town as the dungeon's way out shows it, under the doorway's camera (DoorwayLive): its
+// sky and ground with its own lights, the camera's eye and look-at standing in for clipping and the sky's follow.
+void EdDrawForDoorway(const float eye[3], const float ref[3]) {
+    if (pEditGround == nullptr || NowCamera == nullptr || EditMapInfo == nullptr) return;
+    float saved_pos[4];
+    float saved_ref[4];
+    sceVu0CopyVector(saved_pos, NowCamera->pos);
+    sceVu0CopyVector(saved_ref, NowCamera->ref);
+    for (int i = 0; i < 3; i++) {
+        NowCamera->pos[i] = eye[i];
+        NowCamera->ref[i] = ref[i];
+    }
+    EdSetLightParam(NowTime, edit_mode_lighting, EditMapInfo, SkyBackFrame);
+    MGClearScreen(static_cast<u_char>(mgBackColor[0]), static_cast<u_char>(mgBackColor[1]),
+                  static_cast<u_char>(mgBackColor[2]), 0x80);
+    if (draw_sky != 0) {
+        EdDrawSky(NowTime, SkyFrame, SunFrame, SkyBackFrame, NowCamera, EditMapInfo->sky_follow);
+    }
+    pEditGround->EditAreaClip(NowCamera, -1.0f);
+    TexManager.ReloadTexture(Vif1Packet, 1);
+    pEditGround->DrawBaseGround();
+    pEditGround->Draw(NowTime, 1, 0, 2, 0, 2);
+    TexManager.ReloadTexture(Vif1Packet, 2);
+    pEditGround->Draw(NowTime, 2, 0, 2, 0, 3);
+    sceVu0CopyVector(NowCamera->pos, saved_pos);
+    sceVu0CopyVector(NowCamera->ref, saved_ref);
+}
+
+namespace {
+
 /**
  * Draws the editor's world for one frame (retail's MainDraw).
  */
@@ -2320,6 +2526,7 @@ void EditMainDraw() {
     bool                far_drawn = false;
 
     if (EdDrawOffFlag == 0) {
+        DoorwayLive(); // MoonMod (O2 C1, L4): the dungeon seen live through the door
         if (EdPauseFlag != 0 || GameMode == ED_MODE_RETURN_MENU_WALK || GameMode == ED_MODE_RETURN_MENU_GEORAMA) {
             CTextureAnime::stop_anime = 1;
         } else {
@@ -2429,6 +2636,11 @@ void EditMainDraw() {
 
             pEditGround->DrawRipple(0x15);
             draw_trace.Finish(GameDrawPhase::Water, water_start);
+            {
+                sceVu0FVECTOR at; // MoonMod (O2 C2): the cave seen through its mouth
+                Chara->GetPosition(at);
+                DoorwayDraw(at);
+            }
 
             if (depth_of_field != 0) {
                 const auto far_dof_start = draw_trace.Start();
@@ -3295,6 +3507,8 @@ void DrawSysGra() {
             set2DSprite(GetVif1Packet(), pause, screen, texel, 0x80);
         }
     }
+    MoonModMapDraw(); // MoonMod: a mod's map screen
+    MoonModChoiceDraw(); // and choice panel
 }
 
 // Kept in the window's top right corner.
@@ -3542,6 +3756,12 @@ void MainEditMode() {
     char night_window[10] = "win2";
 
     for (level = 0; level < 4; level++) {
+#ifdef PORT
+        // A mod plot past the native 24 has models only once its piece is materialized.
+        if (parts >= CHRONICLE_GEORAMA_NATIVE_PART_COUNT && EditPartsInfo.GetPartsInfo(parts) == NULL) {
+            continue;
+        }
+#endif
         CMapParts *obj = &ObjParts[parts];
         CFrame    *frame = obj->frame[level];
 
@@ -3551,7 +3771,7 @@ void MainEditMode() {
 
     parts++;
 
-    if (!(parts < 24)) {
+    if (!(parts < CHRONICLE_GEORAMA_PART_CAPACITY)) {
         parts = 0;
     }
 
@@ -3914,6 +4134,18 @@ void MoveChara() {
     EdMoveCharaInfo.fishing = (GameMode == ED_MODE_FISHING);
     EdMoveChara();
 
+    // MoonMod (open world): a town with no gate of its own (TownRoadAsks) has the road at the spot the world map sets the
+    // party down
+    if (TownRoadAsks() && key_lock == 0) {
+        sceVu0FVECTOR at;
+        sceVu0FVECTOR rotation;
+        Chara->GetPosition(at);
+        Chara->GetRotation(rotation);
+        const float position[3] = {at[0], at[1], at[2]};
+        const float facing[3] = {std::sin(rotation[1]), 0.0f, std::cos(rotation[1])};
+        if (DoorwayTownRoad(MapNo, position, facing)) moonmod::ChronicleTownRoad(MapNo);
+    }
+
     if (EdMoveCharaInfo.system_event_no > 0) {
         RunSystemEvent(EdMoveCharaInfo.system_event_no, &MainCamera);
     } else if (EdMoveCharaInfo.event_no > 0) {
@@ -3923,7 +4155,15 @@ void MoveChara() {
 
         if (param->kind == ED_EVENT_POINT_DOOR) {
             if (std::string_view(param->point->destination) == "dungeon") {
-                RunEvent(130, &MainCamera);
+                // MoonMod (L4): a door that has opened once stands open; facing into it, the party walks in
+                sceVu0FVECTOR rotation;
+                Chara->GetRotation(rotation);
+                const float facing[3] = {std::sin(rotation[1]), 0.0f, std::cos(rotation[1])};
+                if (const int dungeon = DoorwayOpenTownDoor(MapNo, facing); dungeon >= 0) {
+                    if (NextMapNo < 0) MapJump(dungeon, -1);
+                } else if (dungeon == -2) {
+                    RunEvent(130, &MainCamera);
+                }
             } else if (EdPadDown(0x40, 1) != 0 && EdCheckViewMode() == 0 && key_lock == 0) {
                 ED_EVENT_POINT *point = param->point;
 
@@ -4832,6 +5072,9 @@ void LoadGroundData() {
 
     EditPartsInfo.Initialize(NowEditMap);
     LoadObjectParts();
+#ifdef PORT
+    MaterializeChronicleModGeoramaPieces(NowEditMap, ObjParts);
+#endif
     pEditGround->plot_parts = ObjParts;
     pEditGround->river_parts = RiverParts;
     pEditGround->road_parts = RoadParts;

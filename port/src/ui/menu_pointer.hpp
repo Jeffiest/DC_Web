@@ -30,6 +30,7 @@ public:
     float x = 0.0f;         /**< Pointer position in 640x480 units. */
     float y = 0.0f;         /**< Pointer position in 640x480 units. */
     bool  pointing = false; /**< The pointer has taken over from the pad. */
+    bool  wide = false;     /**< Roams the whole visible screen (past 640x480 on a wide window) rather than 640x480. */
 
     /**
      * The screen opened: the mouse becomes the pointer, and buttons already held act only once

@@ -43,6 +43,11 @@ constexpr float kDegree = std::numbers::pi_v<float> / 180.0f;
 
 // Without capture the window's motion always counts, so no window is needed.
 void Settings(float sensitivity, bool invert_y) {
+    // Each test starts from no scripted input, no menu mouse and no lock, whatever ran before it.
+    InputSetOverride(0, nullptr);
+    InputSetMenuMouse(false);
+    InputSetScriptedDevices({});
+    InputSetMovementLocked(false);
     InputResetBindings();
     InputMouseSettings settings;
     settings.sensitivity = sensitivity;

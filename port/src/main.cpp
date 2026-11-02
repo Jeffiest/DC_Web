@@ -41,6 +41,11 @@
 #include "langset.hpp"
 #include "localize/localize.hpp"
 #include "menu_save.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "moonmod/mods_directory.hpp"
+#include "moonmod/native_resource_overrides.hpp"
+#include "moonmod/runtime.hpp"
 #include "nowload.hpp"
 #include "options/menu_option.hpp"
 #include "platform/audio.hpp"
@@ -86,9 +91,11 @@ struct Options {
     int          display_per_tick = 0;
     const char  *jump = nullptr;
     const char  *give = nullptr;
+    const char  *georama_stock = nullptr;
     bool         fast_load = false;
     bool         show_fps = false;
     bool         screenshot_fps = false;
+    const char  *screenshot_at = nullptr; // frames to also capture, "1900,1910": <screenshot>_<frame>.png
     bool         perf_log = false;
     const char  *export_text = nullptr;
     const char  *export_gameplay = nullptr;
@@ -116,6 +123,7 @@ float g_switch_render_scale = 0.0f;
                  "          [--display-per-tick N]"
 #endif
                  " [--show-fps] [--jump MODE[:MAP]] [--fast-load]\n"
+                 "          [--georama-stock TOWN:PART:COUNT]\n"
                  "          [--give ITEM,...]\n"
                  "  --data DIR         extracted game data or its sibling data.zip (default: DC_DATA,\n"
                  "                     then ./data, then data/ beside the executable)\n"
@@ -129,6 +137,7 @@ float g_switch_render_scale = 0.0f;
                  "                     --headless does when there is no VK_EXT_headless_surface)\n"
                  "  --frames N         stop after N frames of the game's main loop\n"
                  "  --screenshot PATH  write the last tick's image (no FPS counter) to PATH on exit\n"
+                 "  --screenshot-at F,F with --screenshot: also write PATH_<frame>.png at each listed frame\n"
                  "  --input FILE       drive pad 1 from a script (default: DC_INPUT); see docs/PC.md\n"
 #ifndef __SWITCH__
                  "  --width, --height  window size in pixels (default: config.json, then the monitor's)\n"
@@ -146,10 +155,13 @@ float g_switch_render_scale = 0.0f;
                  "  --perf-log         log tick, render and GPU timings once a second\n"
                  "test hooks:\n"
                  "  --jump MODE[:MAP]  start in edit:<map>, e01/e03/e04 (populated presets), dungeon:<0-6>, title, rush, opening or menu,\n"
-                 "                     skipping the warm-up (DC_JUMP); see docs/PC.md\n"
+                 "                     skipping the warm-up (DC_JUMP); see docs/PC.md; MoonMod: house:<interior>[@<event>]\n"
+                 "                     (house:i01h01@150) goes on into that house of its town, its plot marked complete,\n"
+                 "                     starting with the given event\n"
                  "  --fast-load        loading-screen holds and fades of a few ticks (DC_FAST_LOAD=1)\n"
                  "  --give ITEM,...    give the party these item and weapon numbers when a town or dungeon\n"
-                 "                     starts, unless it holds them (DC_GIVE); see docs/PC.md\n",
+                 "                     starts, unless it holds them (DC_GIVE); see docs/PC.md\n"
+                 "  --georama-stock TOWN:PART:COUNT  test hook: grant built stock after a town starts; PART -1 targets all loaded pieces\n",
                  program);
 #ifdef __SWITCH__
     std::fprintf(stderr, "  --switch-core-affinity separate|auto  pin game and render to separate cores "
@@ -199,6 +211,8 @@ Options ParseOptions(int argc, const char **argv) {
             options.jump = value();
         } else if (arg == "--give") {
             options.give = value();
+        } else if (arg == "--georama-stock") {
+            options.georama_stock = value();
         } else if (arg == "--fast-load") {
             options.fast_load = true;
         } else if (arg == "--export-text") {
@@ -211,6 +225,8 @@ Options ParseOptions(int argc, const char **argv) {
             options.show_fps = true;
         } else if (arg == "--screenshot-fps") {
             options.screenshot_fps = true;
+        } else if (arg == "--screenshot-at") {
+            options.screenshot_at = value();
         } else if (arg == "--perf-log") {
             options.perf_log = true;
 #ifndef __SWITCH__
@@ -333,6 +349,8 @@ void BgmTestPump() {
     SndBgmPlay(track);
 }
 
+void CaptureListedFrames();
+
 void PumpHost() {
     BgmTestPump();
     if (!WindowPollEvents()) {
@@ -356,6 +374,56 @@ void PumpHost() {
 #endif
     InputPoll();
     InputScriptApply(GameFrameCount());
+    CaptureListedFrames();
+}
+
+int Screenshot(const char *path);
+
+// --screenshot-at: the listed frames' images beside the final screenshot, as <stem>_<frame>.png.
+void CaptureListedFrames() {
+    static std::vector<long long> pending;
+    static bool                   parsed = false;
+    if (!parsed) {
+        parsed = true;
+        if (g_options.screenshot_at != nullptr && g_options.screenshot != nullptr) {
+            std::string list = g_options.screenshot_at;
+            for (std::size_t at = 0; at < list.size();) {
+                std::size_t comma = list.find(',', at);
+                if (comma == std::string::npos) comma = list.size();
+                pending.push_back(std::atoll(list.substr(at, comma - at).c_str()));
+                at = comma + 1;
+            }
+        }
+    }
+    if (pending.empty()) return;
+    const long long frame = static_cast<long long>(GameFrameCount());
+    for (std::size_t n = 0; n < pending.size(); ++n) {
+        if (pending[n] != frame) continue;
+        std::string path = g_options.screenshot;
+        if (const std::size_t dot = path.rfind('.'); dot != std::string::npos) path.resize(dot);
+        path += "_" + std::to_string(frame) + ".png";
+        Screenshot(path.c_str());
+        pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(n));
+        return;
+    }
+}
+
+void PumpMoonMod() {
+    moonmod::ChronicleTick();
+    moonmod::SharedRuntime().Pump();
+    // Hot reload: about once a second, mod files rewritten on disk (a dc1tk build, an edit) are
+    // picked up; they apply when the game next loads them, which the notice says.
+    static int countdown = 0;
+    if (--countdown > 0) return;
+    countdown = 60;
+    const std::vector<std::string> changed = moonmod::RefreshChangedNativeResourceOverrides();
+    if (changed.empty()) return;
+    LocalizeReset();
+    for (const std::string &path : changed) std::fprintf(stderr, "moonmod: reloaded override %s\n", path.c_str());
+    moonmod::ShowManagerNotice(changed.size() == 1 ? "Mod file reloaded: " + changed[0] + " (applies when the game next loads it)"
+                                                   : "Mod files reloaded: " + std::to_string(changed.size()) +
+                                                         " (they apply when the game next loads them)",
+                               300);
 }
 
 void LoadInputScript(const char *path) {
@@ -569,6 +637,11 @@ int Run(int argc, const char **argv) {
         std::fprintf(stderr, "bad --give: %s\n", options.give);
         std::exit(kExitUsage);
     }
+    if (options.georama_stock != nullptr && *options.georama_stock != '\0' &&
+        !GameSetGeoramaStock(options.georama_stock)) {
+        std::fprintf(stderr, "bad --georama-stock: %s\n", options.georama_stock);
+        std::exit(kExitUsage);
+    }
     if (options.jump != nullptr && *options.jump != '\0' && !GameSetJump(options.jump)) {
         std::fprintf(stderr, "bad --jump: %s\n", options.jump);
         std::exit(kExitUsage);
@@ -658,6 +731,7 @@ int Run(int argc, const char **argv) {
         SwitchConfigureThreads();
     }
 #endif
+    WindowShow();
     gfx::SetAnisotropy(config.anisotropy);
 #if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     gfx::SetRenderScale(ConfigRenderScale(config));
@@ -675,6 +749,26 @@ int Run(int argc, const char **argv) {
     const char *bounded_headless = std::getenv("DC_HEADLESS_BOUNDED");
     ClockSetUnbounded(options.headless && (bounded_headless == nullptr || std::string_view(bounded_headless) != "1"));
     ClockAddPumpHook(PumpHost);
+    moonmod::RuntimeConfig moonmod_config;
+    moonmod_config.game_id = "chronicle";
+    moonmod_config.game_name = "Chronicle";
+    moonmod_config.framework_api = 1;
+    // One authoritative package directory: scanning several made older package copies show up as duplicate mods.
+    moonmod_config.mod_directories = {moonmod::ModsDirectory(PathsExecutable().parent_path(), PathsSaveRoot())};
+    const std::u8string mods_folder = moonmod_config.mod_directories.front().u8string();
+    std::fprintf(stderr, "moonmod: mods folder %.*s\n", static_cast<int>(mods_folder.size()),
+                 reinterpret_cast<const char *>(mods_folder.data()));
+    moonmod_config.save_root = PathsSaveRoot();
+    moonmod::ConfigureChronicleApi(moonmod_config);
+    moonmod_config.log = [](std::string_view level, std::string_view mod, std::string_view message) {
+        std::fprintf(stderr, "moonmod[%.*s][%.*s]: %.*s\n", static_cast<int>(level.size()), level.data(),
+                     static_cast<int>(mod.size()), mod.data(), static_cast<int>(message.size()), message.data());
+    };
+    std::string moonmod_error;
+    if (!moonmod::SharedRuntime().Start(std::move(moonmod_config), moonmod_error)) {
+        std::fprintf(stderr, "moonmod: %s\n", moonmod_error.c_str());
+    }
+    ClockAddPumpHook(PumpMoonMod);
     GameSetFrameBudget(options.frames);
     GameSetPerfLog(options.perf_log);
     if (options.perf_log) {
@@ -710,7 +804,9 @@ int Run(int argc, const char **argv) {
     ConfigRemoveChangeHook(GameOptionsChanged);
     ConfigRemoveChangeHook(ConfigDisplayChanged);
     ConfigRemoveChangeHook(ApplyConfigChange);
+    ClockRemovePumpHook(PumpMoonMod);
     ClockRemovePumpHook(PumpHost);
+    moonmod::SharedRuntime().Stop();
     DiscordStop();
     AudioOutputStop();
     InputShutdown();

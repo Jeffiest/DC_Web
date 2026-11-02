@@ -182,7 +182,7 @@ STATIC_ASSERT(sizeof(ITEM_MONEY_ENTRY) == 4);
  * The buy and sell price of every item from ITEM_ATTACH_START on, indexed by item number less
  * ITEM_ATTACH_START.
  */
-extern ITEM_MONEY_ENTRY PriceList[296];
+extern ITEM_MONEY_ENTRY PriceList[328];
 
 /**
  * Gives the goods list one item shop sells from.

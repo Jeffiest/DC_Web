@@ -13,7 +13,7 @@ name: PC builds
 
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
   workflow_dispatch:
 
@@ -71,8 +71,24 @@ jobs:
           env -u DC_DATA ctest --output-on-failure -j4 \
             -E 'GEqualFiltersAroundQuantizedReferences|^GfxGpuDepthCopy[.]DepthPlanesOnACopiedDepthMatchPlaneByPlane$'
 
+      # A stale list fails the job, with the list as it should be kept as the truncations artifact to commit.
       - name: Audit pointer truncations
-        run: /usr/bin/python3 scripts/port/truncations.py --build port/build/pc --check
+        run: |
+          if ! /usr/bin/python3 scripts/port/truncations.py --build port/build/pc --check; then
+            /usr/bin/python3 scripts/port/truncations.py --build port/build/pc
+            echo "TRUNCATIONS_STALE=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload the refreshed truncations list
+        if: env.TRUNCATIONS_STALE == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: truncations
+          path: docs/port/truncations.md
+
+      - name: Fail on a stale truncations list
+        if: env.TRUNCATIONS_STALE == '1'
+        run: exit 1
 
   windows:
     name: Build and test (Windows x64)

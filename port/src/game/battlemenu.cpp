@@ -45,6 +45,8 @@
 #include "vutext.hpp"
 #include "weapon_buildup.hpp"
 #include "weaponlevelup.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/item_icon_override.hpp"
 
 namespace dc::game {
 
@@ -92,14 +94,15 @@ s16 BtlDrawTbl[2][8] = {
     {0, 1, 2, 3, 8, 5, 4, 6}
 };
 
-SYS_CHARA_INFO SysChara[6] = {
-    {0, 0, {0, 0}, 0.0f, 0.0f},
-    {1, 0, {0, 0}, 0.0f, 0.0f},
-    {2, 0, {0, 0}, 0.0f, 0.0f},
-    {3, 0, {0, 0}, 0.0f, 0.0f},
-    {4, 0, {0, 0}, 0.0f, 0.0f},
-    {5, 0, {0, 0}, 0.0f, 0.0f},
+// MoonMod: room for every playable character, each entry its own (the weapon menu's row of faces reads them without
+// the item menu's ring having opened first).
+SYS_CHARA_INFO SysChara[CHARA_MAX] = {
+    {0, 0, {0, 0}, 0.0f, 0.0f},  {1, 0, {0, 0}, 0.0f, 0.0f},  {2, 0, {0, 0}, 0.0f, 0.0f},  {3, 0, {0, 0}, 0.0f, 0.0f},
+    {4, 0, {0, 0}, 0.0f, 0.0f},  {5, 0, {0, 0}, 0.0f, 0.0f},  {6, 0, {0, 0}, 0.0f, 0.0f},  {7, 0, {0, 0}, 0.0f, 0.0f},
+    {8, 0, {0, 0}, 0.0f, 0.0f},  {9, 0, {0, 0}, 0.0f, 0.0f},  {10, 0, {0, 0}, 0.0f, 0.0f}, {11, 0, {0, 0}, 0.0f, 0.0f},
+    {12, 0, {0, 0}, 0.0f, 0.0f}, {13, 0, {0, 0}, 0.0f, 0.0f}, {14, 0, {0, 0}, 0.0f, 0.0f}, {15, 0, {0, 0}, 0.0f, 0.0f},
 };
+static_assert(CHARA_MAX == 16, "SysChara names each character's entry");
 
 s16 MenuDefaultWeaponNo[7] = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN, 81};
 
@@ -199,7 +202,7 @@ s32             MenuWarningMsgFlag;
 u_long128      *BtlMenuCharaChangeBuf;
 
 int GetDefaultWeaponNo(int character_no) {
-    return MenuDefaultWeaponNo[character_no];
+    return MenuDefaultWeaponNo[CombatChara(character_no)]; // MoonMod: a registered character's are his CombatChara's
 }
 
 int IsDefaultWeapon(int weapon_no) {
@@ -886,7 +889,9 @@ void BattleMenuInit(int *texture_blocks, int mode) {
     SetInteriorOutFlag(0);
     DngWepHavePt = BtlMenuStatusPt->chara_weapons[0];
     MenuItemPackPt = &BtlMenuStatusPt->item_pack;
-    MenuChara.slot_count = 6;
+    // MoonMod: the ring has a place for each registered character up to the party's last member (a Gauntlet party past
+    // six, or one who joined a story party); a story party without one keeps six.
+    MenuChara.slot_count = CharaSlotsInPlay(*BtlMenuStatusPt);
     PosAngle = TWO_PI / MenuChara.slot_count;
 
     // Debug builds hand the controlled character a place in the party along with a weapon.
@@ -1231,7 +1236,7 @@ void Btl_InitMenuChara(u_long128 *buffer) {
 
     int message_no = chara + 30;
 
-    if (status->party_size - 1 < chara) {
+    if (!InParty(*status, chara)) {
         message_no = 39;
     }
 
@@ -1244,7 +1249,8 @@ int BattleMenuCharaKey() {
         case MENU_CHARA_CHANGE_LOAD:
             MenuChara.change_counter++;
 
-            if (ReadBGSync() == 0 && MenuChara.change_counter > 20) {
+            // MoonMod player.tuning_set: swap_delay scales the two 20-frame waits (0 = as soon as loaded).
+            if (ReadBGSync() == 0 && MenuChara.change_counter > static_cast<int>(20 * moonmod::ChroniclePlayerSwapDelay())) {
                 BtMenuLoadChara();
                 BreakReadBG();
                 StartReadBG();
@@ -1256,7 +1262,7 @@ int BattleMenuCharaKey() {
         case MENU_CHARA_CHANGE_EXIT:
             MenuChara.change_counter++;
 
-            if (ReadBGSync() == 0 && MenuChara.change_counter > 20) {
+            if (ReadBGSync() == 0 && MenuChara.change_counter > static_cast<int>(20 * moonmod::ChroniclePlayerSwapDelay())) {
                 BtMenuLoad2(1);
                 LockOffTargte();
                 ExitBattleMenu(1);
@@ -1361,7 +1367,7 @@ int BattleMenuCharaKey() {
                         int chara = sys_chara.chara;
                         int mes_no = chara + 0x1E;
 
-                        if (BtlMenuStatusPt->party_size - 1 < chara) {
+                        if (!InParty(*BtlMenuStatusPt, chara)) {
                             mes_no = 0x27;
                         }
 
@@ -1394,7 +1400,7 @@ int BattleMenuCharaKey() {
                 MenuChara.chara--;
 
                 if (MenuChara.chara < 0) {
-                    MenuChara.chara = 5;
+                    MenuChara.chara = MenuChara.slot_count - 1; // MoonMod: a place for each registered character in the party
                 }
 
                 ComMenuSePlay(MENU_SOUND_CURSOR);
@@ -1404,7 +1410,7 @@ int BattleMenuCharaKey() {
                 MenuChara.timer = 0.0f;
                 MenuChara.chara++;
 
-                if (MenuChara.chara > 5) {
+                if (MenuChara.chara >= MenuChara.slot_count) {
                     MenuChara.chara = 0;
                 }
 
@@ -1436,7 +1442,7 @@ int BattleMenuCharaKey() {
 
                                 int chara = SysChara[i].chara;
 
-                                if (status->party_size - 1 < chara) {
+                                if (!InParty(*status, chara)) {
                                     ComMenuSePlay(MENU_SOUND_REFUSE);
                                     return 1;
                                 }
@@ -1467,7 +1473,7 @@ int BattleMenuCharaKey() {
                 }
             }
 
-            if (old != MenuChara.chara && MenuChara.chara < BtlMenuStatusPt->party_size && BtlMenuCharaChangeBuf != nullptr && BtlMenuMode == BATTLE_MENU_MODE_DUNGEON) {
+            if (old != MenuChara.chara && InParty(*BtlMenuStatusPt, MenuChara.chara) && BtlMenuCharaChangeBuf != nullptr && BtlMenuMode == BATTLE_MENU_MODE_DUNGEON) {
                 BreakReadBG();
                 CharaChangeInitToGL(BtlMenuCharaChangeBuf, MenuChara.chara);
             }
@@ -1647,7 +1653,7 @@ void DrawCharaSelect() {
             }
         }
 
-        if (i < BtlMenuStatusPt->party_size) {
+        if (InParty(*BtlMenuStatusPt, i)) {
             float box_x = 23.0f + face_x;
             float box_y = 86.0f + face_y;
 
@@ -1676,11 +1682,22 @@ void DrawCharaSelect() {
         int       u = 0;
         int       v = 0;
         int       width = 0x6A;
-        v = i * 0x6A;
+        const int cell = CombatChara(i); // MoonMod: the atlas has the game's six
+        v = cell * 0x6A;
 
-        if (i > 2) {
+        if (cell > 2) {
             u = 0x6A;
-            v = (i - 3) * 0x6A;
+            v = (cell - 3) * 0x6A;
+        }
+
+        // MoonMod: a registered character's face is no atlas cell; his portrait is a picture of its own.
+        {
+            if (CTexture *portrait = CharaPortraitTexture(i)) {
+                face = portrait;
+                u = 0;
+                v = 0;
+                width = 0x80;
+            }
         }
 
         int shade = 0x80;
@@ -1691,7 +1708,7 @@ void DrawCharaSelect() {
             shade = 0x50;
         }
 
-        if (BtlMenuStatusPt->party_size <= i) {
+        if (!InParty(*BtlMenuStatusPt, i)) {
             face = NonCharaFace;
 
             if (SysChara[i].place == 0) {
@@ -1748,13 +1765,13 @@ void DrawCharaSelect() {
             int cursor_x = 0x3C;
             int i = 0;
 
-            for (i = 0; i < 6; i++) {
+            for (i = 0; i < MenuChara.slot_count; i++) {
                 if (SysChara[i].place == 0) {
                     break;
                 }
             }
 
-            if (BtlMenuStatusPt->party_size <= SysChara[i].chara) {
+            if (!InParty(*BtlMenuStatusPt, SysChara[i].chara)) {
                 cursor_x = 0xA0;
                 waku_x = static_cast<float>(0x18A + chara_r_long * cos(angle) - 30.0);
                 width = 0x6E;
@@ -1948,6 +1965,7 @@ void WeaponNameDraw(int y, int selected_only, int alpha) {
                 mes_no = 999;
             }
 
+
             if (mes_no > 100) {
                 AtoraNameMes.GetMesWidth_system(mes_no);
                 level = DngWepHavePt[slot].level;
@@ -1990,6 +2008,7 @@ void WeaponNameDraw(int y, int selected_only, int alpha) {
     AtoraNameMes.edge_alpha = alpha;
     AtoraNameMes.Step();
     AtoraNameMes.DrawMesWin();
+
 
     if (WepMenu.mode == WEP_MENU_LIST && WepMenu.state == WEP_STATE_IDLE) {
         CTexture *frame = TexManager.GetTexture("frame_image", -1);
@@ -3222,7 +3241,7 @@ int WeaponMenuKastumSelectDown(int row, int enabled_rows) {
  */
 int WeaponSelectKey() {
     int result = 0;
-    int chara_num = 6;
+    int chara_num = CharaSlotsInPlay(*BtlMenuStatusPt); // MoonMod: a registered character who joined has a place too
     int prev_chara = WepMenu.chara;
 
     switch (WepMenu.mode) {
@@ -3445,7 +3464,7 @@ int WeaponSelectKey() {
                             WepMenu.state = WEP_STATE_WARNING;
                             WepMenu.warning_no = 4;
                             ComMenuSePlay(MENU_SOUND_REFUSE);
-                        } else if (BtlMenuStatusPt->party_size <= WepMenu.chara) {
+                        } else if (!InParty(*BtlMenuStatusPt, WepMenu.chara)) {
                             WepMenu.state = WEP_STATE_WARNING;
                             WepMenu.warning_no = 2;
                             ComMenuSePlay(MENU_SOUND_REFUSE);
@@ -3661,7 +3680,7 @@ int WeaponSelectKey() {
             } else if (GamePad.Down(PAD_CIRCLE)) {
                 WepMenu.mode = WEP_MENU_ACTION;
 
-                if (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON && static_cast<CUserStatus *>(BtlMenuStatusPt)->cur_chara == CHARA_RUBY && WepMenu.chara == CHARA_RUBY) {
+                if (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON && CombatChara(static_cast<CUserStatus *>(BtlMenuStatusPt)->cur_chara) == CHARA_RUBY && WepMenu.chara == CHARA_RUBY) {
                     StartReadBG();
                     DngWepEffectReadStart();
                 }
@@ -3930,7 +3949,7 @@ void WepAttachHaveCancel() {
         WepMenu.sockets_enabled = false;
         GetNowSelectWeapon();
 
-        if (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON && BtlMenuStatusPt->cur_chara == CHARA_RUBY && WepMenu.chara == CHARA_RUBY) {
+        if (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON && CombatChara(BtlMenuStatusPt->cur_chara) == CHARA_RUBY && WepMenu.chara == CHARA_RUBY) {
             StartReadBG();
             DngWepEffectReadStart();
         }
@@ -4597,7 +4616,7 @@ int ItemTrushKey(int *thrown, int *thrown_vol, int slot) {
                 int          equip = WhoIsWeaponEquip(held);
 
                 if (equip < 0) {
-                    for (int i = 0; i < 6; i++) {
+                    for (int i = 0; i < CharaCount(); i++) {
                         CDngStatusData *status = BtlMenuStatusPt;
                         WEAPON_HAVE    *row = status->chara_weapons[i];
                         weapon = &row[10];
@@ -4619,7 +4638,7 @@ int ItemTrushKey(int *thrown, int *thrown_vol, int slot) {
 
                 int is_default = 0;
 
-                for (int chara = 0; chara < 6; chara++) {
+                for (int chara = 0; chara < CharaCount(); chara++) {
                     int default_no = GetDefaultWeaponNo(chara);
 
                     if (ItemMenuMode.board.weapon.item_no == default_no || ItemMenuMode.board.weapon.item_no == default_no + 1) {
@@ -4938,7 +4957,7 @@ void ExistItemMenu() {
     TexManager.CleanUpTextureList();
     BtlMenuTexBlockEnter();
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < CharaSlotsInPlay(*BtlMenuStatusPt); i++) {
         int slot = BtlMenuStatusPt->equipped_weapon_slot[i];
 
         if (0 > slot || slot >= 10) {
@@ -4957,26 +4976,18 @@ namespace {
 void ChangeMenuChara() {
     if (MenuWepLevelUp.operation_kind < WEP_EFFECT_CURE_HEAL_HP || MenuWepLevelUp.operation_kind > WEP_EFFECT_CURE_POCKET) {
         int previous = ItemMenuMode.chara;
-        int party_size = BtlMenuStatusPt->party_size;
 
+        // MoonMod: through the party's members, a registered one who joined included.
         if (GamePad.Down(PAD_L2 | PAD_L1) != 0) {
-            ItemMenuMode.chara--;
-
-            if (ItemMenuMode.chara < 0) {
-                ItemMenuMode.chara = party_size - 1;
-            }
+            ItemMenuMode.chara = NextPartyMember(*BtlMenuStatusPt, ItemMenuMode.chara, -1);
         }
 
         if (GamePad.Down(PAD_R2 | PAD_R1) != 0) {
-            ItemMenuMode.chara++;
-
-            if (party_size - 1 < ItemMenuMode.chara) {
-                ItemMenuMode.chara = 0;
-            }
+            ItemMenuMode.chara = NextPartyMember(*BtlMenuStatusPt, ItemMenuMode.chara, 1);
         }
 
         if (previous != ItemMenuMode.chara) {
-            if (ItemMenuMode.chara <= BtlMenuStatusPt->party_size) {
+            if (InParty(*BtlMenuStatusPt, ItemMenuMode.chara)) {
                 if (ReadBGSync() != 0) {
                     BreakReadBG();
                 }
@@ -5573,7 +5584,7 @@ int ItemMenuMainKey() {
                                             if (ItemMenuMode.chara == who) {
                                                 EquipWeaponFrame(&DefaultWeapon, ItemMenuMode.chara, CharaMainHandViewFlag);
 
-                                                if (static_cast<CUserStatus *>(BtlMenuStatusPt)->cur_chara == CHARA_OSMOND) {
+                                                if (CombatChara(static_cast<CUserStatus *>(BtlMenuStatusPt)->cur_chara) == CHARA_OSMOND) {
                                                     NowMainEffect = &CharaMainEffectCrash;
                                                     BtActStatus.gun_type = 0;
                                                 }
@@ -6217,7 +6228,7 @@ int ItemMenuMainKey() {
                     break;
                 }
                 case BOARD_PAGE_WEAPON:
-                    for (int i = 0; i < 6; i++) {
+                    for (int i = 0; i < CharaCount(); i++) {
                         CDngStatusData *status = BtlMenuStatusPt;
                         WEAPON_HAVE    *weapons = status->chara_weapons[i];
                         WEAPON_HAVE    *weapon = &weapons[10];
@@ -6322,7 +6333,7 @@ int ItemMenuMainKey() {
         int made_no = CommonMenuMes2.mes_no[0];
         int made_value = CommonMenuMes2.value;
 
-        if ((name_mes > 0 && made_no != name_mes + 0x64) || (value >= 0 && made_value != value) || (chara_mes >= 0 && made_no != chara_mes + 0x32)) {
+        if ((name_mes > 0 && made_no != name_mes + 0x64) || (value >= 0 && made_value != value) || (chara_mes >= 0 && made_no != CharaTitleLine(chara_mes))) {
             remake = 1;
         }
 
@@ -6336,7 +6347,8 @@ int ItemMenuMainKey() {
             }
 
             if (chara_mes >= 0) {
-                CommonMenuMes2.mes_no[0] = chara_mes + 0x32;
+                // MoonMod: a registered character's title is his own (CharaTitleLine)
+                CommonMenuMes2.mes_no[0] = CharaTitleLine(chara_mes);
             }
 
             CommonMenuMes2.mes_made = -1;
@@ -6399,7 +6411,7 @@ void ItemMenuModeDraw() {
                 case ITEM_MENU_CHARA:
                 case ITEM_MENU_WEAPON:
                 case ITEM_MENU_DEFENSE:
-                    if (BtlMenuStatusPt->party_size > 1) {
+                    if (PartyCount(*BtlMenuStatusPt) > 1) {
                         arrow_x = 0x32;
                         arrow_y = 0x9C;
                         arrow_w = 0xE8;
@@ -6848,7 +6860,7 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         RECT number_rect = {0x100, 0x60, 0xC, 0xE};
         DrawMenuNumber(level, x + 0x64, y + 0x24, CharaStatus, number_rect, 1, alpha);
 
-        if (MenuExTextureReadFlag == MENU_EX_TEX_READY && chara < BtlMenuStatusPt->party_size) {
+        if (MenuExTextureReadFlag == MENU_EX_TEX_READY && InParty(*BtlMenuStatusPt, chara)) {
             MenuTextureReload(MenuExtendReadBlock);
             MGSetWindowRect(CRect_i_(x + 0x82, 0x5D, 0x76, 0x3F));
             MenuPolygonDraw(alpha, MenuCharaPolyDraw);
@@ -6997,7 +7009,13 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         }
 
         draw_y = y - 0x14;
-        int party_size = BtlMenuStatusPt->party_size;
+        // MoonMod: the tabs are the party's members in order, so `place` is chara's among them (a registered one who
+        // joined a story party comes after the six).
+        int party_size = PartyCount(*BtlMenuStatusPt);
+        int place = 0;
+        for (int member = 0; member < chara; member++) {
+            place += InParty(*BtlMenuStatusPt, member) ? 1 : 0;
+        }
         int tab = 0;
         int i = 0;
         int after = 0;
@@ -7005,9 +7023,9 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         int tex_y = 0;
 
         for (; i <= party_size; i++) {
-            if (tab == chara) {
+            if (tab == place) {
                 if (after != 0) {
-                    draw_x = x + 0x10 + chara * 0xC;
+                    draw_x = x + 0x10 + place * 0xC;
                     DrawMenu2DSprite(CharaStatus, CRect_i_(draw_x, draw_y - 1, 0x20, 0x1B), CRect_i_(0, 0xD8, 0x20, 0x1C), alpha);
                     DrawMenu2DSprite(CharaStatus, CRect_i_(draw_x + 0x20, draw_y - 1, 0x5E, 0x1B), CRect_i_(0x20, 0xD8, 0x4A, 0x1C), alpha);
                     DrawMenu2DSprite(CharaStatus, CRect_i_(draw_x + 0x7E, draw_y - 1, 0x20, 0x1B), CRect_i_(0x6A, 0xD8, 0x20, 0x1C), alpha);
@@ -7039,8 +7057,9 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         int item_no = weapon->item_no;
         draw_x = x + 0x16;
         draw_y = y + 0x10;
-        RetCTex(item_no, tex_x, tex_y);
-        CTexture *icon = TexManager.GetTexture("wepicon", -1);
+        // MoonMod: a mod weapon's own icon (weapons.register icon) in place of the atlas cell
+        CTexture *own = RetCTex(item_no, tex_x, tex_y);
+        CTexture *icon = own != nullptr && own != WepIcon ? own : TexManager.GetTexture("wepicon", -1);
 
         if (icon != nullptr && item_no >= ITEM_WEAPON_START) {
             MenuTextureReload(ItemMenuWeaponIconReadBlock);
@@ -7051,7 +7070,8 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         }
 
         MenuTextureReload(CommonMenuMes3.tex_block);
-        int mes_no = chara + 0xC2;
+        // MoonMod: a registered character's name is his name line (no message file has one)
+        int mes_no = chara < SAVE_CHARA_COUNT ? chara + 0xC2 : CharaNameLine(chara);
 
         if (CommonMenuMes3.mes_made != mes_no) {
             CommonMenuMes3.MakeMesWin(mes_no);
@@ -7063,7 +7083,7 @@ void ItemMenuCharaStatusDraw(int x, int y, int chara, int alpha) {
         s8  char_width[7] = {8, 6, 6, 6, 6, 6, 6};
         s8  name_offset[7] = {0, 6, 6, 6, 6, 6, 6};
         int lang = BtlMenuNowLang;
-        DrawMenuClsMes(&CommonMenuMes3, x + 0x5A + chara * 0xC - name_length * char_width[lang] + name_offset[lang], y - 0x12);
+        DrawMenuClsMes(&CommonMenuMes3, x + 0x5A + place * 0xC - name_length * char_width[lang] + name_offset[lang], y - 0x12);
     }
 }
 
@@ -7186,7 +7206,7 @@ void CharaStatusMsgDraw(int x, int y, int chara, int per_member, int alpha) {
     float period = 0.0f;
 
     if (per_member != 0) {
-        float count = BtlMenuStatusPt->GetPartySize();
+        float count = PartyCount(*BtlMenuStatusPt);
         period = 50.0f * count;
     } else {
         period = 50.0f;

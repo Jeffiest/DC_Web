@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string_view>
 #include <vector>
 
@@ -36,6 +37,19 @@ std::filesystem::path SaveSlotPath(int file_no);
  * Returns the path of the shared state.json.
  */
 std::filesystem::path SaveStatePath();
+
+/**
+ * Returns the active numbered native save slot, zero-based, or -1 before a numbered slot has been selected.
+ * Autosave loads keep the last numbered slot.
+ */
+int SaveSlotCurrentNativeFileNo();
+
+/**
+ * Returns the stable identity of a numbered save. A new generation is assigned when the slot is created or
+ * when an existing save has no identity record yet; deleting the save discards its generation.
+ */
+std::uint64_t SaveSlotGeneration(int file_no);
+std::uint64_t SaveSlotEnsureGeneration(int file_no, bool new_save = false);
 
 /**
  * Returns the file a save folder's name stands for, or -1 for any other name.

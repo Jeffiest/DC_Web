@@ -212,7 +212,7 @@ std::size_t CommonIndex(int item) {
 // Every item number in ComItemInfo, each at its own row.
 std::vector<Row> EveryItem() {
     std::vector<Row> items;
-    for (std::size_t index = 0; index < std::size(ComItemInfo); index++) {
+    for (std::size_t index = 0; index < kRetailCommonItemCount; index++) {
         items.push_back({.item = ITEM_ATTACH_START + static_cast<int>(index), .index = index});
     }
     return items;
@@ -251,7 +251,7 @@ const std::vector<Table> &Tables() {
                                               AttachList, original.attachments,
                                               ItemsOfKind(ITEMKIND_ATTACH, std::size(AttachList))));
         list.push_back(MakeTable<WEAPON_DATA>("items/weapons.json", "weapons", "weapons", kWeaponFields, WeaponList,
-                                              original.weapons, ItemsOfKind(ITEMKIND_WEAPON, std::size(WeaponList))));
+                                              original.weapons, ItemsOfKind(ITEMKIND_WEAPON, kRetailWeaponCount)));
         list.push_back(MakeTable<EsaInfo>("items/bait.json", "bait", "bait", kBaitFields, esa_info, original.bait, Baits()));
         list.push_back(MakeTable<ITEM_MONEY_ENTRY>("items/prices.json", "prices", "prices", kPriceFields, PriceList,
                                                    original.prices, EveryItem()));
@@ -503,7 +503,7 @@ Def VanillaDef(int item) {
         std::ranges::copy(data.elem, attachment.elements.begin());
         std::ranges::copy(data.vs_monster, attachment.vs_monster.begin());
         def.With(attachment);
-    } else if (info.kind == ITEMKIND_WEAPON && info.index >= 0 && std::cmp_less(info.index, std::size(WeaponList))) {
+    } else if (info.kind == ITEMKIND_WEAPON && info.index >= 0 && std::cmp_less(info.index, kRetailWeaponCount)) {
         const WEAPON_DATA &data = WeaponList[info.index];
         def.With(Weapon{.owner = data.owner,
                         .durability = data.durability,

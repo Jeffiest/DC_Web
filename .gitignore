@@ -17,6 +17,9 @@
 /port/android/host-tools/glslang.exe
 /port/android/app/src/main/jniLibs/*/libSDL3.so
 /port/android/*.log
+# Pinned local Windows toolchains and download archives from tools/windows/acquire.ps1.
+/archives/
+/deps/
 
 # Reference assembly, split from the disc by splat and never committed: one
 # tree per release, ps2/asm/ntsc and ps2/asm/pal.

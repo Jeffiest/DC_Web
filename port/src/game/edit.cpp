@@ -2036,6 +2036,14 @@ int EdMenuMode() {
     return finished;
 }
 
+} // namespace dc::game
+
+namespace moonmod {
+void ChronicleNativeItemPickedUp(int item_no, int count, int character, int slot);
+} // namespace moonmod
+
+namespace dc::game {
+
 /* A count below zero means one, so a caller that has nothing to say about how many gets one. */
 void EdGetItem(int item, int count, int attachment) {
     if (count < 0) {
@@ -2050,10 +2058,11 @@ void EdGetItem(int item, int count, int attachment) {
     }
 
     for (int i = 0; i < count; i++) {
-        if (attachment > 0) {
-            status->GetItem(item_no, attachment);
-        } else {
-            status->GetItem(item_no, 0);
+        const int slot = attachment > 0 ? status->GetItem(item_no, attachment) : status->GetItem(item_no, 0);
+        // MoonMod: a weapon a dungeon script hands over (the clown's chest) is reported as a chest's is, so a mod can
+        // offer its weapon choice for it too.
+        if (slot >= 0 && mode == GAME_MODE_DUNGEON && item_no >= ITEM_WEAPON_START) {
+            moonmod::ChronicleNativeItemPickedUp(item_no, 1, status->CheckWeaponUser(item_no), slot);
         }
     }
 }

@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "btactstatus.hpp"
+#include "mod_atla.hpp"
 #include "btitem.hpp"
 #include "btmisc.hpp"
 #include "camerafollow.hpp"
@@ -46,6 +47,12 @@
 #include "userstatus.hpp"
 #include "vector.hpp"
 #include "weaponeffect.hpp"
+#include "playable_chara.hpp"
+#include "moonmod/game_hooks.hpp"
+
+namespace moonmod {
+void ChronicleNativeItemPickedUp(int item_no, int count, int character, int slot);
+} // namespace moonmod
 
 namespace dc::game {
 
@@ -102,12 +109,15 @@ void selectChrUnit(int chara_no, int reload) {
     }
 
     UserStatus->cur_chara = chara_no;
-    LoadFile(const_cast<char *>(charaNameTbl[chara_no]), read_buffer, &size);
+    // MoonMod: a registered character's pack is the mod file he names (playable_chara.hpp).
+    // and any character's form is the pack it names (player.form_set)
+    LoadFile(const_cast<char *>(chara_no < 6 && ActiveCharaForm(chara_no) == nullptr ? charaNameTbl[chara_no] : CharaPackPath(chara_no)),
+             read_buffer, &size);
     wait_now_loading_vsync();
     size = static_cast<int>(static_cast<u_int>(((size >> 6) + 1) << 6) >> 2);
     u_int *weapon0 = &read_buffer[size];
-    BtGetWeaponNamePath3(weapon0_name.data(), unused_cfg_name.data(), defWeapon[chara_no]);
-    BtGetWeaponNamePath3(weapon1_name.data(), unused_cfg_name.data(), defWeapon[chara_no] + 1);
+    BtGetWeaponNamePath3(weapon0_name.data(), unused_cfg_name.data(), defWeapon[CombatChara(chara_no)]);
+    BtGetWeaponNamePath3(weapon1_name.data(), unused_cfg_name.data(), defWeapon[CombatChara(chara_no)] + 1);
     BtGetWeaponNamePath3(weapon2_name.data(), unused_cfg_name.data(), UserStatus->chara_weapons[chara_no][UserStatus->equipped_weapon_slot[chara_no]].item_no);
     std::string path = std::format("commenu/weapon/{}", weapon0_name.data());
     LoadFile(path.data(), weapon0, &size);
@@ -130,7 +140,7 @@ void selectChrUnit(int chara_no, int reload) {
     MainChara_Effect(effect, read_buffer, 0);
     CWeaponFx.InitSet(NowWeapon->frame, "dcol0", "dcol1");
     SetWeaponColor();
-    SndVoiceLoad(UserStatus->cur_chara);
+    SndVoiceLoad(CharaVoiceSet(UserStatus->cur_chara)); // MoonMod: a registered character's own voice, if his mod gave one
     LoadActiveItemIcon();
     nowUnitNow = UserStatus->cur_chara;
 
@@ -209,7 +219,26 @@ u_char *item_mds;
 u_char *item_img;
 u_char *escape_file;
 
+// An item whose model file can't be read (an unused weapon slot a mod's drop rules rolled) shows its owner's first
+// weapon instead of loading nothing, which crashed reading the empty block as a model.
+std::pair<std::string, std::string> ShownItemPaths(int item_no) {
+    auto paths = ItemPaths(item_no);
+    if (GameFileAvailable(paths.first) && GameFileAvailable(paths.second)) return paths;
+    const int weapon = TransWepNo(item_no);
+    if (weapon < ITEM_WEAPON_START) return ItemPaths(ITEM_REGULAR_WATER);
+    constexpr int first_weapons[] = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN,
+                                     ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN};
+    int chara = 0;
+    while (chara < 5 && weapon >= first_weapons[chara + 1]) ++chara;
+    return ItemPaths(first_weapons[chara] + 1);
+}
+
 } // namespace
+
+bool ItemModelAvailable(int item_no) {
+    const auto [model_path, texture_path] = ItemPaths(item_no);
+    return GameFileAvailable(model_path) && GameFileAvailable(texture_path);
+}
 
 void BtGetTreasureboxBig_Init() {
     int item_no = NowDngMap->boxes[NowDngMap->events[iventActive].index].item_no;
@@ -218,7 +247,8 @@ void BtGetTreasureboxBig_Init() {
 
     if (DngStatus()->CheckWeaponRot(item_no) >= 10) {
         SndSePlay(SE_CHEST_OPEN_BIG, -1, 0);
-        SetSystemMes(DngStatus()->CheckWeaponUser(item_no) + 0x49, -1, MES_POS_CENTRE, 0, nullptr, nullptr);
+        // MoonMod: a registered character has no "can't carry" line of its own; the one it fights as stands in
+        SetSystemMes(CombatChara(DngStatus()->CheckWeaponUser(item_no)) + 0x49, -1, MES_POS_CENTRE, 0, nullptr, nullptr);
         int index = NowDngMap->events[iventActive].index;
         NowDngMap->boxes[index].lid_angle = -20.0f;
         SetMIniMapStatus(0);
@@ -255,7 +285,7 @@ void BtGetTreasureboxBig_Init() {
         TreasureboxBig_itemType = TREASUREBOX_POSE_RING;
     }
 
-    auto [model_path, texture_path] = ItemPaths(item_no);
+    auto [model_path, texture_path] = ShownItemPaths(item_no);
     int size = 0;
 
     TreasureboxBig_itemNo = item_no;
@@ -270,7 +300,7 @@ void BtGetTreasureboxBig_Init() {
     CommitCashBlock(size);
     u_char *chr = NextCashBlock();
     itemOpenItemChr = reinterpret_cast<u_int *>(chr);
-    LoadFileBG(const_cast<char *>(chara_files[static_cast<u_char>(UserStatus->cur_chara)]), reinterpret_cast<u_long128 *>(chr), &size);
+    LoadFileBG(const_cast<char *>(chara_files[CombatChara(UserStatus->cur_chara)]), reinterpret_cast<u_long128 *>(chr), &size); // MoonMod: a registered character's chest motions are his CombatChara's
     CommitCashBlock(size);
     SndSPSeLoadBG(2, reinterpret_cast<u_int *>(NextCashBlock()), &size);
     CommitCashBlock(size);
@@ -294,6 +324,7 @@ int BtGetTreasureboxBig_Loop() {
             if (SndSPSeSyncBG() == 0 && ReadBGSync() == 0) {
                 SetTempTexture(0x1C, reinterpret_cast<char *>(item_img));
                 itemBoxModel = LoadMDSFile(reinterpret_cast<u_int *>(item_mds), &BtCashBuffer, 0, nullptr, nullptr);
+                moonmod::ChroniclePlayerMotionsSuspend(); // MoonMod: base2's chest motions are numbered where mod motions sit
                 CharaMain.LoadPackData(itemOpenItemChr, "base2.cfg", &BtCashBuffer, &BtCashBuffer);
                 BtActStatus.shadow_visible = false;
                 BtGetTreasurebox_Sled++;
@@ -311,6 +342,8 @@ int BtGetTreasureboxBig_Loop() {
             int index = NowDngMap->events[iventActive].index;
             sceVu0CopyVector(position, NowDngMap->boxes[index].pos);
             NowDngMap->boxes[index].lid_angle = -30.0f;
+            moonmod::ChronicleChestOpened(NowDngMap, index);
+            moonmod::CollectChronicleChestValue(NowDngMap, index);
             NowDngMap->boxes[index].closed = 0;
             itemOpenBig.frame->SetPosition(position);
             itemOpenBigFx.frame->SetPosition(position);
@@ -405,7 +438,14 @@ int BtGetTreasureboxBig_Loop() {
                 BtActStatus.shadow_visible = true;
                 TexManager.DeleteTextureBlock(0x1C);
                 TexManager.CleanUpTextureList();
-                DngStatus()->GetItem(TreasureboxBig_itemNo, 0);
+                // MoonMod: tell the mod layer what the big chest handed over and where it landed.
+                const int pickup_slot = DngStatus()->GetItem(TreasureboxBig_itemNo, 0);
+                if (pickup_slot >= 0) {
+                    moonmod::ChronicleNativeItemPickedUp(
+                        TreasureboxBig_itemNo, 1,
+                        TreasureboxBig_itemNo >= ITEM_WEAPON_START ? DngStatus()->CheckWeaponUser(TreasureboxBig_itemNo) : -1,
+                        pickup_slot);
+                }
                 NowCamera__3->FollowOn();
                 sceVu0CopyVector(position, CharaMain.pos);
                 position[2] += 10.0f;
@@ -498,7 +538,7 @@ void BtGetTreasureboxSmall_Init(int dungeon) {
     std::println("get attach vol = {}", volume);
     BtGetTreasureboxSmall_itemNo = item_no;
     BtGetTreasureboxSmall_itemVolume = volume;
-    auto [model_path, texture_path] = ItemPaths(item_no);
+    auto [model_path, texture_path] = ShownItemPaths(item_no);
     std::println("[{}]{}", item_no, model_path);
     std::println("[{}]{}", item_no, texture_path);
     ResetCashBuffer();
@@ -511,7 +551,7 @@ void BtGetTreasureboxSmall_Init(int dungeon) {
     CommitCashBlock(size);
     u_char *chr = NextCashBlock();
     itemOpenItemChr = reinterpret_cast<u_int *>(chr);
-    LoadFileBG(const_cast<char *>(chara_files[static_cast<u_char>(UserStatus->cur_chara)]), reinterpret_cast<u_long128 *>(chr), &size);
+    LoadFileBG(const_cast<char *>(chara_files[CombatChara(UserStatus->cur_chara)]), reinterpret_cast<u_long128 *>(chr), &size); // MoonMod: a registered character's chest motions are his CombatChara's
     CommitCashBlock(size);
     SndSPSeLoadBG(2, reinterpret_cast<u_int *>(NextCashBlock()), &size);
     CommitCashBlock(size);
@@ -534,6 +574,7 @@ int BtGetTreasureboxSmall_Loop() {
                 SndSPSeSyncBG();
                 SetTempTexture(0x1C, reinterpret_cast<char *>(item_img));
                 itemBoxModel = LoadMDSFile(reinterpret_cast<u_int *>(item_mds), &BtCashBuffer, 0, nullptr, nullptr);
+                moonmod::ChroniclePlayerMotionsSuspend(); // MoonMod: base2's chest motions are numbered where mod motions sit
                 CharaMain.LoadPackData(itemOpenItemChr, "base2.cfg", &BtCashBuffer, &BtCashBuffer);
                 BtActStatus.shadow_visible = false;
                 BtGetTreasurebox_Sled++;
@@ -553,6 +594,8 @@ int BtGetTreasureboxSmall_Loop() {
             int index = NowDngMap->events[iventActive].index;
             sceVu0CopyVector(position, NowDngMap->boxes[index].pos);
             NowDngMap->boxes[index].lid_angle = -30.0f;
+            moonmod::ChronicleChestOpened(NowDngMap, index);
+            moonmod::CollectChronicleChestValue(NowDngMap, index);
             NowDngMap->boxes[index].closed = 0;
             itemOpenSmall.frame->SetPosition(position);
             itemOpenSmallFx.frame->SetPosition(position);
@@ -632,7 +675,17 @@ int BtGetTreasureboxSmall_Loop() {
                         BtEquipMasuisyou = 1;
                     }
                 } else {
-                    DngStatus()->GetItem(BtGetTreasureboxSmall_itemNo, BtGetTreasureboxSmall_itemVolume);
+                    // MoonMod: tell the mod layer what the small chest handed over and where it landed.
+                    const int pickup_slot =
+                        DngStatus()->GetItem(BtGetTreasureboxSmall_itemNo, BtGetTreasureboxSmall_itemVolume);
+                    if (pickup_slot >= 0) {
+                        moonmod::ChronicleNativeItemPickedUp(
+                            BtGetTreasureboxSmall_itemNo, 1,
+                            BtGetTreasureboxSmall_itemNo >= ITEM_WEAPON_START
+                                ? DngStatus()->CheckWeaponUser(BtGetTreasureboxSmall_itemNo)
+                                : -1,
+                            pickup_slot);
+                    }
                 }
 
                 sceVu0FVECTOR position;
@@ -719,6 +772,7 @@ int BtAtraGetShort_Loop(int map_no, int floor) {
     switch (BtGetAtraBoll_Sled) {
         case 0:
             if (SndSPSeSyncBG() == 0 && ReadBGSync() == 0) {
+                moonmod::ChroniclePlayerMotionsSuspend(); // MoonMod: base2's chest motions are numbered where mod motions sit
                 CharaMain.LoadPackData(itemOpenItemChr, "base2.cfg", &BtCashBuffer, &BtCashBuffer);
                 BtActStatus.shadow_visible = false;
                 shortAtraEffect.LoadPackData2(shortAtraEffectPtr, "info.cfg", &BtCashBuffer, 0x1C, &BtCashBuffer, 0);
@@ -738,11 +792,20 @@ int BtAtraGetShort_Loop(int map_no, int floor) {
                 shortAtraEffect.SetMotion(0, 6);
                 atraGetStatusRate__2 = 0.0f;
                 auto *status = static_cast<CDngStatusData *>(UserStatus);
-                int   atra_id = status->atra_registry[map_no][NowDngMap->atra[index].atra_no].id;
-                BtAtraGetID = atra_id;
+                const int ball_no = NowDngMap->atra[index].atra_no;
                 NowDngMap->atra[NowDngMap->events[BtAtraGetNo].index].used = 0;
                 NowDngMap->events[BtAtraGetNo].kind = DNG_EVENT_NONE;
-                getAtraToSaveData(atra_id, NowDngMap->atra[index].atra_no, SaveData, map_no, floor);
+                if (IsModAtla(ball_no)) {
+                    // MoonMod: a mod's sphere grants nothing of the game's; its mod hears of it (mod_atla.hpp)
+                    BtAtraGetID = ball_no;
+                    ModAtlaCollected(ball_no);
+                } else {
+                    int atra_id = status->atra_registry[map_no][ball_no].id;
+                    BtAtraGetID = atra_id;
+                    // MoonMod: an atla laid in a zone of another floor (dungeons.set_zones source_floor) is that floor's.
+                    const int zone_floor = NowDngMap->atra[index].zone_floor;
+                    getAtraToSaveData(atra_id, ball_no, SaveData, map_no, zone_floor > 0 ? zone_floor - 1 : floor);
+                }
                 sceVu0CopyVector(position, NowDngMap->atra[index].pos);
                 CharaMain.SetPosition(position);
                 CharaMain.SetRotation(0.0f, 0.0f, 0.0f);
@@ -949,7 +1012,7 @@ int BtMiniItemSelect_Loop() {
 }
 
 void BtGetGateKey_Init(int item_no) {
-    auto [model_path, texture_path] = ItemPaths(item_no);
+    auto [model_path, texture_path] = ShownItemPaths(item_no);
     int size = 0;
 
     GateKey_itemNo = item_no;
@@ -1065,7 +1128,12 @@ void BtGetAttach_Init(int dungeon, int item_no) {
 
     BtGetTreasureboxSmall_itemNo = item_no;
     BtGetTreasureboxSmall_itemVolume = volume;
-    static_cast<CDngStatusData *>(UserStatus)->GetItem(item_no, volume);
+    // MoonMod: tell the mod layer which slot the attachment landed in.
+    const int pickup_slot = DngStatus()->GetItem(item_no, volume);
+    if (pickup_slot >= 0) {
+        moonmod::ChronicleNativeItemPickedUp(
+            item_no, 1, item_no >= ITEM_WEAPON_START ? DngStatus()->CheckWeaponUser(item_no) : -1, pickup_slot);
+    }
     ClearSystemMes();
     ItemGetMes(BtGetTreasureboxSmall_itemNo, BtGetTreasureboxSmall_itemVolume, 0x78, 0);
 }
@@ -1436,7 +1504,7 @@ int ItemThrowStep(float *position, float *velocity) {
     velocity[1] -= 0.12f;
     sceVu0Normalize(direction, velocity);
 
-    for (int unit_no = 0; unit_no < 16; unit_no++) {
+    for (int unit_no = 0; unit_no < MONSTOR_SLOT_MAX; unit_no++) {
         for (int i = 0; i < 16; i++) {
             if (NowMonstorUnit->effect[unit_no].timer[i] != 0 && DistVector(NowMonstorUnit->effect[unit_no].position[i], position) <= 1.5f + NowMonstorUnit->effect[unit_no].radius[i]) {
                 return 2;

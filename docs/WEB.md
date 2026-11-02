@@ -74,6 +74,37 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   The page starts `darkcloud_gl.js` on Arm's Mali GPUs (by WebGL's name for the GPU) and where there is no
   WebGPU, and `darkcloud.js` elsewhere; `?renderer=gl` or `?renderer=webgpu` chooses, and the log's first lines
   say which ran on what GPU.
+- **MoonMod** (github.com/Jeffiest/Moonmod): its patches (`ports/chronicle/moonfactory-chronicle.patch` and
+  `moonfactory-kazarov.patch`) are applied here, Lua runtime and all, so mods load as on the desktop. The
+  game looks for them in `save/mods/`, which is `chronicle/save/mods/` in the browser's storage; the page's
+  Mods card adds a mod's folder, a folder of mods or a `.zip` of either there (`zip.js` reads a zip a file at a
+  time), and removes them. Before the game starts it turns each mod on or off and changes its settings, all in
+  MoonMod's profile (`save/moonmod/profile.json`, which the game's Mods menu also writes); "Start the game with
+  mods" off starts it with `MOONMOD_NO_MODS=1`. Native extensions (DLLs) do not load on the web.
+- **Mods for the PC.** The page lists mods for players running the game on their own computer
+  (`site/mods/catalog.json`), each version with the build it was confirmed with, and offers both for the
+  player's system. Both are this repository's releases:
+  - `build-<commit>`: each of main's commits that `pc.yml` and `macos.yml` both pass, with the Windows zip, the
+    Flatpak and the macOS archive (`builds.yml`).
+  - `mod-<id>-<version>`: the mod's folder zipped from the MoonMod commit the list names (`mods.yml`). A version's
+    zip never changes, so a changed mod needs a new version.
+
+  To list a mod, play it with a build of main, then, from a MoonMod checkout at the commit to publish (pushed):
+
+      python port/web/mods/catalog.py add --moonmod <checkout> --mod <id> --build <main commit>
+
+  and merge the change to the list; `mods.yml` publishes the zip. `check` checks the list, and
+  `publish --dry-run` makes the zips without releasing them.
+- **The animation editor** (`site/anim/`) is MoonMod's (`tools/anim/editor`), ported by
+  `port/web/anim/sync_editor.py`: `anim/data.js` answers what the desktop's `server.py` does, from the
+  player's game data in the browser's storage. A disc's character and monster packs are found through
+  `DATA.HD2` (and an image's ISO 9660 root), as dcdata finds them. Their models are the glTF dcdata's
+  converter makes: a data folder or `data.zip` already holds them, and for a disc `anim/convert-worker.js`
+  runs `dc_anim_convert` (`port/web/anim/convert.cpp`, dcdata's model step with Kazarov's Rust core built
+  for `wasm32-unknown-emscripten`) on the one pack and keeps the result under `chronicle/anim/`. Rust's
+  standard library has no threads there, so Kazarov's pools are the calling thread (`core.rs`,
+  `thread_pool`). Motions save into a stored mod (`mods/<id>/resources/anims/...`, as on the desktop) or
+  download. The Reference panel needs the desktop's files and stays hidden.
 
 ## Status
 

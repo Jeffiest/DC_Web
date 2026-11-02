@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "../../../tools/dcdata/dcdata.hpp"
+#include "dcdata.hpp"
 #include "platform_fixture.hpp"
 
 /**

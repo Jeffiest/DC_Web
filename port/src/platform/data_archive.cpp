@@ -7,6 +7,10 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <unistd.h>
+#if defined(_WIN32)
+#include <io.h>
+#include <windows.h>
+#endif
 #include <limits>
 #include <memory>
 #include <print>
@@ -20,6 +24,46 @@
 #include "stb_image.h"
 
 #include "../../../tools/dcdata/dcdata.hpp"
+
+namespace {
+
+// A file opened for reading: binary and by its wide name on Windows, kept from child processes elsewhere.
+int OpenForReading(const std::filesystem::path &path) {
+#if defined(_WIN32)
+    return ::_wopen(path.c_str(), _O_RDONLY | _O_BINARY);
+#else
+    return ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#endif
+}
+
+// pread, which Windows' C library lacks: there a read at an offset is ReadFile with the offset in OVERLAPPED,
+// which leaves the descriptor's own position alone as pread does.
+ssize_t ReadAtOffset(int file, void *output, std::size_t size, std::uint64_t offset) {
+#if defined(_WIN32)
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(file));
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    OVERLAPPED at{};
+    at.Offset = static_cast<DWORD>(offset);
+    at.OffsetHigh = static_cast<DWORD>(offset >> 32);
+    DWORD       got = 0;
+    const DWORD asked = static_cast<DWORD>(std::min<std::size_t>(size, std::size_t{1} << 30));
+    if (!::ReadFile(handle, output, asked, &got, &at)) {
+        if (::GetLastError() == ERROR_HANDLE_EOF) {
+            return 0;
+        }
+        errno = EIO;
+        return -1;
+    }
+    return static_cast<ssize_t>(got);
+#else
+    return ::pread(file, output, size, static_cast<off_t>(offset));
+#endif
+}
+
+} // namespace
 
 namespace dc::platform {
 
@@ -348,7 +392,7 @@ std::unique_ptr<DataArchive> DataArchive::OpenDisc(const std::filesystem::path &
     const std::vector<dcdata::Record> records = dcdata::ParseIndex(hd2);
     std::size_t                       duplicates = 0;
     archive->path_ = opened.dat.file;
-    archive->disc_file_ = ::open(opened.dat.file.c_str(), O_RDONLY | O_CLOEXEC);
+    archive->disc_file_ = OpenForReading(opened.dat.file);
     if (archive->disc_file_ < 0) {
         Invalid(opened.dat.file, "cannot open the disc's DATA.DAT");
     }
@@ -399,7 +443,7 @@ DataArchive::~DataArchive() {
 bool DataArchiveReadAt(int file, std::uint64_t offset, void *output, std::size_t size) {
     auto *at = static_cast<char *>(output);
     while (size > 0) {
-        const ssize_t got = ::pread(file, at, size, static_cast<off_t>(offset));
+        const ssize_t got = ReadAtOffset(file, at, size, offset);
         if (got < 0 && errno == EINTR) {
             continue;
         }
@@ -414,12 +458,12 @@ bool DataArchiveReadAt(int file, std::uint64_t offset, void *output, std::size_t
 }
 
 bool DataArchiveReadFile(const std::filesystem::path &path, void *output, std::size_t size) {
-    const int file = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    const int file = OpenForReading(path);
     if (file < 0) {
         return false;
     }
     char       extra = 0;
-    const bool read = DataArchiveReadAt(file, 0, output, size) && ::pread(file, &extra, 1, size) == 0;
+    const bool read = DataArchiveReadAt(file, 0, output, size) && ReadAtOffset(file, &extra, 1, size) == 0;
     ::close(file);
     return read;
 }

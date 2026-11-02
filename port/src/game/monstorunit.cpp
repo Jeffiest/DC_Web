@@ -1,5 +1,7 @@
 #include "monstorunit.hpp"
 
+#include "moonmod/game_hooks.hpp"
+
 #include <libvu0.h>
 
 #include <array>
@@ -30,6 +32,7 @@
 #include "mathutil.hpp"
 #include "menu_inventory.hpp"
 #include "mglib.hpp"
+#include "moonmod/dungeonmap_layout.hpp"
 #include "nowload.hpp"
 #include "platform/config.hpp"
 #include "randomitem.hpp"
@@ -61,7 +64,7 @@ namespace {
 float CharaHeight(CUserStatus *status) {
     constexpr std::array<float, 6> chara_height = {16.0f, 14.0f, 16.0f, 16.0f, 18.0f, 15.0f};
 
-    return chara_height[status->cur_chara];
+    return chara_height[CombatChara(status->cur_chara)]; // MoonMod: a registered character's is his CombatChara's
 }
 
 /**
@@ -463,9 +466,11 @@ void CMonstorUnit::DrawMapSymbol(float * /*offset*/) {
     CRect_i_      clip;
     CTexture     *texture = TexManager.GetTexture("itempack", -1);
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state != -1 && monster[i].revealed != 0) {
-            bool draw = BtEquipMasuisyou != 0 || DebugStatus[3] != 0 || monster[i].state == 2;
+            // A mod can reveal every monster (player.tuning_set monster_reveal).
+            bool draw = BtEquipMasuisyou != 0 || DebugStatus[3] != 0 || moonmod::ChroniclePlayerMonsterReveal() ||
+                        monster[i].state == 2;
 
             if (draw) {
                 CCharacter *character = &chara[i][0];
@@ -474,10 +479,12 @@ void CMonstorUnit::DrawMapSymbol(float * /*offset*/) {
                 clip.y = 96;
                 clip.width = 8;
                 clip.height = 8;
-                screen.x = static_cast<int>(0.1f * position[0]) + 384;
-                screen.y = static_cast<int>(0.1f * position[2]) + 68;
-                screen.width = 8;
-                screen.height = 8;
+                // The mini-map tile follows the floor grid (moonmod/dungeonmap_layout.hpp).
+                screen.width = std::max(6, DNG_MAP_TILE / 2);
+                screen.height = std::max(6, DNG_MAP_TILE / 2);
+                screen.x = static_cast<int>(DNG_MAP_SCALE * position[0]) + DNG_MAP_X + (DNG_MAP_TILE - screen.width) / 2;
+                screen.y = static_cast<int>(DNG_MAP_SCALE * position[2]) + DNG_MAP_Y + (DNG_MAP_TILE - screen.height) / 2;
+                if (!DngMiniMapShows(screen.x, screen.y, screen.width, screen.height)) continue;
                 set2DSprite(Vif1Packet, texture, screen, clip);
             }
         }
@@ -582,9 +589,13 @@ int CMonstorUnit::CheckEventFlag2() {
 }
 
 void CMonstorUnit::ArrangementPos(CDungeonMap *map, int count, int model_no, int /*unused*/) {
+    count = MoonModArrangementCount(map, count, model_no);
+    // MoonMod: a floor registered with an empty encounter (dungeons.register enemies = {}) loads no monster model;
+    // placing one anyway picks an unloaded model, which crashes the first time its shadow is drawn.
+    if (model_no == -1 && model_count <= 0) count = 0;
     sceVu0FVECTOR        position;
     sceVu0FVECTOR        existing;
-    std::array<bool, 10> used{};
+    std::array<bool, MONSTOR_MODEL_MAX + 1> used{};
 
     for (int n = 0; n < count; n++) {
         bool placed = false;
@@ -597,12 +608,32 @@ void CMonstorUnit::ArrangementPos(CDungeonMap *map, int count, int model_no, int
                 placed = true;
             }
 
-            SearchiDoPutArea(map->cells, 0, 0, 20, 20, position);
+            SearchiDoPutArea(map->cells, 0, 0, DNG_GRID, DNG_GRID, position);
+
+            // MoonMod: the sealed Warden room starts empty; it opens once every monster outside it is dead.
+            if (map == &MainDungeonMap && DngWardenRoomState == DNG_WARDEN_SEALED && DngWardenRoomSeed == map->map_seed &&
+                position[0] > 160.0f * DngWardenRoomX - 80.0f && position[0] < 160.0f * (DngWardenRoomX + DngWardenRoomW) - 80.0f &&
+                position[2] > 160.0f * DngWardenRoomY - 80.0f && position[2] < 160.0f * (DngWardenRoomY + DngWardenRoomH) - 80.0f &&
+                !placed) {
+                continue;
+            }
+
+            // MoonMod: a zone's shrine (dungeons.set_zones shrines) is where the party rests and wakes: no monster starts
+            // within two and a half cells of the spot in front of its spring.
+            if (map == &MainDungeonMap && DngZoneFloorCount > 0 && DngZoneFloorSeed == map->map_seed && !placed) {
+                bool near_shrine = false;
+                for (int z = 0; z < DngZoneFloorCount && z < DNG_ZONE_MAX; ++z) {
+                    if (DngZoneShrineX[z] < 0) continue;
+                    near_shrine = near_shrine || std::hypot(position[0] - 160.0f * DngZoneShrineX[z],
+                                                            position[2] - 160.0f * (DngZoneShrineY[z] + 1)) < 400.0f;
+                }
+                if (near_shrine) continue;
+            }
 
             if (map->CheckTreasureBox(position, 20.0f) != 0 && map->CheckAtra(position, 20.0f) != 0 && map->CheckTrapCircle(position, 20.0f) == nullptr) {
                 bool close = false;
 
-                for (int i = 0; i < 16; i++) {
+                for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
                     if (monster[i].state != -1) {
                         CCharacter *character = &chara[i][0];
                         character->GetPosition(existing);
@@ -616,7 +647,7 @@ void CMonstorUnit::ArrangementPos(CDungeonMap *map, int count, int model_no, int
                 if (!close) {
                     int nearby = 0;
 
-                    for (int i = 0; i < 16; i++) {
+                    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
                         if (monster[i].state != -1) {
                             CCharacter *character = &chara[i][0];
                             character->GetPosition(existing);
@@ -632,6 +663,11 @@ void CMonstorUnit::ArrangementPos(CDungeonMap *map, int count, int model_no, int
 
                         if (model_no == -1) {
                             selected = static_cast<int>(static_cast<float>(model_count) * static_cast<float>(rand()) / 2147483648.0f);
+
+                            // MoonMod (dungeons.set_zones source_floor): a zone holds only its own floor's monsters.
+                            if (!MoonModZoneModelAllowed(map, position, selected)) {
+                                continue;
+                            }
 
                             if (model[selected].kind != MONSTER_KIND_NORMAL && model[selected].kind != MONSTER_KIND_MIMIC_SMALL) {
                                 if (used[selected]) {
@@ -651,6 +687,7 @@ void CMonstorUnit::ArrangementPos(CDungeonMap *map, int count, int model_no, int
     }
 
     SetKey();
+    MoonModZoneKeyCarriers(this, map); // MoonMod: the zone gates' keys
 }
 
 void CMonstorUnit::AllBin2() {
@@ -770,7 +807,7 @@ void CMonstorUnit::DrawMonstor() {
     MGGetAmbient(ambient);
     TexManager.ReloadTexture(Vif1Packet, 42);
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == 2 && monster[i].revealed != 0) {
             current_monster = i;
             CCharacter *character = &chara[i][0];
@@ -842,7 +879,7 @@ void CMonstorUnit::DrawMonstor() {
 void CMonstorUnit::DrawMonstorCursor() {
     sceVu0FVECTOR position;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].view_held != 0) {
             CCharacter *character = &chara[i][0];
             character->GetPosition(position);
@@ -919,7 +956,7 @@ void CMonstorUnit::DrawShadowMonstor() {
     sceVu0FVECTOR light = {0.0f, 1.0f, 0.0f, 0.0f};
     const float   detail_distance = ConfigDetailDistance();
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         const MONSTOR &mon = monster[i];
         const bool     drawn = mon.state == 2 || (mon.state == 1 && mon.player_distance < detail_distance);
 
@@ -945,16 +982,16 @@ void CMonstorUnit::DrawShadowMonstor() {
 void CMonstorUnit::CheckViewLevel() {
     sceVu0FVECTOR player_position;
     sceVu0FVECTOR monster_position;
-    int           sorted[16];
-    int           active[16];
+    int           sorted[MONSTOR_SLOT_MAX];
+    int           active[MONSTOR_SLOT_MAX];
     sceVu0CopyVector(player_position, CharaMain.pos);
     int active_count = 0;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         active[i] = -1;
     }
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         sorted[i] = -1;
         monster[i].view_held = false;
 
@@ -989,7 +1026,7 @@ void CMonstorUnit::CheckViewLevel() {
 
     int sorted_count = 0;
 
-    if (active_count > 4) {
+    if (active_count > MonstorActiveLimit) {
         int floor = UserStatus->cur_floor;
         int max_floor = maxFloorTbl__3[selectMapNo];
 
@@ -1002,8 +1039,19 @@ void CMonstorUnit::CheckViewLevel() {
             float distance = 3200.0f;
 
             for (int j = 0; j < active_count; j++) {
-                if (active[j] != -1 && !(distance <= monster[active[j]].player_distance)) {
-                    distance = monster[active[j]].player_distance;
+                // Monsters a mod placed are kept awake ahead of the floor's own.
+                const int candidate_slot = active[j];
+                if (candidate_slot == -1) {
+                    continue;
+                }
+                const bool candidate_is_mod_owned = moonmod::ChronicleMonsterActorIsModOwned(this, candidate_slot);
+                const int  closest_slot = closest == -1 ? -1 : active[closest];
+                const bool closest_is_mod_owned =
+                    closest_slot != -1 && moonmod::ChronicleMonsterActorIsModOwned(this, closest_slot);
+                const float candidate_distance = monster[candidate_slot].player_distance;
+                if (closest == -1 || (candidate_is_mod_owned && !closest_is_mod_owned) ||
+                    (candidate_is_mod_owned == closest_is_mod_owned && candidate_distance < distance)) {
+                    distance = candidate_distance;
                     closest = j;
                 }
             }
@@ -1015,7 +1063,7 @@ void CMonstorUnit::CheckViewLevel() {
             }
         }
 
-        for (int i = 4; i < active_count; i++) {
+        for (int i = MonstorActiveLimit; i < active_count; i++) {
             if (sorted[i] != -1 && monster[sorted[i]].state == 2 && monster[sorted[i]].hp > 0 && monster[sorted[i]].kind != MONSTER_KIND_NO_LOCK_ON) {
                 monster[sorted[i]].state = 1;
                 monster[sorted[i]].view_held = true;
@@ -1066,6 +1114,29 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
     int                 immune = 0;
     sceVu0FVECTOR       direction;
     sceVu0FVECTOR       position;
+
+    // A mod's script may settle this monster's hit or kill itself (game.monster.damage).
+    const int scripted_result = moonmod::TakeChronicleMonsterDamageResult(this, current_monster);
+    if (scripted_result == static_cast<int>(MonsterDamageResult::Killed)) {
+        if (monster[current_monster].stop_timer > 0) {
+            monster[current_monster].stop_timer = 0;
+            monster[current_monster].motion_reset_pending = true;
+        }
+        monster[current_monster].hp = 0;
+        monster[current_monster].last_attacker = -1;
+        if (alive_count > 0) {
+            alive_count--;
+        }
+        static_cast<CDngStatusData *>(UserStatus)->AddKills();
+        if (monster[current_monster].event_flag2 != -1) {
+            monster[current_monster].event_flag2_pending = 1;
+        }
+        moonmod::ChronicleMonsterDefeated(this, current_monster, true);
+        return MonsterDamageResult::Killed;
+    }
+    if (scripted_result == static_cast<int>(MonsterDamageResult::Hit)) {
+        return MonsterDamageResult::Hit;
+    }
 
     if (monster[current_monster].stop_timer <= 0) {
         for (int i = 0; i < 16; i++) {
@@ -1187,9 +1258,11 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
 
             if (monster[current_monster].hp <= 0) {
                 monster[current_monster].hp = 0;
+                monster[current_monster].last_attacker = -1;
                 alive_count--;
                 result = MonsterDamageResult::Killed;
                 static_cast<CDngStatusData *>(UserStatus)->AddKills();
+                moonmod::ChronicleMonsterDefeated(this, current_monster, true);
             }
 
             chara[current_monster][0].GetPosition(poison_position);
@@ -1214,7 +1287,9 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
             }
 
             if (active) {
-                int hit = NowColData->FindMonsterHit(effect[current_monster].position[i], effect[current_monster].radius[i]);
+                // MoonMod: entities.set_stats hit_reach widens the sphere (a weak point out of a sword's reach)
+                int hit = NowColData->FindMonsterHit(effect[current_monster].position[i],
+                                                     effect[current_monster].radius[i] + moonmod::ChronicleMonsterHitReach(this, current_monster));
                 int rejected = 0;
 
                 if (hit != -1) {
@@ -1528,6 +1603,10 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                     if (owner != -1) {
                         float old_damage = damage;
                         int   multiplier = effect[index].parameter[i][owner];
+                        // MoonMod: entities.set_stats hit_share (a story boss met by any party)
+                        if (moonmod::ChronicleMonsterHitShare(this, index)) {
+                            for (int c = 0; c < 6; ++c) multiplier = std::max(multiplier, effect[index].parameter[i][c]);
+                        }
                         auto  damage_scale = static_cast<float>(multiplier);
                         damage = damage / 100.0f * damage_scale;
 
@@ -1559,6 +1638,17 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                         damage = 0;
                     }
 
+                    int weapon_id = -1;
+                    if (owner >= 0 && owner < CharaCount() && UserStatus != nullptr) {
+                        const int equipped = UserStatus->equipped_weapon_slot[owner];
+                        if (equipped >= 0 && equipped < 11) {
+                            weapon_id = UserStatus->chara_weapons[owner][equipped].item_no;
+                        }
+                    }
+                    damage = moonmod::ApplyChronicleCombatDamageFormula(
+                        damage, weapon_id, moonmod::ChronicleNativeMonsterModelId(this, current_monster), owner,
+                        monster[current_monster].hp, monster[current_monster].max_hp);
+
                     auto amount = static_cast<int>(damage);
 
                     if (!(damage - static_cast<float>(amount) <= 0.0f)) {
@@ -1578,12 +1668,20 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                         amount = monster[current_monster].hp;
                     }
 
+                    if (amount >= monster[current_monster].hp &&
+                        moonmod::ChronicleTryEnemyVarietySurvival(this, current_monster, amount)) {
+                        result = MonsterDamageResult::Hit;
+                    }
+
                     if (amount > 0 && (owner == 0 || owner == 2 || owner == 4) && element >= 0 && element < WEAPON_ELEMENT_NONE) {
                         SndSePlay(element + 0x65, -1, 0);
                     }
 
                     BtActStatus.monstor_target = owner;
                     monster[current_monster].hp -= amount;
+                    if (amount > 0) {
+                        moonmod::QueueChronicleMonsterHit(this, current_monster, owner, weapon_id, amount, element);
+                    }
 
                     if (monster[current_monster].hp <= 0) {
                         monster[current_monster].last_attacker = owner;
@@ -1622,6 +1720,7 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                     }
 
                     if (result == MonsterDamageResult::Killed) {
+                        moonmod::ChronicleMonsterDefeated(this, current_monster, false);
                         return MonsterDamageResult::Killed;
                     }
 
@@ -1658,7 +1757,7 @@ void CMonstorUnit::MoveCheck(float *position, float *movement, int flat) {
     float upper = top[1];
     float lower = end[1];
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == 2 && monster[i].revealed != 0) {
             if (effect3[i].count == 0) {
                 CCharacter *character = &chara[i][0];
@@ -1828,7 +1927,7 @@ void CMonstorUnit::MoveChecMonster() {
     sceVu0CopyVector(flat_next, next_position);
     flat_next[1] = 1;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == 2 && i != current_monster) {
             CCharacter *other = &chara[i][0];
             other->GetPosition(other_position);
@@ -1880,7 +1979,7 @@ void CMonstorUnit::Step(int pause) {
     }
 
     if (paused != 0) {
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
             if (monster[i].state == 2) {
                 monster[i].requested_motion_flags &= ~4;
 
@@ -1921,7 +2020,7 @@ void CMonstorUnit::Step(int pause) {
 
     BtActStatus.monstor_target = -1;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == 2) {
             current_monster = i;
 
@@ -1974,7 +2073,7 @@ void CMonstorUnit::Step(int pause) {
                 box.min[1] = position[1] - 80.0f;
                 box.min[2] = position[2] - 30.0f;
 
-                for (int j = 0; j < 16; j++) {
+                for (int j = 0; j < MONSTOR_SLOT_MAX; j++) {
                     if (j != current_monster && monster[j].state == 2) {
                         chara[j][0].GetPosition(other_position);
                         collision->SetPosition(other_position);
@@ -1992,11 +2091,11 @@ void CMonstorUnit::Step(int pause) {
                     case MonsterDamageResult::None:
                         break;
                     case MonsterDamageResult::Hit:
-                        interpreter[current_monster].run(110);
+                        moonmod::ChronicleMonsterRun(this, current_monster, 110);
                         script_state[current_monster] = 1;
                         break;
                     case MonsterDamageResult::Killed:
-                        interpreter[current_monster].run(120);
+                        moonmod::ChronicleMonsterRun(this, current_monster, 120);
                         script_state[current_monster] = 1;
                         break;
                 }
@@ -2008,15 +2107,25 @@ void CMonstorUnit::Step(int pause) {
                         monster[current_monster].invincible_timer--;
                     }
                 } else {
-                    if (script_state[current_monster] == 0) {
+                    if (moonmod::ChronicleMonsterDefeatFading(this, current_monster)) {
+                        // MoonMod: a boss whose defeat scene can't run here fades out, its script held, and dies
+                        // as a monster's script has it do (STATUS_SET_DEAD).
+                        if (monster[current_monster].palette_alpha <= 0.0f && monster[current_monster].state == 2) {
+                            monster[current_monster].state = -1;
+                            alive_count--;
+                        }
+                    } else if (script_state[current_monster] == 0) {
                         if (monster[current_monster].revealed == 1) {
-                            interpreter[current_monster].run(50);
+                            moonmod::ChronicleMonsterRun(this, current_monster, 50);
                             monster[current_monster].revealed = -1;
                         } else {
-                            interpreter[current_monster].run(100);
+                            moonmod::ChronicleMonsterRun(this, current_monster, 100);
                         }
 
                         script_state[current_monster] = 1;
+                    } else if (moonmod::ChronicleMonsterRunAgain(this, current_monster)) {
+                        // MoonMod: a script override installed since its idle loop started takes it over now.
+                        script_state[current_monster] = 0;
                     } else {
                         interpreter[current_monster].resume();
 
@@ -2089,6 +2198,28 @@ void CMonstorUnit::Step(int pause) {
                         if (CheckWidth(monster[current_monster].collision_poly, monster[current_monster].collision_poly_count, width_start, monster[current_monster].body_radius, width_hit, 0) != 0) {
                             width_hit[1] -= 5.0f;
                             chara[current_monster][0].SetPosition(width_hit);
+                        }
+                    }
+
+                    // MoonMod (set_zones sanctuary): a shrine's circle is a wall to monsters; one in it is put at its edge.
+                    if (DngZoneSanctuary != 0 && DngZoneShrines != 0 && NowDngMap == &MainDungeonMap && DngZoneFloorCount > 0 &&
+                        DngZoneFloorSeed == MainDungeonMap.map_seed) {
+                        chara[current_monster][0].GetPosition(position);
+                        for (int z = 0; z < DngZoneFloorCount && z < DNG_ZONE_MAX; ++z) {
+                            if (DngZoneShrineX[z] < 0) continue;
+                            const float spot_x = 160.0f * DngZoneShrineX[z];
+                            const float spot_z = 160.0f * (DngZoneShrineY[z] + 1);
+                            const float dx = position[0] - spot_x;
+                            const float dz = position[2] - spot_z;
+                            const float d = std::hypot(dx, dz);
+                            if (d >= DNG_ZONE_SANCTUARY) continue;
+                            if (d < 1.0f) {
+                                position[2] = spot_z + DNG_ZONE_SANCTUARY; // dead centre: out the open side, away from the spring
+                            } else {
+                                position[0] = spot_x + dx * (DNG_ZONE_SANCTUARY / d);
+                                position[2] = spot_z + dz * (DNG_ZONE_SANCTUARY / d);
+                            }
+                            chara[current_monster][0].SetPosition(position);
                         }
                     }
 
@@ -2289,8 +2420,9 @@ void CMonstorUnit::Step(int pause) {
 }
 
 void CMonstorUnit::CleanViewMonstor(int back_floor) {
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         monster[i].state = -1;
+        monster[i].last_attacker = -1;
         monster[i].stop_timer = 0;
         monster[i].poison_timer = 0;
         monster[i].anger_timer = 0;
@@ -2379,10 +2511,15 @@ void CMonstorUnit::CleanViewMonstor(int back_floor) {
 
     back_dungeon = back_floor;
     alive_count = 0;
+    moonmod::ChronicleMonstersCleared(this);
 }
 
 int CMonstorUnit::SetupBaseModel(int slot, int model_no, int texture_block, CDataAlloc2<1> *alloc) {
-    MONSTOR_MODEL *description = &MonstorTable[model_no];
+    // A mod's monster variant has its own definition (GetMonstorTable).
+    MONSTOR_MODEL *description = GetMonstorTable(model_no);
+    if (description == nullptr) {
+        return 0;
+    }
     CFrameAttr     attr;
     int            file_size = 0;
     attr.fog_enable = true;
@@ -2439,6 +2576,7 @@ int CMonstorUnit::SetupBaseModel(int slot, int model_no, int texture_block, CDat
         }
     }
 
+    moonmod::ChronicleMonsterModelLoaded(this, slot, model_no); // MoonMod: which native model each slot holds
     model_count++;
     return 1;
 }
@@ -2446,7 +2584,7 @@ int CMonstorUnit::SetupBaseModel(int slot, int model_no, int texture_block, CDat
 int CMonstorUnit::SetupViewMonstor(int model_no, float *position, int event_flag) {
     current_monster = -1;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == -1) {
             current_monster = i;
             break;
@@ -2480,6 +2618,7 @@ int CMonstorUnit::SetupViewMonstor(int model_no, float *position, int event_flag
     }
 
     monster[current_monster].state = 1;
+    monster[current_monster].last_attacker = -1;
     monster[current_monster].base_model = model_no;
     monster[current_monster].max_hp = model[model_no].max_hp;
     monster[current_monster].hp = model[model_no].max_hp;
@@ -2536,11 +2675,12 @@ int CMonstorUnit::SetupViewMonstor(int model_no, float *position, int event_flag
     }
 
     if (interpreter[current_monster].check_program(1) != 0) {
-        interpreter[current_monster].run(1);
+        moonmod::ChronicleMonsterRun(this, current_monster, 1);
     }
 
     script_state[current_monster] = 0;
     alive_count++;
+    moonmod::ChronicleMonsterActorCreated(this, current_monster);
     return 1;
 }
 

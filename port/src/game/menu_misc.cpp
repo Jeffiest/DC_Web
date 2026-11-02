@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -47,6 +48,9 @@
 #include "weapon_buildup.hpp"
 #include "weaponeffect.hpp"
 #include "weaponlevelup.hpp"
+#include "playable_chara.hpp"
+#include "moonmod/native_resource_overrides.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -106,6 +110,8 @@ u_long128 *MenuWeaponModelBuildBuffer;
 int NowGetGameFlagForBtlMenu(int game_flag) {
     switch (game_flag) {
         case MENU_MOVE_DUNGEON_ESCAPE:
+            // MoonMod dungeons.set_exits: a mod's world leaves for town only from its shrines.
+            if (moonmod::ChronicleTownExitRefused("menu")) game_flag = MENU_MOVE_LOCKED;
             break;
         case MENU_MOVE_WORLD_MAP_DIRECT:
         case MENU_MOVE_WORLD_MAP:
@@ -275,7 +281,8 @@ int ItemUseFunc(CUserStatus *status, int item_no, int chara, int target, WEAPON_
                     case ITEM_FRUIT_OF_EDEN: {
                         s16 limit[6] = {0xAA, 0x8C, 0xAA, 0x8C, 0xB4, 0xA0};
 
-                        if ((old_condition & AILMENT_KNOCKED_OUT) || now_hp <= 0 || !(static_cast<s16>(max_hp) < limit[chara])) {
+                        // MoonMod: a registered character's limit is his CombatChara's.
+                        if ((old_condition & AILMENT_KNOCKED_OUT) || now_hp <= 0 || !(static_cast<s16>(max_hp) < limit[CombatChara(chara)])) {
                             used = 0;
                         } else {
                             status->max_hp[chara] = max_hp + (&data->vol)[value_no];
@@ -585,7 +592,7 @@ int StartReadWepMDS(u_long128 *buffer, int chara) {
     constexpr std::array<std::string_view, 6> names = {"kgetoan", "kgesyao", "kgegoro", "kgeruby", "kgeunga", "kgeozu"};
     int                                       size = 0;
 
-    std::string path = std::format("commenu/c{}wtes.chr", numbers[chara]);
+    std::string path = std::format("commenu/c{}wtes.chr", numbers[CombatChara(chara)]);
     WeaponRead_Buf = MenuCalcBufAlignment(buffer);
     StartReadBG();
 
@@ -597,7 +604,7 @@ int StartReadWepMDS(u_long128 *buffer, int chara) {
     buffer = MenuCalcBufAlignment(buffer);
     std::array<char, 64> lang_dir{};
     GetPathReadDifferntLang(lang_dir.data());
-    std::string image = std::format("{}{}2.img", lang_dir.data(), names[chara]);
+    std::string image = std::format("{}{}2.img", lang_dir.data(), names[CombatChara(chara)]);
 
     if (LoadFileBG(image.data(), buffer, &size) == 0) {
         return 0;
@@ -614,11 +621,67 @@ int StartReadWepMDS(u_long128 *buffer, int chara) {
 
 namespace {
 
-// Each weapon's .chr address, kept here rather than in the int-sized MenuWeaponModelData table.
-std::array<u_int *, 42> weapon_model_files;
+// Each weapon's .chr address, kept here rather than in the int-sized MenuWeaponModelData table. Retail has 42
+// weapons a character; the weapons mods register (items 377-408) count on from the character's first weapon
+// too, so a kind reaches 408 less the lowest first weapon. Any other index reads an empty entry.
+constexpr int                           kWeaponModelKinds = 160;
+std::array<u_int *, kWeaponModelKinds> weapon_model_files;
+u_int                                  *no_weapon_model;
 
 u_int **GetMenuWeaponModelData(int index) {
+    if (index < 0 || index >= kWeaponModelKinds) {
+        no_weapon_model = nullptr;
+        return &no_weapon_model;
+    }
     return &weapon_model_files[index];
+}
+
+// A registered weapon's own model is not in the menu's weapon pack: it is read from the mod's
+// commenu/weapon/<stem>.chr override and kept here until the menu asks again.
+std::map<int, std::vector<u_long128>> mod_weapon_models;
+
+u_int *LoadModWeaponModel(int item_no, const char *chr) {
+    std::string          path = std::string("commenu/weapon/") + chr;
+    const auto           size = moonmod::NativeResourceOverrideSize(path);
+    if (!size || *size == 0 || *size > (2u << 20)) {
+        return nullptr;
+    }
+    std::vector<u_long128> &buffer = mod_weapon_models[item_no];
+    buffer.assign((*size + 2048) / sizeof(u_long128) + 1, u_long128{});
+    int read = 0;
+    if (!LoadFile2(path.data(), buffer.data(), &read, 0) || read <= 0) {
+        mod_weapon_models.erase(item_no);
+        return nullptr;
+    }
+    return reinterpret_cast<u_int *>(buffer.data());
+}
+
+// The models of the registered weapons the character carries: its own, or its template's from the pack.
+void EnterModWeaponModels(int chara, u_int *pack) {
+    if (BtlMenuStatusPt == nullptr) {
+        return;
+    }
+    const int default_no = GetDefaultWeaponNo(chara);
+    char      name[32];
+    char      cfg[32];
+    for (int slot = 0; slot < 11; slot++) {
+        const int item_no = static_cast<CUserStatus *>(BtlMenuStatusPt)->chara_weapons[chara][slot].item_no;
+        if (MoonModWeaponTemplate(item_no) < 0) {
+            continue;
+        }
+        u_int **entry = GetMenuWeaponModelData(item_no - default_no);
+        if (*entry != nullptr || entry == &no_weapon_model) {
+            continue;
+        }
+        BtGetWeaponNamePath2(name, cfg, chara, item_no - default_no);
+        u_int *file = MoonModWeaponModel(item_no)[0] != '\0' ? LoadModWeaponModel(item_no, name)
+                                                               : GetPackFile(pack, name, nullptr);
+        if (file == nullptr) {
+            std::println("weapon {}: model {} not found", item_no, name);
+            continue;
+        }
+        *entry = file;
+    }
 }
 
 void InitMenuWeaponModelData() {
@@ -631,9 +694,17 @@ int *GetMenuWeaponModelInfo(int index) {
 }
 
 std::pair<std::string, std::string> WeaponNames(int chara, int weapon_index) {
+    chara = CombatChara(chara); // MoonMod: a registered character's weapons are his CombatChara's
     constexpr std::array<std::string_view, 6> prefixes = {"c01w", "c04w", "c06w", "c05w", "c10w", "c18w"};
     if (chara < 0 || std::cmp_greater_equal(chara, prefixes.size()) || weapon_index < 0) {
         return {};
+    }
+    // MoonMod: a registered weapon (items 377-408) goes by its own model and its template's .cfg
+    if (MoonModWeaponTemplate(GetDefaultWeaponNo(chara) + weapon_index) >= 0) {
+        char name[32] = {};
+        char cfg[32] = {};
+        BtGetWeaponNamePath2(name, cfg, chara, weapon_index);
+        return {name, cfg};
     }
     std::string number = std::to_string(weapon_index);
     if (weapon_index < 10) {
@@ -663,7 +734,10 @@ int GetMenuWeaponModelFrameNo(int index) {
     return MenuWeaponModelInfo[index][0];
 }
 
-int EnterWeaponModel(int chara, int texture_block, [[maybe_unused]] int weapon_slot) {
+int EnterWeaponModel(int holder, int texture_block, [[maybe_unused]] int weapon_slot) {
+    // MoonMod: a registered character's weapons are his CombatChara's (`chara`, for their files), but the weapons he
+    // carries are his own (`holder`, for his slots and his registered weapons' models).
+    const int chara = CombatChara(holder);
     if (chara < 0 || chara >= 6) {
         return 1;
     }
@@ -716,6 +790,8 @@ int EnterWeaponModel(int chara, int texture_block, [[maybe_unused]] int weapon_s
                 }
             }
 
+            EnterModWeaponModels(holder, reinterpret_cast<u_int *>(pack->buffer));
+
             u_long128 *build = nullptr;
 
             if (effect != nullptr) {
@@ -726,7 +802,7 @@ int EnterWeaponModel(int chara, int texture_block, [[maybe_unused]] int weapon_s
             }
 
             MenuWeaponModelBuildBuffer = build;
-            WeaponModelBuildFunc(chara, texture_block);
+            WeaponModelBuildFunc(holder, texture_block);
             break;
         }
         default:
@@ -737,7 +813,7 @@ int EnterWeaponModel(int chara, int texture_block, [[maybe_unused]] int weapon_s
 }
 
 void WeaponModelBuildFunc(int chara, int texture_block) {
-    if (chara < 0 || chara >= 6 || BtlMenuStatusPt == nullptr) {
+    if (chara < 0 || chara >= CharaCount() || BtlMenuStatusPt == nullptr) {
         return;
     }
     std::println("weapon model build func start");
@@ -826,7 +902,7 @@ void WeaponModelBuildFunc(int chara, int texture_block) {
 }
 
 int DngWeaponEquipModelBuild(int chara, int texture_block, [[maybe_unused]] u_long128 *read_buffer) {
-    if (chara < 0 || chara >= 6) {
+    if (chara < 0 || chara >= CharaCount()) {
         return 0;
     }
     TexManager.DeleteTextureBlock(texture_block);
@@ -998,17 +1074,22 @@ void MenuCharaMDSBuild2(int chara, int texture_block) {
     textures[0].block_no = texture_block;
     textures[1].block_no = texture_block;
     BG_READ_INFO *file = GetReadBGFile(CharaFileBGReadNo);
-    auto         *pack = reinterpret_cast<u_int *>(file->buffer);
+    // MoonMod: a registered character's menu model is his mod's c0<N>model.pak; without one the menu shows no model.
+    auto *pack = file != nullptr ? reinterpret_cast<u_int *>(file->buffer) : nullptr;
+    std::string config_name = std::format("c0{}dmenu.cfg", chara + 1);
+    if (pack == nullptr || GetPackFile(pack, image_name.data(), &size) == nullptr || GetPackFile(pack, config_name.data(), nullptr) == nullptr) {
+        MenuCharaFrame.Initialize();
+        return;
+    }
     textures[1].name = reinterpret_cast<char *>(GetPackFile(pack, image_name.data(), &size));
     TexManager.DeleteTextureBlock(texture_block);
     TexManager.CleanUpTextureList();
     TexManager.LoadTextureBlockEX(-1, textures);
     // The model is built in the space straight after the read pack file.
     auto       *model = reinterpret_cast<u_char *>(file->buffer + (file->size >> 4) + 1);
-    std::string config_name = std::format("c0{}dmenu.cfg", chara + 1);
     MenuCharaFrame.Initialize();
     MenuExCashBuffer.base = model;
-    MenuExCashBuffer.limit = 0xDC00;
+    MenuExCashBuffer.limit = chara < SAVE_CHARA_COUNT ? 0xDC00 : 0x50000; // MoonMod: his model is a finer mesh
     MenuExCashBuffer.used = 0;
     MenuCharaFrame.LoadPackData(pack, config_name.data(), &MenuExCashBuffer, &MenuExCashBuffer, nullptr);
     CFrameAttr attr;
@@ -1036,9 +1117,10 @@ void MenuCharaMDSBuild2(int chara, int texture_block) {
         {0.9f, 0.9f, 0.9f},
         {0.9f, 0.9f, 0.9f}
     };
-    MenuCharaFrame.SetPosition(position[chara]);
+    // MoonMod: a registered character stands and is scaled as his CombatChara is.
+    MenuCharaFrame.SetPosition(position[CombatChara(chara)]);
     SetNowCharaMotionNo(chara);
-    MenuCharaFrame.SetScale(scale[chara]);
+    MenuCharaFrame.SetScale(scale[CombatChara(chara)]);
     MenuCharaFrame.Step();
 
     if (chara == 0) {
@@ -1050,6 +1132,10 @@ void MenuCharaMDSBuild2(int chara, int texture_block) {
 namespace {
 
 std::string GetCharaChangeReadCharaFilePath(int chara_no) {
+    // MoonMod: a registered character's pack is the mod file he names (playable_chara.hpp).
+    if (chara_no >= SAVE_CHARA_COUNT) {
+        return CharaPackPath(chara_no);
+    }
     return std::format("{}{}{}", readFilePath, charaFile[chara_no], ".chr");
 }
 
@@ -1086,7 +1172,7 @@ int CharaChangeInitToGL(u_long128 *buffer, int chara) {
     menud2wepReadBuf = menud1wepReadBuf + (size >> 4) + 1;
     menud2wepReadBuf = MenuCalcBufAlignment(menud2wepReadBuf);
     WEAPON_HAVE *equipped = &UserStatus->chara_weapons[chara][UserStatus->equipped_weapon_slot[chara]];
-    int          kind = equipped->item_no - defWeapon[chara];
+    int          kind = equipped->item_no - defWeapon[CombatChara(chara)];
 
     if (kind < 0) {
         kind = 0;
@@ -1125,7 +1211,7 @@ void CharaChangeInitToGL2(int load_icon) {
     MenuVoiceLoadPtr = MenuWepIconCharaChangePtr;
     MenuVoiceLoadPtr = MenuCalcBufAlignment(MenuVoiceLoadPtr);
 
-    if (SndVoiceLoadBG(charachangeid, reinterpret_cast<u_int *>(MenuVoiceLoadPtr), &size) == 0) {
+    if (SndVoiceLoadBG(CharaVoiceSet(charachangeid), reinterpret_cast<u_int *>(MenuVoiceLoadPtr), &size) == 0) {
         printf("*** voice read err \n");
     }
 }
@@ -1449,7 +1535,8 @@ int CheckItemThrow(int *items, int *values) {
         }
     }
 
-    for (WEAPON_HAVE *weapons : BtlMenuStatusPt->chara_weapons) {
+    for (int chara = 0; chara < CharaCount(); chara++) {
+        WEAPON_HAVE *weapons = BtlMenuStatusPt->chara_weapons[chara];
         int item_no = weapons[10].item_no;
 
         if (item_no >= ITEM_WEAPON_START) {
@@ -1764,7 +1851,7 @@ int WeaponDataChangeByRGate(WEAPON_HAVE *weapon, int kind) {
                     int chara = UserStatus->cur_chara;
                     EquipWeaponFrame(&DefaultWeapon, chara, CharaMainHandViewFlag);
 
-                    if (chara == 5) {
+                    if (CombatChara(chara) == CHARA_OSMOND) {
                         NowMainEffect = &CharaMainEffectCrash;
                         BtActStatus.gun_type = 0;
                     }

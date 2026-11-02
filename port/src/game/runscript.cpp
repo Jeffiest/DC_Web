@@ -13,6 +13,7 @@
 #include "battle_globals.hpp"
 #include "dataalloc.hpp"
 #include "editloop3.hpp"
+#include "moonmod/runtime.hpp"
 
 namespace dc::game {
 
@@ -335,7 +336,20 @@ void CRunScript::resume() {
 // ran to its end and -1 for a program the script does not have. EdEventInit treats the last two
 // as an event with nothing to show.
 int PortEdRunEvent(int program, CDataAlloc2<1> *arena) {
-    RunEvent(&EdEventScript, program, arena);
+    const moonmod::Json payload = {{"game", "chronicle"}, {"program_no", program},
+                                   {"frame", moonmod::SharedRuntime().Frame()}};
+    const moonmod::ApiCallResult hooked = moonmod::SharedRuntime().DispatchNativeScriptHook(
+        "native.event.run", payload, [program, arena]() {
+            RunEvent(&EdEventScript, program, arena);
+            return moonmod::ApiCallResult{moonmod::ApiCallStatus::Ok, {{"run_status", g_run_result}}, {}};
+        });
+    if (hooked.status == moonmod::ApiCallStatus::Ok && hooked.value.is_object() &&
+        hooked.value.contains("run_status") && hooked.value["run_status"].is_number_integer()) {
+        g_run_result = hooked.value["run_status"].get<int>();
+    } else {
+        // The dispatcher owns native fall-through. Re-entering here could run an event twice.
+        g_run_result = -1;
+    }
     return g_run_result;
 }
 

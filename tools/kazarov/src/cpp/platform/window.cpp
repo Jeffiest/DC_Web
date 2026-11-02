@@ -233,6 +233,13 @@ bool WindowTakeModeEvent() {
     return std::exchange(g_mode_event, false);
 }
 
+void WindowShow() {
+    if (g_window != nullptr && !g_headless) {
+        SDL_ShowWindow(g_window);
+        SDL_RaiseWindow(g_window);
+    }
+}
+
 void WindowShutdown() {
 #ifdef SDL_PLATFORM_IOS
     SDL_RemoveEventWatch(Lifecycle, nullptr);

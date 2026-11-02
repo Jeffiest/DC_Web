@@ -68,6 +68,11 @@ void BtSystemScriptAfter();
 int BtSystemScriptRun(int event, CDataAlloc2<1> *arena);
 
 /**
+ * MoonMod: whether the dungeon's loaded event script has program `no` (its program table, as the runner reads it).
+ */
+bool BtSystemScriptHasProgram(int no);
+
+/**
  * Selects the floor used by the next battle-map jump.
  */
 void BtSetMapJumpFloor(int floor);

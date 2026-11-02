@@ -2,6 +2,8 @@
 
 #include <libvu0.h>
 
+#include <array>
+
 #include "collision.hpp"
 #include "editpartsinfo.hpp"
 #include "frame.hpp"
@@ -264,13 +266,25 @@ int CMapParts::CheckBox2(CBoxVu0 *box) {
     return 1;
 }
 
-// Road tiles must clear the uneven ground at the same height. A small lift lets the ground win the
-// depth test in places as the camera moves, exposing a different, darker surface beneath the road.
-// The constant road lift is within retail's distance-dependent range and keeps adjacent tiles level.
 namespace {
 
-constexpr float kPartsLiftDepth = 0.1f;
-constexpr float kRoadLiftDepth = 0.5f;
+// Retail raises a part by lift times a thousandth of its origin's eye depth, so neighbouring road tiles, each
+// a part of its own, stand at different heights and the ground shows along every seam on a large frame.
+// This frame raises each point by the same amount at its own eye depth instead: neighbours meet edge to edge,
+// and a tile under the player sits as low as retail's. Retail's clamps to 0.02 within 100 units and to 2
+// beyond 2000 are left out; the first is a few hundredths either way and the second is too far to see.
+CFrame &LiftFrame(float lift) {
+    static CFrame frame;
+    const float   scale = lift / 1000.0f;
+
+    sceVu0UnitMatrix(frame.local);
+    for (int column = 0; column < 4; column++) {
+        frame.local[column][1] += scale * mgRenderInfo.view_scaled[column][2];
+    }
+    frame.srt = false;
+    frame.world_valid = false;
+    return frame;
+}
 
 } // namespace
 
@@ -289,19 +303,30 @@ void CMapParts::DrawLOD(float *distance, int lowest, int highest, int *out_level
     sceVu0CopyVector(saved_pos, this->pos);
     sceVu0CopyVector(lifted_pos, saved_pos);
 
-    if (this->subtype == MAP_PARTS_SUBTYPE_ROAD && this->lift > 0.0f) {
-        lifted_pos[1] += kRoadLiftDepth;
+    std::array<CFrame *, 4> lifted{};
+    if (this->lift > 1.0f) {
+        lifted_pos[1] += 0.1f;
     } else if (this->lift > 0.0f) {
-        if (this->lift > 1.0f) {
-            lifted_pos[1] += kPartsLiftDepth;
-        } else {
-            lifted_pos[1] += kPartsLiftDepth * this->lift;
+        CFrame &lift_frame = LiftFrame(this->lift);
+        for (int i = 0; i < 4; i++) {
+            if (this->frame[i] != nullptr && this->frame[i]->parent == nullptr) {
+                this->frame[i]->SetReference(&lift_frame);
+                lifted[i] = this->frame[i];
+            }
         }
     }
 
     sceVu0CopyVector(this->pos, lifted_pos);
     CObjectFrame::DrawLOD(distance, lowest, highest, out_level);
     sceVu0CopyVector(this->pos, saved_pos);
+
+    // The frames cached their lifted world matrices, which nothing else would invalidate.
+    for (CFrame *frame : lifted) {
+        if (frame != nullptr) {
+            frame->DeleteReference();
+            frame->world_valid = false;
+        }
+    }
 }
 
 void CMapParts::DrawParts(float time, float *distance, int lowest, int highest, int *out_level) {

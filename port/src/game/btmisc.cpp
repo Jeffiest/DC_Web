@@ -26,6 +26,7 @@
 #include "menu_save.hpp"
 #include "savedata.hpp"
 #include "snd.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -157,6 +158,21 @@ void BtGetItemNamePath(char *model_path, char *texture_path, int item_no) {
 }
 
 void BtGetWeaponNamePath2(char *chr_name, char *cfg_name, int chara, int weapon_index) {
+    // MoonMod: a registered weapon (items 377-408) has no file of its own number: it reads its template's .cfg
+    // and its own model when the mod gave one, else its template's model.
+    chara = CombatChara(chara); // MoonMod: a registered character holds his CombatChara's weapons
+    const int          item_no = defWeapon__2[chara] + weapon_index;
+    const int          template_no = MoonModWeaponTemplate(item_no);
+    const WEAPON_DATA *template_data = template_no >= 0 ? GetWeaponData(template_no) : nullptr;
+    if (template_data != nullptr && template_data->owner < 6) {
+        const int owner = static_cast<s8>(template_data->owner);
+        BtGetWeaponNamePath2(chr_name, cfg_name, owner, template_no - defWeapon__2[owner]);
+        if (const std::string_view model = MoonModWeaponModel(item_no); !model.empty()) {
+            CopyToBuffer(std::format("{}.chr", model), chr_name);
+        }
+        return;
+    }
+
     const std::string_view prefix = kWeaponPrefixes[chara];
     const std::string      number = FormatWeaponIndex(weapon_index);
 

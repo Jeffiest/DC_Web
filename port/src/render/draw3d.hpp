@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gfx/gfx.hpp"
@@ -253,6 +254,19 @@ struct Draw3DVisual {
     bool                                immediate = false;                  /**< Whether the geometry is drawn per frame. */
     bool                                cache_strip_runs_on_finish = false; /**< Model builders opt in before finalization. */
     bool                                strip_runs_cached = false;          /**< Whether cached runs match the current strips. */
+    /**
+     * A mod's replacement model (moonmod/mod_model.hpp): whether this visual shows one, and the skinning
+     * state that poses it from the retail model's bones each frame.
+     */
+    bool                                          replaced = false;
+    bool                                          skin_fresh = false;
+    std::vector<float>                            skin_bind;
+    std::vector<float>                            skin_base;
+    std::vector<float>                            skin_def;
+    std::vector<float>                            skin_out;
+    std::vector<int>                              skin_src;
+    std::vector<float>                            skin_weight;
+    std::vector<std::vector<std::pair<int, int>>> skin_by_orig;
 };
 
 /**

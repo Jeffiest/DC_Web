@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "../../../tools/dcdata/dcdata.hpp"
+#include "dcdata.hpp"
 
 namespace dc::platform {
 

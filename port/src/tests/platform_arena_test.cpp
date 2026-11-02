@@ -11,7 +11,10 @@
 #include "dataset.hpp"
 #include "main.hpp"
 #include "platform/memory.hpp"
+#include "platform/arena.hpp"
 #include "platform_fixture.hpp"
+#include "render/texture_registry.hpp"
+#include "texture.hpp"
 
 namespace dc::test {
 
@@ -48,6 +51,60 @@ TEST(PlatformArena, CarvesWithHeadroom) {
     ASSERT_TRUE(Aligned64(MotionData.Alloc64(3)));
     ASSERT_TRUE(Aligned64(MotionData.Alloc64(1)));
     ASSERT_TRUE(MotionData.used == 5);
+}
+
+TEST(PlatformArena, WorldsKeepTheirOwnBlocks) {
+    // MoonMod (O2 C1): a town and a dungeon carve the same owners; each world keeps its own blocks
+    SetNextDataWorld(101);
+    InitializeDataBuffer();
+    SetDataBuffer(&TextureData, 100);
+    u_char *town = TextureData.base;
+    std::memset(town, 0x7A, std::size_t{100} * 16);
+
+    SetNextDataWorld(200);
+    InitializeDataBuffer();
+    SetDataBuffer(&TextureData, 100);
+    ASSERT_TRUE(TextureData.base != town);
+    ASSERT_TRUE(town[0] == 0x7A && town[100 * 16 - 1] == 0x7A);
+
+    // back in the town's world: the same block, still as the town left it until its world is cleared
+    ArenaSetWorld(101);
+    SetDataBuffer(&TextureData, 100);
+    ASSERT_TRUE(TextureData.base == town);
+    ASSERT_TRUE(town[0] == 0x7A);
+    SetNextDataWorld(101);
+    InitializeDataBuffer();
+    ASSERT_TRUE(town[0] == 0);
+
+    // anything else is world 0 again
+    InitializeDataBuffer();
+    ASSERT_TRUE(ArenaWorld() == 0);
+}
+
+TEST(PlatformArena, WorldsKeepTheirOwnTextures) {
+    // MoonMod (O2 C1): the manager's release in one world leaves another world's textures alive
+    using render::PortCreatePlaceholder;
+    SetNextDataWorld(101);
+    InitializeDataBuffer();
+    ASSERT_TRUE(render::PortTextureWorld() == 101);
+    unsigned town_palette = 0;
+    const unsigned town = PortCreatePlaceholder("world test town", 8, 8, 8, render::PortTextureOwner::Manager,
+                                                &town_palette);
+    ASSERT_TRUE(town != 0 && render::PortKeyLive(town));
+
+    SetNextDataWorld(200);
+    InitializeDataBuffer();
+    ASSERT_TRUE(TextureManagerKept(101));
+    render::PortReleaseOwner(render::PortTextureOwner::Manager);
+    ASSERT_TRUE(render::PortKeyLive(town));
+
+    // world 0 again, then the town's own release takes its texture
+    InitializeDataBuffer();
+    ASSERT_TRUE(render::PortTextureWorld() == 0);
+    render::PortSetTextureWorld(101);
+    render::PortReleaseOwner(render::PortTextureOwner::Manager);
+    ASSERT_TRUE(!render::PortKeyLive(town));
+    render::PortSetTextureWorld(0);
 }
 
 TEST(PlatformArena, ReusesAndZeroes) {

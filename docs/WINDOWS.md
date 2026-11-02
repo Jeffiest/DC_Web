@@ -128,12 +128,13 @@ copy it beside the built executables, as the Windows job does.
 `dcdata` links Kazarov's `kazarov_bridge` (Rust, with FFmpeg for the movies and
 texture baking), so the port graph needs both. `acquire.ps1` installs them under `<root>/deps`:
 
-- FFmpeg n9.0.2 from BtbN's `win64-lgpl-shared` build, verified by SHA-256. The script
-  rejects an archive whose `LICENSE.txt` is not the LGPL. `configure.ps1` passes it as
+- FFmpeg 9.0.2 as Kazarov's prebuilt `kz-ffmpeg` Windows DLLs, from the release named by
+  `$KazarovDeps` in `common.ps1` and verified by SHA-256. The script rejects a tree whose
+  `kz-ffmpeg.json` does not record the LGPL. `configure.ps1` passes it as
   `-DKZ_FFMPEG_DIR`, and `build.ps1` copies its DLLs beside the executables.
 - `acquire-rust.ps1`: Rust 1.99.0 for `x86_64-pc-windows-gnullvm` (the version in
   `tools/kazarov/rust-toolchain.toml`) from `static.rust-lang.org`, Corrosion 0.6.1, the
-  prebuilt `cxxbridge` 1.0.205 and the locked Cargo crates, in `<root>/deps/rust`. It
+  prebuilt `cxxbridge` 1.0.205 from the same Kazarov release and the locked Cargo crates, in `<root>/deps/rust`. It
   keeps its own `CARGO_HOME` there. `-SkipRustfmt` and `-SkipClippy` leave out those tools.
   `configure.ps1` passes the compiler, `Rust_CARGO`, the target, `INSTALLED_CXXBRIDGE` and
   `FETCHCONTENT_SOURCE_DIR_CORROSION`, and `build.ps1` puts the toolchain on `PATH`.

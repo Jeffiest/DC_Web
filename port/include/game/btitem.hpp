@@ -270,4 +270,9 @@ int ItemThrowStep(float *position, float *velocity);
  */
 extern RS_STACKDATA *PortItemSelectResult;
 
+/**
+ * Whether an item's model and texture can be read (an unused weapon slot has stats but no model).
+ */
+bool ItemModelAvailable(int item_no);
+
 } // namespace dc::game

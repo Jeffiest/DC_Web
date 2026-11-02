@@ -39,6 +39,7 @@
 #include "texture.hpp"
 #include "visualvu1.hpp"
 #include "vu0_ops.hpp"
+#include "moonmod/mod_model.hpp"
 
 namespace dc::game {
 
@@ -480,6 +481,7 @@ Mot_List *MotionProc2(CFrame *frame, tagMOTION_TYPE *motion, tagFRAME_INF *frame
 
         g_skinned_vertices =
             reinterpret_cast<sceVu0FVECTOR *>(reinterpret_cast<u_char *>(model) + model->vertex_ofs);
+        ModsSkinBegin(reinterpret_cast<const float (*)[4]>(g_skinned_vertices));
 
         const int vertex_count = frame_info[list->frame].vertex_count;
         if (vertex_count < 0) {
@@ -525,6 +527,8 @@ Mot_List *MotionProc2(CFrame *frame, tagMOTION_TYPE *motion, tagFRAME_INF *frame
         }
         SkinVertex(g_skinned_vertices[vertex], g_deformed[vertex], frame_info[list->frame].base_vertices[vertex],
                    g_bone_matrix_base, g_bone_matrix, g_bone_matrix_inverse, 0.01f * list->keys[i].value[0]);
+        ModsSkinVertex(reinterpret_cast<const float (*)[4]>(g_skinned_vertices), vertex, g_bone_matrix_base,
+                       g_bone_matrix, g_bone_matrix_inverse, 0.01f * list->keys[i].value[0]);
     }
 
     return list->next;

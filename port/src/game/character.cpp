@@ -19,6 +19,7 @@
 #include "texture.hpp"
 #include "textureanime.hpp"
 #include "visualvu1.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -345,6 +346,8 @@ void CCharacter::SetMotionCamera(CCamera *camera) {
 }
 
 tagMOTION_TYPE *CCharacter::GetMotionParam(int motion_no, int *out_index, int *out_start, int *out_end, int *out_set) {
+    // MoonMod: a town mod can swap the motion a character plays.
+    motion_no = moonmod::ChronicleTownMotionRemap(this, motion_no);
     int             index = -1;
     tagMOTION_TYPE *found = nullptr;
 
@@ -567,7 +570,8 @@ void CCharacter::Step() {
 }
 
 void CCharacter::ShadowStep() {
-    const int motion_no = this->motion_no;
+    // A town mod can swap the motion a character plays.
+    const int motion_no = moonmod::ChronicleTownMotionRemap(this, this->motion_no);
 
     if (motion_no < 0) {
         return;

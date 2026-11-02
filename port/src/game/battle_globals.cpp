@@ -2059,7 +2059,7 @@ void DrawSaveBoardCharaName2(int x, int y, s16 *name, CTexture **textures, spRGB
 }
 
 int GetMsgLengthCharaName(int chara_no) {
-    if (chara_no < 0 || chara_no > 5) {
+    if (chara_no < 0 || chara_no >= CharaCount()) { // MoonMod: a registered character's name (GetCharaName) too
         return 0;
     }
 

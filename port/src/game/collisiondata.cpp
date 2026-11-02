@@ -21,6 +21,7 @@
 #include "rect.hpp"
 #include "snd.hpp"
 #include "userstatus.hpp"
+#include "moonmod/chronicle_adapter.hpp"
 
 namespace dc::game {
 
@@ -615,6 +616,11 @@ void StartMessageDraw(CTexture *texture, int dungeon, int floor, int ura, int al
 
     if (dungeon == DUNGEON_GALLERY_OF_TIME) {
         floor = BtGetFloorLevel(floor - 1);
+    }
+
+    // MoonMod: a mod's floor number (render.floor_label_set) on the card, in the card's own digits.
+    if (const int mod_number = moonmod::ChronicleFloorNumber(); mod_number > 0) {
+        floor = mod_number;
     }
 
     if (floor < 10) {

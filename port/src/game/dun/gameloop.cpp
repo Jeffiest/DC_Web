@@ -1,3 +1,5 @@
+#include "doorway_view.hpp"
+#include "app/gameloop.hpp"
 #include "dun/gameloop.hpp"
 
 #include <libvu0.h>
@@ -16,6 +18,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "battlemenu.hpp"
 #include "btactstatus.hpp"
@@ -74,6 +77,7 @@
 #include "objanime.hpp"
 #include "platform/config.hpp"
 #include "platform/input.hpp"
+#include "playable_chara.hpp"
 #include "randomitem.hpp"
 #include "rect.hpp"
 #include "runeffect.hpp"
@@ -93,6 +97,13 @@
 #include "weaponeffect.hpp"
 #include "weaponelement.hpp"
 #include "wind.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/choice_panel.hpp"
+#include "moonmod/map_screen.hpp"
+#include "moonmod/run_menu.hpp"
+#include "moonmod/dungeon_npc.hpp"
+#include "moonmod/companion.hpp"
+#include "data/data_read.hpp"
 
 namespace dc::game {
 
@@ -102,7 +113,7 @@ using namespace dc::platform;
 namespace {
 
 /* The weapon each character starts with. */
-constexpr std::array<s32, 6> defWeapon__6 = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN};
+constexpr std::array<s32, SAVE_CHARA_COUNT> defWeapon__6 = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN}; // MoonMod: a registered character's are his CombatChara's
 
 /**
  * How far one character reaches when the game picks what to lock on to.
@@ -110,7 +121,7 @@ constexpr std::array<s32, 6> defWeapon__6 = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEA
 float CharaRangeRate(CUserStatus *status) {
     constexpr std::array<float, 6> range_rate = {1.2f, 1.4f, 1.1f, 1.5f, 1.0f, 1.8f};
 
-    return range_rate[status->cur_chara];
+    return range_rate[CombatChara(status->cur_chara)]; // MoonMod: a registered character's is his CombatChara's
 }
 
 /**
@@ -119,7 +130,7 @@ float CharaRangeRate(CUserStatus *status) {
 float CharaHeight(CUserStatus *status) {
     constexpr std::array<float, 6> chara_height = {16.0f, 14.0f, 16.0f, 16.0f, 18.0f, 15.0f};
 
-    return chara_height[status->cur_chara];
+    return chara_height[CombatChara(status->cur_chara)]; // MoonMod: a registered character's is his CombatChara's
 }
 
 /**
@@ -394,7 +405,11 @@ CActiveItemPack activeItem;
 namespace {
 
 /* How square on to the player each monster of the floor stands. */
+#ifdef PORT
+float MonstorPicupInner[MONSTOR_SLOT_MAX];
+#else
 float MonstorPicupInner[36];
+#endif
 
 } // namespace
 
@@ -480,7 +495,7 @@ CDataAlloc2<1> BtStartLogoBuffer(-1);
 CDataAlloc2<1> MonstorModelBuffer(-1);
 
 /* Script working memory, one block per monster on the floor. */
-CDataAlloc2<1> MonstorScriptBuffer[16];
+CDataAlloc2<1> MonstorScriptBuffer[MONSTOR_SLOT_MAX];
 
 /* The buffers the dungeon's item cache and battle scripts run out of. */
 CDataAlloc2<1> BtItemCashArea[6];
@@ -1283,6 +1298,153 @@ void MemoryMapDump() {
     TexManager.print_buff_info();
 }
 
+void DunStartSound() {
+    SndSetReadBuffer(read_buffer);
+
+    if (EdEventInfo.map_jump_bgm_play != 0) {
+        SndBgmLoad(selectMapNo + 100);
+        SndBgmPlay(0);
+    }
+
+    SndSoundLoad(selectMapNo + 100);
+
+    if (selectMapNo == DUNGEON_DEMON_SHAFT) {
+        SndSePlay(SE_AMBIENT_DUNGEON_HISS, 0, 0);
+    }
+
+    if (selectMapNo == DUNGEON_DIVINE_BEAST_CAVE) {
+        SndSePlay(SE_AMBIENT_DUNGEON_HISS, 0, 0);
+        SndSePlay(SE_AMBIENT_CAVE_DRIPS, 0, 0);
+    }
+
+    if (selectMapNo == DUNGEON_SHIPWRECK) {
+        SndSePlay(SE_AMBIENT_SHIPWRECK, 0, 0);
+    }
+
+    if (selectMapNo >= DUNGEON_SUN_MOON_TEMPLE) {
+        SndSePlay(SE_AMBIENT_DEEP_DUNGEON, 0, 0);
+    }
+
+    SndAmbientPlay(0);
+    SndAmbientSetVol(0);
+    BtBattleMusic_Init();
+}
+
+// MoonMod (L3): the dungeon walked back into through its town's door is the floor the party left, not built again:
+// its world comes back as it was (map, monsters, chests, event flags) and the party stands inside the doorway.
+void GameResume() {
+    if (BtEventInfo.no_status_recover != 1) {
+        for (int i = 0; i < CHARA_MAX; i++) {
+            UserStatus->hp[i] = UserStatus->max_hp[i];
+            UserStatus->ailments[i] = 0;
+            UserStatus->ailment_frames[i] = 0;
+        }
+        UserStatus->res_limit_zone_current = RES_LIMIT_ZONE_NONE;
+    }
+    UserStatus->cur_georama = selectMapNo;
+    UserStatus->step_disable = 0;
+    old_read_buffer = read_buffer;
+    NowCamera__3 = &MainCamera__4;
+    NowEventMan = &DngEventMan;
+    BtEventMode = 0;
+    EdEventInfo.projection = -1.0f;
+    EdEventInfo.screen_filter = false;
+    EdEventInfo.player_draw = true;
+    EdEventInfo.player_shadow_draw = true;
+    EdFadeInit();
+    DngMes1.mes_made = -1;
+    DngMes2.mes_made = -1;
+    DngMesStb.mes_made = -1;
+    DngMessMan.message = -1;
+    DngMessMan.timer = 0;
+    DngMessMan.enabled = true;
+    DunStartSound();
+    GamePad.AutoRepeatOff();
+    GamePad.MenuModeOff();
+    EdDSetFont(&DbgMsg);
+    existFlag = 0;
+    tryalExit = 0;
+    BtAllDrawFlag = 1; // the way out's script turned the drawing off
+    BtActStatus.player_visible = 1;
+    float at[3];
+    float heading = 0.0f;
+    if (DoorwayDungeonArrival(at, heading) && CharaFrame != nullptr) {
+        CharaMain.SetPosition(at[0], at[1], at[2]);
+        CharaFrame->SetPosition(at[0], at[1], at[2]);
+        CharaMain.SetRotation(0.0f, heading, 0.0f);
+        CharaFrame->SetRotation(0.0f, heading, 0.0f);
+        // the follow camera stands behind the party, looking the way they walked in
+        float yaw = heading + PI_SHORT;
+        if (yaw > PI_SHORT) yaw -= TWO_PI;
+        MainCamera__4.FollowOn();
+        MainCamera__4.SetAngleSoon(yaw);
+        MainCamera__4.SetFollow(at[0], at[1] + 13.0f, at[2]);
+        MainCamera__4.Step(-1);
+    }
+    DispFade__3.FadeInit(128.0f);
+    const bool walked_in = moonmod::ChronicleTakeWalkArrival();
+    DispFade__3.FadeInStart(walked_in ? 128.0f : 1.0f);
+    // the way out faded the event screen to black; the opening script that fades it in is not run
+    sceVu0FVECTOR fade;
+    EdGetFadeColor(fade);
+    EdFadeIn(walked_in ? 1 : 60, fade[0], fade[1], fade[2]);
+    moonmod::ChronicleDungeonResumed();
+    app::GameAutosaveFloor(); // as a floor walked into is
+    BtGameModeFlag = BT_GAME_MODE_PLAY;
+    gameTask = GAME_TASK_PLAY;
+}
+
+namespace {
+bool g_prebuilding = false;
+}
+
+// MoonMod (L4): a town's dungeon, its first floor built unseen as the town loads, so the cave is there through the
+// town's door before the party has ever been in. The floor's opening script runs to its end (the walk-in skipped, as
+// for a walk-in through the door); its world is then kept, and walking in goes back to it (GameResume).
+bool DunPrebuild(int dungeon_map) {
+    const int saved_map = MapNo;
+    const int saved_select = main_select_menu_no;
+    MapNo = dungeon_map;
+    main_select_menu_no = dungeon_map - DUNGEON_MAP_BASE;
+    g_prebuilding = true;
+    moonmod::ChronicleDungeonPrebuild(true);
+    GameInit();
+    bool ready = false;
+    int  after_walk_in = 0;
+    for (int frame = 0; frame < 3000 && !ready; frame++) {
+        // the walk-in skipped, the opening script ends at once; one that waits on (a scene's message, or Wise Owl
+        // Forest's walk through its gate, an action sequence that only real frames move) is left
+        if (moonmod::ChronicleDungeonWalkInDone() && ++after_walk_in > 120) break;
+        if (BtGameModeFlag == BT_GAME_MODE_ENTRANCE_MENU) {
+            const int floor = DunEnterMenuLoop();
+            if (floor != -1) {
+                if (BtEventInfo.entrance_result != nullptr) BtEventInfo.entrance_result->i = floor;
+                BtEventInfo.entrance_result = nullptr;
+                static_cast<CDngStatusData *>(UserStatus)->SetNowFloor(floor);
+                BtGameModeFlag = BT_GAME_MODE_PLAY;
+            }
+        } else if (BtEventInfo.request == BT_REQUEST_RUN_SCRIPT) {
+            break; // a scene of the floor's opening (a story one, unheard): it is not played unseen; the floor is built
+                   // on the visit instead
+        } else {
+            DunMoveChara();
+        }
+        ready = moonmod::ChronicleDungeonWalkInDone() && gameTask == GAME_TASK_PLAY && BtGameModeFlag == BT_GAME_MODE_PLAY &&
+                existFlag == 0;
+    }
+    if (ready && CharaFrame != nullptr) {
+        float rotation[4];
+        CharaMain.GetRotation(rotation);
+        const float facing[3] = {std::sin(rotation[1]), 0.0f, std::cos(rotation[1])};
+        DoorwayPrebuilt(saved_map, dungeon_map, CharaFrame->position, facing);
+    }
+    moonmod::ChronicleDungeonPrebuild(false);
+    g_prebuilding = false;
+    MapNo = saved_map;
+    main_select_menu_no = saved_select;
+    return ready;
+}
+
 void GameInit() {
     int         size = 0;
     std::string name;
@@ -1293,12 +1455,18 @@ void GameInit() {
     BtAllDrawFlag = 0;
     selectMapNo = main_select_menu_no;
     UserStatus = SaveData->GetDngStatus();
+    // MoonMod (L3): walked back in through the town's door onto the floor that was left there, it is gone back to
+    const int world = moonmod::ChronicleConnectedWorld(MapNo);
+    if (DoorwayEnteringKept(MapNo) && UserStatus->cur_floor == 0 && ResumeDataWorld(world)) {
+        GameResume();
+        return;
+    }
     UserStatus->Init();
 
     if (BtEventInfo.no_status_recover != 1) {
         CUserStatus *status = UserStatus;
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < CHARA_MAX; i++) {
             status->hp[i] = status->max_hp[i];
             status->ailments[i] = 0;
             status->ailment_frames[i] = 0;
@@ -1319,6 +1487,7 @@ void GameInit() {
     sceVu0CopyMatrix(sub_lightcolor, def_lightcolor);
     sceVu0CopyVector(sub_ambientlight, def_ambientlight);
 
+    SetNextDataWorld(world); // MoonMod (O2 C1): each place keeps its memory
     InitializeDataBuffer();
     SetDataBuffer(&MainModelBuffer, 0x9470);
     SetDataBuffer(&MotionData, 10000);
@@ -1405,7 +1574,7 @@ void GameInit() {
         effect.Initialize();
     }
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         OzumondShot.damage[i] = 1;
         OzumondShot.age[i] = 0;
     }
@@ -1439,7 +1608,7 @@ void GameInit() {
     MainMonstorUnit.model_count = 0;
     MainMonstorUnit.current_monster = 0;
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         MainMonstorUnit.script[i] = &MonstorScriptBuffer[i];
     }
 
@@ -1523,7 +1692,10 @@ void GameInit() {
     cameraAuto = 0;
     faceEyeCount = 0;
     DispFade__3.FadeInit(128.0f);
-    DispFade__3.FadeInStart(1.0f);
+    // MoonMod (quick passage, O2 C0): walked in from a town, the cave is there at once, not faded in from black
+    const bool walked_in = g_prebuilding || moonmod::ChronicleTakeWalkArrival();
+    moonmod::ChronicleDungeonWalkInBegin(walked_in);
+    DispFade__3.FadeInStart(walked_in ? 128.0f : 1.0f);
 
     switch (LanguageCode) {
         case LANG_JAPANESE:
@@ -1695,35 +1867,7 @@ void GameInit() {
         element.Initialize();
     }
 
-    SndSetReadBuffer(read_buffer);
-
-    if (EdEventInfo.map_jump_bgm_play != 0) {
-        SndBgmLoad(selectMapNo + 100);
-        SndBgmPlay(0);
-    }
-
-    SndSoundLoad(selectMapNo + 100);
-
-    if (selectMapNo == DUNGEON_DEMON_SHAFT) {
-        SndSePlay(SE_AMBIENT_DUNGEON_HISS, 0, 0);
-    }
-
-    if (selectMapNo == DUNGEON_DIVINE_BEAST_CAVE) {
-        SndSePlay(SE_AMBIENT_DUNGEON_HISS, 0, 0);
-        SndSePlay(SE_AMBIENT_CAVE_DRIPS, 0, 0);
-    }
-
-    if (selectMapNo == DUNGEON_SHIPWRECK) {
-        SndSePlay(SE_AMBIENT_SHIPWRECK, 0, 0);
-    }
-
-    if (selectMapNo >= DUNGEON_SUN_MOON_TEMPLE) {
-        SndSePlay(SE_AMBIENT_DEEP_DUNGEON, 0, 0);
-    }
-
-    SndAmbientPlay(0);
-    SndAmbientSetVol(0);
-    BtBattleMusic_Init();
+    if (!g_prebuilding) DunStartSound(); // built unseen: the town's sound plays on
 
     LoadData();
     LoadStartLogo(selectMapNo);
@@ -1927,7 +2071,7 @@ int GameLoop() {
         if (BtEventInfo.no_status_recover == 0) {
             CUserStatus *status = UserStatus;
 
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < CHARA_MAX; i++) {
                 status->hp[i] = status->max_hp[i];
                 status->ailments[i] = 0;
                 status->ailment_frames[i] = 0;
@@ -1992,6 +2136,9 @@ void Draw_MainUnitShadow() {
     if (BtActStatus.shadow_visible != 0 && EdEventInfo.player_shadow_draw != 0 && EdEventInfo.player_draw != 0 && BtActStatus.player_visible != 0) {
         CharaMain.DrawShadow();
     }
+
+    MoonModCompanionDraw(true);
+    MoonModNpcDraw(true);
 
     if (CMonUnitHyde == 0 && BtEventMode == 0) {
         NowMonstorUnit->DrawShadowMonstor();
@@ -2112,10 +2259,14 @@ void Draw_MainUnit() {
     CharaMain.TextureAnime(0x11);
     CharaMain.Draw();
 
-    if (NowWeapon != nullptr && NowWeapon->frame != nullptr && BtActStatus.weapon_visible != 0) {
+    const CharaForm *form = ActiveCharaForm(UserStatus->cur_chara); // MoonMod: a form can hide the weapon
+    if (NowWeapon != nullptr && NowWeapon->frame != nullptr && BtActStatus.weapon_visible != 0 && (form == nullptr || !form->hide_weapon)) {
         TexManager.ReloadTexture(Vif1Packet, 0x1D);
         NowWeapon->Draw();
     }
+
+    MoonModCompanionDraw(false);
+    MoonModNpcDraw(false);
 
     MGSetAmbient(saved_ambient);
     sceVu0CopyMatrix(light, saved_light);
@@ -2131,12 +2282,54 @@ namespace {
 // Draws the floor's monsters. CMonstorUnit::DrawMonstor draws the ones taking part; a dormant one
 // within video.detail_distance of the player is passed off as taking part for the length of the
 // call, so that its model draws and animates without the monster waking.
+// Large floors hold up to MONSTOR_SLOT_MAX monsters, and with video.detail_distance 0 (no limit) every
+// dormant one is drawn and animated too, wherever it is. For the length of the shadow and model draws, a
+// monster that stands in a cell DrawMap did not show (off screen or behind walls) and is more than four
+// cells from the player is marked unrevealed, so neither it nor its shadow is drawn.
+std::array<s32, MONSTOR_SLOT_MAX>  g_monster_revealed;
+std::array<bool, MONSTOR_SLOT_MAX> g_monster_culled;
+
+void CullHiddenMonsters() {
+    CMonstorUnit *unit = NowMonstorUnit;
+    g_monster_culled.fill(false);
+    if (unit == nullptr || NowDngMap == nullptr || NowDngMap->map_type != 1) {
+        return;
+    }
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
+        MONSTOR *monster = &unit->monster[i];
+        CFrame  *frame = unit->chara[i][0].frame;
+        if (monster->state == -1 || monster->revealed == 0 || frame == nullptr || monster->player_distance < 640.0f) {
+            continue;
+        }
+        const int col = static_cast<int>((frame->position[0] + 80.0f) / 160.0f);
+        const int row = static_cast<int>((frame->position[2] + 80.0f) / 160.0f);
+        if (col >= 0 && row >= 0 && col < DNG_GRID && row < DNG_GRID && NowDngMap->cells[col + row * DNG_GRID].visible) {
+            continue;
+        }
+        g_monster_revealed[i] = monster->revealed;
+        monster->revealed = 0;
+        g_monster_culled[i] = true;
+    }
+}
+
+void RestoreHiddenMonsters() {
+    if (NowMonstorUnit == nullptr) {
+        return;
+    }
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
+        if (g_monster_culled[i]) {
+            NowMonstorUnit->monster[i].revealed = g_monster_revealed[i];
+        }
+        g_monster_culled[i] = false;
+    }
+}
+
 void DrawMonstorDetail() {
     CMonstorUnit *unit = NowMonstorUnit;
     float         detail = ConfigDetailDistance();
-    auto          dormant = std::make_unique<bool[]>(16);
+    auto          dormant = std::make_unique<bool[]>(MONSTOR_SLOT_MAX);
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         MONSTOR *monster = &unit->monster[i];
         dormant[i] = monster->state == 1 && monster->revealed != 0 && monster->player_distance < detail;
 
@@ -2147,7 +2340,7 @@ void DrawMonstorDetail() {
 
     unit->DrawMonstor();
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (dormant[i]) {
             unit->monster[i].state = 1;
         }
@@ -2168,6 +2361,125 @@ CTexture *NamedTexture(const char *name) {
 
 } // namespace
 
+// MoonMod (O2 C1, L4): the dungeon as the town's door shows it, under the doorway's camera (DoorwayLive): its
+// background, map and field with its own lights, the camera's eye and look-at standing in for the map's clipping.
+void DunDrawForDoorway(const float eye[3], const float ref[3]) {
+    if (NowDngMap == nullptr || NowDranMapField == nullptr || NowCamera__3 == nullptr) return;
+    CCamera *camera = NowCamera__3;
+    float    saved_pos[4];
+    float    saved_ref[4];
+    sceVu0CopyVector(saved_pos, camera->pos);
+    sceVu0CopyVector(saved_ref, camera->ref);
+    for (int i = 0; i < 3; i++) {
+        camera->pos[i] = eye[i];
+        camera->ref[i] = ref[i];
+    }
+    const u8 *background = lightingMode == 0 ? main_bgColor : sub_bgColor;
+    if (lightingMode == 0) {
+        MGSetPLight(main_light, main_lightcolor);
+        MGSetAmbient(main_ambientlight);
+        MGSetFogParm(main_fogRate[0], main_fogRate[1], main_fogColor[0], main_fogColor[1], main_fogColor[2], main_fogRate[2], main_fogRate[3]);
+    } else {
+        MGSetPLight(sub_light, sub_lightcolor);
+        MGSetAmbient(sub_ambientlight);
+        MGSetFogParm(sub_fogRate[0], sub_fogRate[1], sub_fogColor[0], sub_fogColor[1], sub_fogColor[2], sub_fogRate[2], sub_fogRate[3]);
+    }
+    MGClearScreen(static_cast<u_char>(background[0]), static_cast<u_char>(background[1]),
+                  static_cast<u_char>(background[2]), 0x80);
+    TexManager.ReloadTexture(Vif1Packet, 3);
+    NowDngMap->DrawBGModel(camera);
+    NowDngMap->DrawDummyModel(camera);
+    if (NowDngMap->map_type == 1) {
+        NowDngMap->DrawMap(NowCamera__3, CharaFrame);
+    } else {
+        NowDngMap->DrawMapFreeStyle();
+    }
+    NowDranMapField->CDranMapField::Draw();
+    sceVu0CopyVector(camera->pos, saved_pos);
+    sceVu0CopyVector(camera->ref, saved_ref);
+}
+
+namespace {
+// A frame and its brothers' subtrees: those whose name (before its "__" flags) begins `prefix` are drawn no more.
+void HideFramesNamed(CFrame *frame, std::string_view prefix) {
+    for (; frame != nullptr; frame = frame->brother) {
+        if (std::string_view(frame->name).starts_with(prefix)) {
+            frame->attr.draw_on = 2;
+        } else {
+            HideFramesNamed(frame->child, prefix);
+        }
+    }
+}
+} // namespace
+
+void DunHideWayOutDoor(const float position[3]) {
+    constexpr float kCell = 160.0f;
+    if (NowDngMap == nullptr || NowDngMap->map_type != 1) return;
+    const int col = static_cast<int>(std::lround(position[0] / kCell));
+    const int row = static_cast<int>(std::lround(position[2] / kCell));
+    for (int y = row - 1; y <= row + 1; y++) {
+        for (int x = col - 1; x <= col + 1; x++) {
+            if (x < 0 || y < 0 || x >= DNG_GRID || y >= DNG_GRID) continue;
+            const int part = NowDngMap->cells[x + y * DNG_GRID].parts_no;
+            if (part < 0 || part >= static_cast<int>(std::size(NowDngMap->parts))) continue;
+            for (CFrame *frame : NowDngMap->parts[part].frame) HideFramesNamed(frame, "in_door");
+        }
+    }
+}
+
+bool DunDoorwayWall(const float position[3], const float back[3], float wall[3], float axis[3]) {
+    constexpr float kCell = 160.0f;
+    constexpr int   kWidth = DNG_GRID;
+    if (NowDngMap == nullptr || NowDngMap->map_type != 1) return false;
+    const bool along_x = std::fabs(back[0]) >= std::fabs(back[2]);
+    const int  step = (along_x ? back[0] : back[2]) >= 0.0f ? 1 : -1;
+    int        col = static_cast<int>(std::lround(position[0] / kCell));
+    int        row = static_cast<int>(std::lround(position[2] / kCell));
+    if (col < 0 || col >= kWidth || row < 0 || row >= kWidth) return false;
+    // in a room, its edge; in a corridor, the last cell before the open grid ends
+    int edge = -1;
+    for (int r = 0; r < NowDngMap->room_num && r < DNG_ROOM_MAX; r++) {
+        const ROOM_INFO &room = NowDngMap->rooms[r];
+        if (col < room.x || col >= room.x + room.width || row < room.y || row >= room.y + room.height) continue;
+        edge = along_x ? (step > 0 ? room.x + room.width - 1 : room.x) : (step > 0 ? room.y + room.height - 1 : room.y);
+    }
+    if (edge < 0) {
+        int at = along_x ? col : row;
+        for (int i = 0; i < kWidth; i++) {
+            const int next = at + step;
+            if (next < 0 || next >= kWidth) break;
+            const int c = along_x ? next : col;
+            const int w = along_x ? row : next;
+            if (NowDngMap->cells[c + w * kWidth].parts_no == MAP_PARTS_NONE) break;
+            at = next;
+        }
+        edge = at;
+    }
+    for (int i = 0; i < 3; i++) axis[i] = 0.0f;
+    (along_x ? axis[0] : axis[2]) = static_cast<float>(step);
+    wall[0] = along_x ? kCell * edge + step * kCell * 0.5f : position[0];
+    wall[1] = position[1];
+    wall[2] = along_x ? position[2] : kCell * edge + step * kCell * 0.5f;
+    // the wall's face, where the party's collision meets it at waist height, short of the grid's edge
+    static std::vector<CCPoly> polygons(4096);
+    constexpr float            kStep = 16.0f;
+    float                      at[4] = {position[0], position[1] + 40.0f, position[2], 1.0f};
+    const float                reach = std::fabs(along_x ? wall[0] - position[0] : wall[2] - position[2]) + 2.0f * kCell;
+    for (float walked = 0.0f; walked < reach; walked += kStep) {
+        float next[4] = {at[0] + axis[0] * kStep, at[1], at[2] + axis[2] * kStep, 1.0f};
+        float hit[4] = {};
+        const int count = setCollisionData(NowDngMap, polygons.data(), at, 2.0f * kStep, 2.0f);
+        if (count > 0 && count <= static_cast<int>(polygons.size()) &&
+            CheckHit(polygons.data(), count, at, next, hit, 1, 4) >= 0) {
+            wall[0] = hit[0];
+            wall[2] = hit[2];
+            return true;
+        }
+        for (int i = 0; i < 3; i++) at[i] = next[i];
+    }
+    return true;
+}
+
 void DunMainDraw() {
     sceVu0FMATRIX camera;
     sceVu0FVECTOR eye;
@@ -2182,6 +2494,8 @@ void DunMainDraw() {
     sceVu0UnitMatrix(unit);
     sceVu0MulMatrix(view, unit, camera);
     MGSetViewMatrix(view, eye);
+    DoorwayCamera(); // MoonMod (O2 C2)
+    DoorwayLive();   // MoonMod (O2 C1, L4): the town seen live through the way out
     SndSetCamera(NowCamera__3);
 
     if (BtAllDrawFlag == 0) {
@@ -2228,6 +2542,13 @@ void DunMainDraw() {
 
     // Deliberately non-virtual: the map field's own draw, not an override.
     NowDranMapField->CDranMapField::Draw();
+    {
+        // MoonMod (O2 C2): the town seen through the way out; the party's heading places it and walks through it
+        float rotation[4];
+        CharaMain.GetRotation(rotation);
+        const float front[3] = {std::sin(rotation[1]), 0.0f, std::cos(rotation[1])};
+        DoorwayDraw(CharaFrame->position, front);
+    }
 
     if (itemOpenSmallFlag == 0 && itemOpenBigFlag == 0) {
         sceVu0FVECTOR box_pos;
@@ -2258,6 +2579,7 @@ void DunMainDraw() {
         NowDngMap->DrawAtraBoll(atra_pos);
     }
 
+    CullHiddenMonsters();
     Draw_MainUnitShadow();
 
     if (BtActStatus.player_visible != 0 && EdEventInfo.player_draw != 0) {
@@ -2267,15 +2589,16 @@ void DunMainDraw() {
     if (CMonUnitHyde == 0 && BtEventMode == 0) {
         DrawMonstorDetail();
     }
+    RestoreHiddenMonsters();
 
     if (CharaMainHandViewFlag != 0) {
         TexManager.ReloadTexture(Vif1Packet, 0x11);
 
-        if (UserStatus->cur_chara == CHARA_XIAO) {
+        if (CombatChara(UserStatus->cur_chara) == CHARA_XIAO) {
             CharaHand.Draw();
         }
 
-        if (NowWeapon != nullptr && UserStatus->cur_chara == CHARA_XIAO && NowWeapon->frame != nullptr && BtActStatus.weapon_visible != 0) {
+        if (NowWeapon != nullptr && CombatChara(UserStatus->cur_chara) == CHARA_XIAO && NowWeapon->frame != nullptr && BtActStatus.weapon_visible != 0) {
             TexManager.ReloadTexture(Vif1Packet, 0x1D);
             NowWeapon->Draw();
         }
@@ -2535,6 +2858,7 @@ void DunMainDraw() {
 
             if (CEffectHyde == 0 && BtEventMode == 0) {
                 NowShotData->draw();
+                MoonModCompanionDrawShots(); // MoonMod: a ranged companion's shots
                 OzumondShotEffect.Draw();
                 OzumondFire.Draw();
             }
@@ -2542,14 +2866,26 @@ void DunMainDraw() {
             CWeaponFx.Draw();
             CRunFx__2.Step();
             CRunFx__2.Draw();
+            if (NowDngMap == &MainDungeonMap) SmokeGatesDraw(CharaMain.pos, MainDungeonMap.map_seed); // MoonMod: smoke gates
             MGSetGsALPHA(nullptr);
             MGSetGsZBUF(nullptr);
         }
 
+        int shown_floor = UserStatus->cur_floor;
+#ifdef PORT
+        // MoonMod (dungeons.set_zones source_floor): on a map of several floors, the floor of the zone the player is in,
+        // on the floor's title card and the corner plate alike.
+        if (NowDngMap == &MainDungeonMap && CharaMain.frame != nullptr) {
+            sceVu0FVECTOR at;
+            CharaMain.GetPosition(at);
+            shown_floor = DngZoneSourceFloorAt(MainDungeonMap.map_seed, at, shown_floor);
+        }
+#endif
+
         if (rogoSwitch2 == 1 && BtEventInfo.floor_title_off == 0) {
             TEX_Floor1 = TexManager.GetTexture(floor_name, -1);
             TexManager.ReloadTexture(Vif1Packet, 8);
-            StartMessageDraw(TEX_Floor1, selectMapNo, UserStatus->cur_floor, BtUraDongeon, rogoAlphaA[2]);
+            StartMessageDraw(TEX_Floor1, selectMapNo, shown_floor, BtUraDongeon, rogoAlphaA[2]);
         }
 
         TexManager.ReloadTexture(Vif1Packet, 2);
@@ -2584,12 +2920,15 @@ void DunMainDraw() {
             TexManager.ReloadTexture(Vif1Packet, 0x1F);
             sceVu0CopyVector(map_pos, CharaFrame->position);
             CharaFrame->GetRotation(map_rot);
-            NowDngMap->DrawMiniMap(map_pos, map_rot[1]);
-            NowMonstorUnit->DrawMapSymbol(map_pos);
-            RandomItem->MapSymbolDraw();
+            // Keep the normal map visibility toggle; the map is drawn in the configured layout when it shows.
+            if (UserStatus->minimap_status != 3) {
+                NowDngMap->DrawMiniMap(map_pos, map_rot[1]);
+                NowMonstorUnit->DrawMapSymbol(map_pos);
+                RandomItem->MapSymbolDraw();
+            }
         }
 
-        topStatusInfo(rogoY3, itemNowSel, UserStatus->cur_floor);
+        topStatusInfo(rogoY3, itemNowSel, shown_floor);
         BtStatusErrDraw(rogoY3);
         gfx::SetUiAnchor({});
 
@@ -2601,6 +2940,10 @@ void DunMainDraw() {
             TexManager.ReloadTexture(Vif1Packet, 7);
             set2DSprite(Vif1Packet, NamedTexture("pause"), CRect_i_(0x100, 0xCC, 0x80, 0x28), 0, 0);
         }
+        MoonModBossCardDraw(); // MoonMod: a boss's entrance card
+        MoonModMenuDraw();   // MoonMod: a mod's run menu, over the HUD
+        MoonModChoiceDraw(); // MoonMod: a mod's choice panel, over the HUD
+        MoonModMapDraw();    // MoonMod: a mod's map screen
 
         setbilinear(1);
     }
@@ -2686,6 +3029,10 @@ void DunMainDraw() {
         }
     }
 
+    // MoonMod: a mod's notice (ui.notify) in the same window, when the game's own message is not using it.
+    DrawModNotice(DngMessMan.hide_timer > 0 || DngMessMan.enabled == 0 || DngMessMan.message != -1 || BtEventMode != 0 ||
+                  MoonModChoiceUp() || MoonModMenuUp() || MoonModMapUp());
+
     if (BtEventMode != 0) {
         if (DebugStatus[4] != 0) {
             TexManager.ReloadTexture(Vif1Packet, 0xC);
@@ -2714,10 +3061,46 @@ float oldCameraAngle;
 float inputH1;
 
 void motionDrive() {
+    moonmod::ChronicleChargedActionTick(); // MoonMod: which hits count as charged
+    moonmod::ChronicleShortcutDoorsTick();  // MoonMod: shortcut doors open with their keys
+    moonmod::ChronicleZoneGatesTick();      // MoonMod: zone gates open with theirs
+    moonmod::ChronicleWardenRoomTick();     // MoonMod: the Warden room opens once the floor is cleared
+    moonmod::ChronicleMonsterTintTick();    // MoonMod: enemy tints (entities.tint)
+
+    // MoonMod player.tuning_set: with dodge_power, L2 throws the player forward out of harm's way
+    // (the same push an attack lunge uses, so walls still stop it).
+    static int moonmod_dodge_cooldown = 0;
+    if (moonmod_dodge_cooldown > 0) --moonmod_dodge_cooldown;
+    const float moonmod_dodge = moonmod::ChroniclePlayerDodgePower();
+    // MoonMod player.moves_set: a dodge move (a roll, a backstep) takes L2 first.
+    const bool moonmod_dodge_move = moonmod::ChroniclePlayerMoveOnDodge(GamePad.Down(PAD_L2) != 0);
+    // MoonMod player.moves_set: R2 is the heavy attack, or a combo finisher partway through the attack combo.
+    moonmod::ChroniclePlayerMoveOnR2(GamePad.Down(PAD_R2) != 0);
+    if (!moonmod_dodge_move && moonmod_dodge > 0.0f && moonmod_dodge_cooldown == 0 && GamePad.Down(PAD_L2) != 0 && BtActStatus.action_on == 0 &&
+        BtActStatus.movement_locked == 0 && BtActStatus.jumping == 0 && BtActStatus.recoil_frames == 0 &&
+        BtActStatus.in_water == 0 && CharaMain.frame != nullptr) {
+        sceVu0FVECTOR forward = {0.0f, 0.0f, 1.0f, 1.0f};
+        sceVu0FVECTOR facing;
+        sceVu0FMATRIX turn;
+        CharaMain.frame->GetRotation(facing);
+        sceVu0UnitMatrix(turn);
+        sceVu0RotMatrixY(turn, turn, facing[1]);
+        sceVu0ApplyMatrix(BtActStatus.move_vector, turn, forward);
+        BtActStatus.move_power = 2.4f * moonmod_dodge;
+        BtActStatus.move_power_decay = 0.16f * moonmod_dodge;
+        BtActStatus.invincible_frames = std::max(BtActStatus.invincible_frames, moonmod::ChroniclePlayerDodgeInvincibleFrames());
+        if (moonmod::ChroniclePlayerDodgeHop()) {
+            BtActStatus.jumping = 1;
+            BtActStatus.jump_velocity_x = BtActStatus.jump_velocity_z = 0.0f;
+            BtActStatus.jump_velocity_y = 1.2f;
+        }
+        moonmod_dodge_cooldown = 45;
+        SndSePlay(SE_CHARA_ACTION, -1, 0);
+    }
     sceVu0FVECTOR pos;
     sceVu0FVECTOR rotation;
     sceVu0FVECTOR hand;
-    int           chara = UserStatus->cur_chara;
+    int           chara = CombatChara(UserStatus->cur_chara);
 
     if (BtAllDrawFlag == 0) {
         return;
@@ -2750,7 +3133,7 @@ void motionDrive() {
             if (chara == CHARA_XIAO) {
                 CCharacter *weapon = NowWeapon;
 
-                weapon->motion_no = BtActStatus.motion_no;
+                weapon->motion_no = BtActStatus.motion_no < weapon->motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: a mod motion of Xiao's holds the slingshot at rest
                 weapon->motion_flags = 1;
                 weapon->motion_speed = -1.0f;
             }
@@ -2764,7 +3147,7 @@ void motionDrive() {
             if (chara == CHARA_XIAO) {
                 CCharacter *weapon = NowWeapon;
 
-                weapon->motion_no = BtActStatus.motion_no;
+                weapon->motion_no = BtActStatus.motion_no < weapon->motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: a mod motion of Xiao's holds the slingshot at rest
                 weapon->motion_flags = blend;
                 weapon->motion_speed = -1.0f;
             }
@@ -2773,7 +3156,7 @@ void motionDrive() {
         }
 
         // Osmond's tail keeps turning on its own.
-        if (UserStatus->cur_chara == CHARA_OSMOND) {
+        if (CombatChara(UserStatus->cur_chara) == CHARA_OSMOND) {
             CFrame *tail = CharaMain.frame->SearchFrame("tukene1");
             CFrame *tail_shadow = CharaMain.shadow_frame->SearchFrame("obj46");
 
@@ -2796,7 +3179,7 @@ void motionDrive() {
             }
         }
 
-        if (lockOnTargetFlag != 0 && UserStatus->cur_chara == CHARA_XIAO && CharaMainHandViewFlag == 0) {
+        if (lockOnTargetFlag != 0 && CombatChara(UserStatus->cur_chara) == CHARA_XIAO && CharaMainHandViewFlag == 0) {
             CharaMain.motion_type.state.look_frame = static_cast<CFrameVu1 *>(CharaFrame->SearchFrame("jnt2_1"));
             sceVu0CopyVector(CharaMain.motion_type.state.look_position, BtActStatus.target_position);
             CharaMain.motion_type.state.look_at = true;
@@ -2805,18 +3188,24 @@ void motionDrive() {
             CharaMain.motion_type.state.look_at = false;
         }
 
+#ifdef PORT
+        MoonModTuneSwingMotion();
+#endif
         CharaMain.Step();
 
         if (chara == CHARA_XIAO) {
             NowWeapon->Step();
         }
 
+        MoonModCompanionStep(); // MoonMod: the Gauntlet's companion follows and fights
+        MoonModNpcStep();       // MoonMod: a mod's figure on the floor (world.dungeon_npc_set)
+
         if (BtActStatus.shadow_visible != 0) {
             CharaMain.ShadowStep();
         }
     }
 
-    if ((CharaMainHandViewFlag != 0 && UserStatus->cur_chara == CHARA_XIAO) || UserStatus->cur_chara == CHARA_RUBY) {
+    if ((CharaMainHandViewFlag != 0 && CombatChara(UserStatus->cur_chara) == CHARA_XIAO) || CombatChara(UserStatus->cur_chara) == CHARA_RUBY) {
         sceVu0CopyVector(hand, CharaFrame->position);
 
         float height = CharaHeight(UserStatus);
@@ -2832,28 +3221,28 @@ void motionDrive() {
         }
 
         if (driveStepHold != 0 || BtActStatus.movement_locked != 0) {
-            CharaHand.motion_no = BtActStatus.motion_no;
+            CharaHand.motion_no = BtActStatus.motion_no < CharaHand.motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: as the slingshot
             CharaHand.motion_flags = 1;
             CharaHand.motion_speed = -1.0f;
 
             if (chara == CHARA_XIAO) {
                 CCharacter *weapon = NowWeapon;
 
-                weapon->motion_no = BtActStatus.motion_no;
+                weapon->motion_no = BtActStatus.motion_no < weapon->motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: a mod motion of Xiao's holds the slingshot at rest
                 weapon->motion_flags = 1;
                 weapon->motion_speed = -1.0f;
             }
 
             BtActStatus.hand_motion = -1;
         } else if (BtActStatus.hand_motion != BtActStatus.motion_no) {
-            CharaHand.motion_no = BtActStatus.motion_no;
+            CharaHand.motion_no = BtActStatus.motion_no < CharaHand.motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: as the slingshot
             CharaHand.motion_flags = blend;
             CharaHand.motion_speed = -1.0f;
 
             if (chara == CHARA_XIAO) {
                 CCharacter *weapon = NowWeapon;
 
-                weapon->motion_no = BtActStatus.motion_no;
+                weapon->motion_no = BtActStatus.motion_no < weapon->motion_end[0] ? BtActStatus.motion_no : 0; // MoonMod: a mod motion of Xiao's holds the slingshot at rest
                 weapon->motion_flags = blend;
                 weapon->motion_speed = -1.0f;
             }
@@ -2891,7 +3280,7 @@ void motionDrive() {
         s8           owner = status->cur_chara;
         WEAPON_HAVE *weapon = &status->chara_weapons[owner][status->equipped_weapon_slot[owner]];
 
-        if (weapon->durability_f <= 10.0f && weapon->item_no != defWeapon__6[owner]) {
+        if (weapon->durability_f <= 10.0f && weapon->item_no != defWeapon__6[CombatChara(owner)]) {
             static int warning_cnt = 0;
             auto       wait = static_cast<int>(weapon->durability_f) * 10;
 
@@ -3021,7 +3410,7 @@ void motionDrive() {
 
         gain = std::max(gain, 1.0f);
 
-        s8 who = UserStatus->cur_chara;
+        s8 who = static_cast<s8>(CombatChara(UserStatus->cur_chara));
 
         // Toan and Ungaga recharge slowly, and not at all on a frame they swing.
         if (who == CHARA_TOAN || who == CHARA_UNGAGA) {
@@ -3050,6 +3439,7 @@ void motionDrive() {
             gain *= 1.5f;
         }
 
+        gain *= moonmod::ChroniclePlayerGaugeRefillScale(); // MoonMod player.tuning_set
         BtActStatus.action_gauge += gain;
 
         if (!(static_cast<int>(BtActStatus.action_gauge) < 100)) {
@@ -3273,7 +3663,7 @@ void BtLoadMonstor(int ura) {
     unit->model_count = 0;
     unit->current_monster = 0;
 
-    for (int slot = 0; slot < 16; slot++) {
+    for (int slot = 0; slot < MONSTOR_SLOT_MAX; slot++) {
         unit->script[slot] = &MonstorScriptBuffer[slot];
     }
 
@@ -3304,6 +3694,12 @@ void BtLoadMonstor(int ura) {
     const BT_ENEMY_FLOOR &layout = floors[UserStatus->cur_floor];
     int                   count = 0;
 
+    // MoonMod (dungeons.set_zones source_floor): a floor whose zones come from several floors loads all their monsters.
+    if (ura == 0 && MoonModLoadZoneMonsters(NowMonstorUnit, floors, UserStatus->cur_floor, &MonstorModelBuffer)) {
+        MemoryMapDump();
+        return;
+    }
+
     for (const auto &entry : layout.monster) {
         if (entry.monster_no == -1) {
             break;
@@ -3326,7 +3722,7 @@ void EquipReAttach(CCharacter *equipment, int held_out) {
 void EquipWeaponFrame(CCharacter *weapon, int chara, int held_out) {
     NowWeapon = weapon;
 
-    CFrame *hand = held_out != 0 && chara == CHARA_XIAO ? CharaHand.frame->SearchFrame("pati1") : CharaMain.frame->SearchFrame("weapon");
+    CFrame *hand = held_out != 0 && CombatChara(chara) == CHARA_XIAO ? CharaHand.frame->SearchFrame("pati1") : CharaMain.frame->SearchFrame("weapon");
 
     if (hand == nullptr) {
         std::println("no weapon frame !!");
@@ -3373,15 +3769,16 @@ void LoadWeapon2(unsigned int *crash_data, unsigned int *default_data, unsigned 
     // The weapon's item number, counted from its character's first weapon.
     int model_no = status->chara_weapons[owner][status->equipped_weapon_slot[owner]].item_no;
 
-    model_no -= defWeapon__6[chara];
-    BtGetWeaponNamePath2(weapon_name.data(), weapon_model_path.data(), chara, model_no);
+    model_no -= defWeapon__6[CombatChara(chara)];
+    BtGetWeaponNamePath2(weapon_name.data(), weapon_model_path.data(), CombatChara(chara), model_no);
     MainWeapon.Initialize();
     MainWeapon.LoadPackData3(main_data, weapon_model_path.data(), &WeaponModelBuffer, 0x1D, &WeaponModelBuffer, 1, 0);
     EquipWeaponFrame(&MainWeapon, chara, CharaMainHandViewFlag);
 
-    // The effect models take whatever the weapon models leave.
+    // The effect models take whatever the weapon models leave. MoonMod: of the arena as carved (with its headroom),
+    // not the PS2's 0x33450, so a bigger mod character pack (e.g. Opar's c07d) leaves the weapons their room.
     WEffectModelBuffer.base = ArenaFree(WeaponModelBuffer);
-    WEffectModelBuffer.limit = 0x33450 - CharaModelBuffer.used - WeaponModelBuffer.used;
+    WEffectModelBuffer.limit = CharaModelBuffer.limit - CharaModelBuffer.used - WeaponModelBuffer.used;
     WEffectModelBuffer.used = 0;
 
     MenuWeaponSpSet(NowWeapon, &status->chara_weapons[owner][status->equipped_weapon_slot[owner]]);
@@ -3429,7 +3826,7 @@ void SwordDmgCheck1(float amount, int kind) {
     // 1 leaves the broken weapon in hand, 2 the character's default one.
     if (broke == 1 || broke == 2) {
         EquipWeaponFrame(broke == 1 ? &CrashWeapon : &DefaultWeapon, UserStatus->cur_chara, CharaMainHandViewFlag);
-        s8 owner = UserStatus->cur_chara;
+        s8 owner = static_cast<s8>(CombatChara(UserStatus->cur_chara));
 
         if (owner == CHARA_OSMOND || owner == CHARA_RUBY) {
             NowMainEffect = &CharaMainEffectCrash;
@@ -3453,6 +3850,24 @@ u8 wep_rgb[5][3] = {
 void SetWeaponColor() {
     s8 element = NowWeaponHave->best_elem;
 
+    // MoonMod: a weapon a mod styled glows in its own colour (weapons.style_set glow).
+    {
+        const int chara = UserStatus->cur_chara;
+        const int slot = UserStatus->equipped_weapon_slot[chara];
+        unsigned char glow[3] = {};
+        bool has_glow = false;
+        if (chara >= 0 && chara < CharaCount() && moonmod::ChronicleWeaponStyle(chara, slot, NowWeaponHave->item_no, nullptr, nullptr, glow, &has_glow) &&
+            has_glow) {
+            CWeaponFx.colour[0].r = CWeaponFx.colour[2].r = glow[0] >> 1;
+            CWeaponFx.colour[0].g = CWeaponFx.colour[2].g = glow[1] >> 1;
+            CWeaponFx.colour[0].b = CWeaponFx.colour[2].b = glow[2] >> 1;
+            CWeaponFx.colour[1].r = CWeaponFx.colour[3].r = glow[0] / 12.0f;
+            CWeaponFx.colour[1].g = CWeaponFx.colour[3].g = glow[1] / 12.0f;
+            CWeaponFx.colour[1].b = CWeaponFx.colour[3].b = glow[2] / 12.0f;
+            return;
+        }
+    }
+
     if (element == WEAPON_ELEMENT_NONE) {
         SetWeaponTrailDefaultColour();
     } else if (element >= 0 && element < 6) {
@@ -3470,7 +3885,7 @@ void SetWeaponColor() {
 }
 
 BT_SHOT_EFFECT *Get_Main_EffectPtr(int chara, int form) {
-    switch (chara) {
+    switch (CombatChara(chara)) {
         case CHARA_TOAN:
             return MyEffectEntry_Tbl[0];
         case CHARA_XIAO:
@@ -3564,16 +3979,55 @@ void MainChara_Effect(BT_SHOT_EFFECT *effect, unsigned int *data, int reload) {
         std::println("set eff sucsess !");
     }
 
-    if (UserStatus->cur_chara == CHARA_OSMOND) {
+    if (CombatChara(UserStatus->cur_chara) == CHARA_OSMOND) {
         CharaMainEffectCrash.Entry2(MyEffectEntry_Tbl[9], ozumond_default_effect, 0x10, &WEffectModelBuffer, 6);
     }
 
-    if (UserStatus->cur_chara == CHARA_RUBY) {
+    if (CombatChara(UserStatus->cur_chara) == CHARA_RUBY) {
         CharaMainEffectCrash.Entry2(MyEffectEntry_Tbl[3], ozumond_default_effect, 0x10, &WEffectModelBuffer, 6);
     }
 
     NowMainEffect = &CharaMainEffect;
 }
+
+namespace {
+
+/**
+ * MoonMod: the pack LoadChara2 reads `name` from. A registered character's pack need hold only his own model; what
+ * the action of the character he fights as also reads from it (Xiao's and Ruby's raised hand, Ruby's and Osmond's
+ * effects) comes from that character's own pack when his lacks it.
+ */
+u_int *FightsAsPackFor(int chara, u_int *chara_data, const char *name) {
+    int size = 0;
+    if (chara < SAVE_CHARA_COUNT || GetPackFile(chara_data, const_cast<char *>(name), &size) != nullptr) {
+        return chara_data;
+    }
+    // Read once per character fought as; up to a registered pack's limit (dataread.cpp), for a mod's own copy.
+    static std::vector<u_long128> pack;
+    static int                    loaded = -1;
+    if (loaded != CombatChara(chara)) {
+        pack.resize((16u << 20) / sizeof(u_long128));
+        loaded = LoadFile(const_cast<char *>(CharaPackPath(CombatChara(chara))), pack.data(), &size) >= 0 ? CombatChara(chara) : -1;
+        std::println("MoonMod: {} borrows {} from {}", CharaIdName(chara), name, CharaPackPath(CombatChara(chara)));
+    }
+    return loaded >= 0 ? reinterpret_cast<u_int *>(pack.data()) : chara_data;
+}
+
+// MoonMod: Osmond's and Ruby's broken-weapon shot, copied out of the character's pack, is registered as a copy of
+// that pack member so its model can still be read from it. Unregistered, the effect loads with no model and the
+// first shot after the weapon breaks crashes.
+unsigned int *CopyDefaultEffect(u_int *effect, int size) {
+    auto *copy = reinterpret_cast<unsigned int *>(ArenaFree(CharaModelBuffer));
+    dc::data::DataReadSource source;
+    const bool has_source = effect != nullptr && size > 0 &&
+                            dc::data::DataReadSourceRange(effect, static_cast<std::size_t>(size), source);
+    memcpy(copy, effect, size);
+    CharaModelBuffer.Alloc((((size >> 6) + 1) << 6) >> 4);
+    if (has_source) dc::data::DataReadRegisterCopiedSource(copy, static_cast<std::size_t>(size), &CharaModelBuffer, source);
+    return copy;
+}
+
+} // namespace
 
 void LoadChara2(int chara, int keep_place, unsigned int *chara_data, unsigned int *crash_data, unsigned int *default_data, unsigned int *main_data) {
     CFrameAttr    frame_attr;
@@ -3605,15 +4059,24 @@ void LoadChara2(int chara, int keep_place, unsigned int *chara_data, unsigned in
 
     CharaMain.InitializeTexAnime(CharaMainTexAnim, 64);
     CharaMain.LoadPackData2(chara_data, "base.cfg", &CharaModelBuffer, 0x11, &CharaModelBuffer, 0);
+    // MoonMod: a form's stand-in frames (player.form_set), and mod motions (animations.player_register)
+    {
+        const CharaForm *form = ActiveCharaForm(chara);
+        SetFrameAliases(CharaMain.frame, form != nullptr ? form->frames : std::vector<std::pair<std::string, std::string>>{});
+        if (form != nullptr && form->scale != 1.0f) {
+            CharaMain.SetScale(form->scale, form->scale, form->scale);
+        }
+    }
+    moonmod::ChroniclePlayerModelLoaded(chara);
     NowWeapon = nullptr;
     CharaHand.Initialize();
 
-    if (chara == CHARA_XIAO || chara == CHARA_RUBY) {
+    if (CombatChara(chara) == CHARA_XIAO || CombatChara(chara) == CHARA_RUBY) {
         CFrameAttr hand_attr;
 
         hand_attr.clip_enable = true;
         hand_attr.unk_09 = 0;
-        CharaHand.LoadPackData(chara_data, "hand_up.cfg", &CharaModelBuffer, &CharaModelBuffer, nullptr);
+        CharaHand.LoadPackData(FightsAsPackFor(chara, chara_data, "hand_up.cfg"), "hand_up.cfg", &CharaModelBuffer, &CharaModelBuffer, nullptr);
         CharaHand.frame->SetAttr(hand_attr, 1, 0);
     }
 
@@ -3628,7 +4091,7 @@ void LoadChara2(int chara, int keep_place, unsigned int *chara_data, unsigned in
 
     CharaFrame = static_cast<CFrameVu1 *>(CharaMain.frame);
 
-    if (chara == CHARA_OSMOND) {
+    if (CombatChara(chara) == CHARA_OSMOND) {
         std::array<LOADTEXTURE_INFO2, 2> info = {
             {
              {.name = nullptr, .block_no = 0x46, .mipmap = 0},
@@ -3637,7 +4100,7 @@ void LoadChara2(int chara, int keep_place, unsigned int *chara_data, unsigned in
         };
         int size = 0;
 
-        u_int  *hand_texture = GetPackFile(chara_data, "c05w_h.img", &size);
+        u_int  *hand_texture = GetPackFile(FightsAsPackFor(chara, chara_data, "c05w_h.img"), "c05w_h.img", &size);
         u_char *at = ArenaFree(CharaModelBuffer);
 
         memcpy(at, hand_texture, size);
@@ -3646,25 +4109,21 @@ void LoadChara2(int chara, int keep_place, unsigned int *chara_data, unsigned in
         TexManager.DeleteTextureBlock(0x46);
         TexManager.LoadTextureBlockEX(0x46, info.data());
 
-        u_int *effect = GetPackFile(chara_data, "mgan01.chr", &size);
+        u_int *effect = GetPackFile(FightsAsPackFor(chara, chara_data, "mgan01.chr"), "mgan01.chr", &size);
 
-        ozumond_default_effect = reinterpret_cast<unsigned int *>(ArenaFree(CharaModelBuffer));
-        memcpy(ozumond_default_effect, effect, size);
-        CharaModelBuffer.Alloc((((size >> 6) + 1) << 6) >> 4);
+        ozumond_default_effect = CopyDefaultEffect(effect, size);
     }
 
-    if (chara == CHARA_RUBY) {
+    if (CombatChara(chara) == CHARA_RUBY) {
         int    size = 0;
-        u_int *effect = GetPackFile(chara_data, "c05_f03.chr", &size);
+        u_int *effect = GetPackFile(FightsAsPackFor(chara, chara_data, "c05_f03.chr"), "c05_f03.chr", &size);
 
-        ozumond_default_effect = reinterpret_cast<unsigned int *>(ArenaFree(CharaModelBuffer));
-        memcpy(ozumond_default_effect, effect, size);
-        CharaModelBuffer.Alloc((((size >> 6) + 1) << 6) >> 4);
+        ozumond_default_effect = CopyDefaultEffect(effect, size);
     }
 
-    // The weapon models take whatever the character models leave.
+    // The weapon models take whatever the character models leave (MoonMod: of the arena as carved, as above).
     WeaponModelBuffer.base = ArenaFree(CharaModelBuffer);
-    WeaponModelBuffer.limit = 0x33450 - CharaModelBuffer.used;
+    WeaponModelBuffer.limit = CharaModelBuffer.limit - CharaModelBuffer.used;
     WeaponModelBuffer.used = 0;
     LoadWeapon2(crash_data, default_data, main_data, chara, 0);
     MemoryMapDump();
@@ -3690,6 +4149,7 @@ void LoadData() {
     frame_attr.program_option = 0;
 
     UserStatus->cur_chara = 0;
+    ClearCharaForm(-1); // MoonMod: a new floor gives every character his own model back (player.form_set)
     BtGetWeaponNamePath3(weapon_name.data(), weapon_effect_name.data(), UserStatus->chara_weapons[0][UserStatus->equipped_weapon_slot[0]].item_no);
     std::println("[{}] {}", UserStatus->chara_weapons[0][UserStatus->equipped_weapon_slot[0]].item_no, weapon_name.data());
 
@@ -3858,14 +4318,15 @@ int BtCheckDamageProc() {
             CMonUnitHold = 0;
             CEffectHold = 0;
 
-            if (ruby_effect_id != -1 && UserStatus->cur_chara == CHARA_RUBY) {
+            if (ruby_effect_id != -1 && CombatChara(UserStatus->cur_chara) == CHARA_RUBY) {
                 NowMainEffect->OffEffect(ruby_effect_id);
                 ruby_effect_id = -1;
             }
 
-            int            damage = NowColData->Get(hit_no)->damage;
-            int            guard = UserStatus->defense[static_cast<int>(UserStatus->cur_chara)];
             COLLISION_HIT *hit = &NowColData->hit[hit_no];
+            // MoonMod: a monster's damage_scale (entities.set_stats) on what its hit takes off
+            int            damage = moonmod::ChronicleMonsterHitDamage(NowColData->Get(hit_no)->damage, hit->owner, hit->monster_no);
+            int            guard = UserStatus->defense[static_cast<int>(UserStatus->cur_chara)];
 
             if (StatusErrCheck(AILMENT_STAMINA) != 0) {
                 guard *= 2;
@@ -4192,7 +4653,7 @@ void BattleActionThlow() {
     if (BombInfo.throw_step == 1) {
         constexpr std::array<float, 6> throw_frame = {548.0f, 452.0f, 267.0f, 347.0f, 188.0f, 321.0f};
         auto                           end = static_cast<float>(CharaMain.motion_type.motion_info[27].end);
-        float                          start = throw_frame[UserStatus->cur_chara];
+        float                          start = throw_frame[CombatChara(UserStatus->cur_chara)]; // MoonMod: a registered character moves as his CombatChara
 
         if (CharaMain.motion_type.state.time >= start && CharaMain.motion_type.state.time <= end) {
             SndSePlay(SE_THROW, -1, 0);
@@ -4280,7 +4741,7 @@ void BattleActionDrink() {
 
     BtActStatus.motion_no = 0x1C;
 
-    float frame = drink_frame[UserStatus->cur_chara];
+    float frame = drink_frame[CombatChara(UserStatus->cur_chara)]; // MoonMod: a registered character moves as his CombatChara
     float now = CharaMain.motion_type.state.time;
 
     if (now >= frame && now < frame + 0.3f) {
@@ -4342,7 +4803,22 @@ void EndAction(bool face_target = true) {
 /**
  * Puts a shot from the player's character in the first free slot, if there is one.
  */
+void SpawnOneShot(sceVu0FVECTOR world, sceVu0FVECTOR vector, int damage);
+
+// MoonMod player.tuning_set extra_shots: the shot, then up to two more turned 8 degrees either side.
 void SpawnShot(sceVu0FVECTOR world, sceVu0FVECTOR vector, int damage) {
+    moonmod::ChroniclePlayerSwingBlow(); // MoonMod: an evade may cancel the shot's recovery after this
+    SpawnOneShot(world, vector, damage);
+    const int extra = moonmod::ChroniclePlayerExtraShots();
+    for (int k = 0; k < extra; ++k) {
+        const float turn = (k == 0 ? 1.0f : -1.0f) * 0.14f;
+        sceVu0FVECTOR fanned = {vector[0] * std::cos(turn) + vector[2] * std::sin(turn), vector[1],
+                                -vector[0] * std::sin(turn) + vector[2] * std::cos(turn), vector[3]};
+        SpawnOneShot(world, fanned, damage);
+    }
+}
+
+void SpawnOneShot(sceVu0FVECTOR world, sceVu0FVECTOR vector, int damage) {
     CSHOT *shots = NowShotData;
 
     for (int i = 0; i < 12; i++) {
@@ -4355,12 +4831,84 @@ void SpawnShot(sceVu0FVECTOR world, sceVu0FVECTOR vector, int damage) {
             shots->halted[i] = 0;
             shots->start_flag[i] = 0;
             shots->used[i] = 1;
+            moonmod::ChroniclePlayerShotSpawned(i); // MoonMod: a mod move's shot look, or the native one
             break;
         }
     }
 }
 
 } // namespace
+
+int MoonModSpawnPlayerShots(float heading, float speed, int damage, int count, float spread) {
+    sceVu0FVECTOR world;
+    float         offset[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    CFrame       *tip = NowWeapon != nullptr && NowWeapon->frame != nullptr ? NowWeapon->frame->SearchFrame("eff30") : nullptr;
+
+    if (tip == nullptr && CharaMain.frame != nullptr) {
+        tip = CharaMain.frame->SearchFrame("weapon");
+    }
+
+    if (moonmod::ChronicleMoveShotOrigin(world)) {
+        // MoonMod: the move names where its shots leave from (Opar's spit: his mouth)
+    } else if (tip != nullptr) {
+        tip->GetWorldPosition(world, offset);
+    } else {
+        sceVu0CopyVector(world, CharaMain.pos);
+        world[1] += 8.0f;
+    }
+
+    // Aimed at the locked-on target as Xiao's own shot is; otherwise level, the way the move faces.
+    float pitch = 0.0f;
+
+    if (lockOnTargetFlag != 0) {
+        const float dx = BtActStatus.target_position[0] - world[0], dz = BtActStatus.target_position[2] - world[2];
+        heading = atan2f(dx, dz);
+        pitch = atan2f(BtActStatus.target_position[1] - world[1], sqrtf(dx * dx + dz * dz));
+    }
+
+    int fired = 0;
+
+    for (int k = 0; k < count; ++k) {
+        const float turn = heading + (static_cast<float>(k) - 0.5f * static_cast<float>(count - 1)) * spread;
+        sceVu0FVECTOR vector = {sinf(turn) * cosf(pitch) * speed, sinf(pitch) * speed, cosf(turn) * cosf(pitch) * speed, 1.0f};
+        // Ruby's are her magic orbs (flying to a point ahead), Osmond's his gun's bullets; the others throw shots.
+        if (UserStatus != nullptr && UserStatus->cur_chara == CHARA_RUBY) {
+            sceVu0FVECTOR at = {world[0] + vector[0] * 20.0f, world[1] + vector[1] * 20.0f, world[2] + vector[2] * 20.0f, 1.0f};
+            if (NowMainEffect->Set(world, at, 3, NowWeaponHave->best_elem, 0, nullptr, 1) == -1) break;
+            NowMainEffect->SetWepStatus(NowWeaponHave->flags);
+            NowMainEffect->SetVsMonster(NowWeaponHave->vs_monster);
+            NowMainEffect->SetDmg(damage);
+            ++fired;
+            continue;
+        }
+        if (UserStatus != nullptr && UserStatus->cur_chara == CHARA_OSMOND) {
+            sceVu0FVECTOR shot = {vector[0] * 10.0f / speed, vector[1] * 10.0f / speed, vector[2] * 10.0f / speed, 1.0f};
+            OzumondShot.Set(world, shot, damage, 0);
+            ++fired;
+            continue;
+        }
+        CSHOT *shots = NowShotData;
+        bool   free_slot = false;
+
+        for (int i = 0; i < 12; i++) {
+            free_slot = free_slot || shots->used[i] == 0;
+        }
+
+        if (!free_slot) {
+            break;
+        }
+
+        SpawnOneShot(world, vector, damage);
+        ++fired;
+    }
+
+    if (fired > 0) {
+        SndSePlay(SE_CHARA_ACTION_2, -1, 0);
+        BtActStatus.frames_since_attack = 0;
+    }
+
+    return fired;
+}
 
 void BattleActionOn_Jinn() {
     if (BtActStatus.action_on == 0 && static_cast<s32>(BtActStatus.action_gauge) == 100) {
@@ -4508,6 +5056,8 @@ void BattleActionShotRuby(CCharacter *chara, int aimed, float scale, int repeat)
         damage *= 2;
     }
 
+    if (repeat == 0) moonmod::ChroniclePlayerSwingBlow(); // MoonMod: the cast is a blow (evade cancels, combo chains)
+
     // A repeat shot reuses the start and the way the first one took.
     if (repeat != 0) {
         if (NowMainEffect->Set(ruby_effect_pos, ruby_effect_vec, 3, element, 0, nullptr, 1) != -1) {
@@ -4555,6 +5105,19 @@ void BattleActionShotRuby(CCharacter *chara, int aimed, float scale, int repeat)
         NowMainEffect->SetWepStatus(NowWeaponHave->flags);
         NowMainEffect->SetVsMonster(NowWeaponHave->vs_monster);
         NowMainEffect->SetDmg(damage);
+    }
+
+    // MoonMod player.tuning_set extra_shots: Orb Split sends more orbs, turned 8 degrees either side.
+    for (int k = 0; k < moonmod::ChroniclePlayerExtraShots(); ++k) {
+        const float   turn = (k == 0 ? 1.0f : -1.0f) * 0.14f;
+        const float   dx = ruby_effect_vec[0] - ruby_effect_pos[0], dz = ruby_effect_vec[2] - ruby_effect_pos[2];
+        sceVu0FVECTOR aim = {ruby_effect_pos[0] + dx * std::cos(turn) + dz * std::sin(turn), ruby_effect_vec[1],
+                             ruby_effect_pos[2] - dx * std::sin(turn) + dz * std::cos(turn), ruby_effect_vec[3]};
+        if (NowMainEffect->Set(ruby_effect_pos, aim, 3, element, 0, nullptr, 1) != -1) {
+            NowMainEffect->SetWepStatus(NowWeaponHave->flags);
+            NowMainEffect->SetVsMonster(NowWeaponHave->vs_monster);
+            NowMainEffect->SetDmg(damage);
+        }
     }
 }
 
@@ -4788,6 +5351,7 @@ void BattleActionPlay_Ozumond(int aimed) {
         sceVu0Normalize(shot, shot);
         sceVu0ScaleVectorXYZ(shot, shot, 10.0f);
         OzumondShot.Set(pos, shot, damage, 0);
+        moonmod::ChroniclePlayerSwingBlow(); // MoonMod: the shot is a blow (evade cancels, combo chains)
         BtActStatus.frames_since_attack = 0;
         SwordDmgCheck1(0.5f, 0);
     }
@@ -4853,6 +5417,7 @@ void BattleActionPlay_Ozumond_H(int aimed) {
             NowMainEffect->SetAttribute(GetWeaponElementAttr(NowWeaponHave->best_elem));
             NowMainEffect->SetDmg(damage);
         }
+        moonmod::ChroniclePlayerSwingBlow(); // MoonMod: the shot is a blow (evade cancels, combo chains)
 
         BtActStatus.action_step = 1;
         BtActStatus.frames_since_attack = 0;
@@ -4900,6 +5465,7 @@ void BattleActionPlay_Ozumond_F(int aimed) {
             }
 
             OzumondFire.Init(start, start_dir, 0, 0);
+            moonmod::ChroniclePlayerSwingBlow(); // MoonMod: the flame is a blow (evade cancels, combo chains)
         }
 
         if (GamePad.On(PadInput_OK) == 0) {
@@ -5080,10 +5646,10 @@ void autoCamTrial() {
             }
         }
     } else {
-        for (int j = 0; j < 20; j++) {
-            for (int i = 0; i < 20; i++) {
+        for (int j = 0; j < DNG_GRID; j++) {
+            for (int i = 0; i < DNG_GRID; i++) {
                 CDungeonMap *map = NowDngMap;
-                MAP_CELL    *cell = &map->cells[i + j * 20];
+                MAP_CELL *cell = &map->cells[i + j * DNG_GRID];
                 s32          parts_no = cell->parts_no;
                 CFrame      *frame = parts_no == -1 ? nullptr : map->parts[parts_no].camera_collision;
 
@@ -5331,7 +5897,7 @@ int Run_TrapCircle(MAP_TRAP_CIRCLE *trap) {
     s16          item_no = weapon->item_no;
 
     // The first two weapons of each character turn every trap into the stamina trap.
-    if (item_no == defWeapon__6[chara] || item_no == defWeapon__6[chara] + 1) {
+    if (item_no == defWeapon__6[CombatChara(chara)] || item_no == defWeapon__6[CombatChara(chara)] + 1) {
         kind = TRAP_CIRCLE_STAMINA;
     }
 
@@ -5506,9 +6072,9 @@ int SetNearLockOnTarget(int from, int nearest_only) {
     CUserStatus  *status = UserStatus;
     sceVu0FVECTOR at;
     sceVu0FVECTOR towards;
-    sceVu0FVECTOR pos[16];
-    float         dist[16];
-    int           found[16];
+    sceVu0FVECTOR pos[MONSTOR_SLOT_MAX];
+    float         dist[MONSTOR_SLOT_MAX];
+    int           found[MONSTOR_SLOT_MAX];
     float         rate = CharaRangeRate(status);
 
     CharaFrame->GetRotation(at);
@@ -5516,7 +6082,7 @@ int SetNearLockOnTarget(int from, int nearest_only) {
     sceVu0FVECTOR forward = {0.0f, 0.0f, 1.0f, 1.0f};
     sceVu0FMATRIX unit;
     sceVu0FMATRIX turn;
-    int           order[16];
+    int           order[MONSTOR_SLOT_MAX];
     int           screen[4];
 
     sceVu0UnitMatrix(unit);
@@ -5532,7 +6098,7 @@ int SetNearLockOnTarget(int from, int nearest_only) {
         monster = -1;
     }
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         MonstorPicupInner[i] = 0.0f;
 
         CMonstorUnit *monsters = NowMonstorUnit;

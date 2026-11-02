@@ -15,11 +15,38 @@ include(GoogleTest)
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp)
 add_executable(darkcloud_tests ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ${TEST_SOURCES})
+add_library(moonmod_native_plugin_fixture OBJECT moonmod_native_plugin_fixture.c)
+set_target_properties(moonmod_native_plugin_fixture PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+target_include_directories(moonmod_native_plugin_fixture PRIVATE ${CMAKE_SOURCE_DIR}/port/include)
+target_sources(darkcloud_tests PRIVATE $<TARGET_OBJECTS:moonmod_native_plugin_fixture>)
+add_library(moonmod_native_plugin_shared_fixture SHARED moonmod_native_plugin_shared_fixture.c)
+set_target_properties(moonmod_native_plugin_shared_fixture PROPERTIES
+    C_STANDARD 99 C_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+target_include_directories(moonmod_native_plugin_shared_fixture PRIVATE ${CMAKE_SOURCE_DIR}/port/include)
+target_compile_definitions(darkcloud_tests PRIVATE
+    MOONMOD_TEST_NATIVE_PLUGIN_PATH="$<TARGET_FILE:moonmod_native_plugin_shared_fixture>"
+    MOONMOD_TEST_GAME_ID="chronicle"
+    MOONMOD_TEST_CHRONICLE=1)
+set(MOONFACTORY_FIRST_STEPS_PATH "${CMAKE_SOURCE_DIR}/../MoonFactory/examples/first-steps")
+if(EXISTS "${MOONFACTORY_FIRST_STEPS_PATH}/mod.json")
+    file(TO_CMAKE_PATH "${MOONFACTORY_FIRST_STEPS_PATH}" MOONFACTORY_FIRST_STEPS_PATH)
+    target_compile_definitions(darkcloud_tests PRIVATE
+        MOONFACTORY_FIRST_STEPS_PATH="${MOONFACTORY_FIRST_STEPS_PATH}")
+endif()
+set(MOONFACTORY_ROGUELIKE_PATH "${CMAKE_SOURCE_DIR}/../MoonFactory/mods/moonmod.roguelike")
+if(EXISTS "${MOONFACTORY_ROGUELIKE_PATH}/mod.json")
+    file(TO_CMAKE_PATH "${MOONFACTORY_ROGUELIKE_PATH}" MOONFACTORY_ROGUELIKE_PATH)
+    target_compile_definitions(darkcloud_tests PRIVATE
+        MOONFACTORY_ROGUELIKE_PATH="${MOONFACTORY_ROGUELIKE_PATH}")
+endif()
+add_dependencies(darkcloud_tests moonmod_native_plugin_shared_fixture)
 set_target_properties(darkcloud_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 target_include_directories(darkcloud_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
 dc_link_game(darkcloud_tests)
 kz_port_tests(darkcloud_tests)
-target_link_libraries(darkcloud_tests PRIVATE GTest::gtest nlohmann_json::nlohmann_json)
+target_link_libraries(darkcloud_tests PRIVATE GTest::gtest nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
 
 # A test that stalls is cut off; graphics startup can take several seconds on some systems. The clock
 # cases measure short sleeps, which the parallel gfx cases skew, so they run on their own.
@@ -58,3 +85,11 @@ gtest_discover_tests(darkcloud_tests
     DISCOVERY_MODE PRE_TEST
     TEST_FILTER PlatformClock.*
     PROPERTIES TIMEOUT ${DC_TEST_TIMEOUT} ENVIRONMENT "DC_TEST_FONT=${CMAKE_SOURCE_DIR}/tools/font/ChronicleSharp-Bold.ttf" RUN_SERIAL TRUE)
+
+add_test(NAME Smoke.MoonModHeadlessPreflight
+    COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:darkcloud>
+        -DROOT=${CMAKE_BINARY_DIR}/smoke-preflight-fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/smoke_headless_preflight.cmake)
+set_tests_properties(Smoke.MoonModHeadlessPreflight PROPERTIES
+    PASS_REGULAR_EXPRESSION "MOONFACTORY_PREFLIGHT_OK"
+    TIMEOUT 120 RUN_SERIAL TRUE LABELS gpu)

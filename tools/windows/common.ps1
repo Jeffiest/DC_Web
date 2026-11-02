@@ -1,3 +1,6 @@
+# Kazarov's release of the prebuilt FFmpeg and cxxbridge (tools/kazarov/.github/workflows/prebuilt.yml).
+$KazarovDeps = 'https://github.com/TheMoonPeople/Kazarov/releases/download/deps-ffmpeg-9.0.2-7a3806abd8eb-cxxbridge-1.0.205'
+
 function Resolve-WindowsRoot([string]$Root) {
     if (!$Root) { $Root = Join-Path $PSScriptRoot '../../..' }
     return [IO.Path]::GetFullPath($Root)

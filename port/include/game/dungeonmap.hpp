@@ -18,6 +18,37 @@
 
 namespace dc::game {
 
+/** Floor grid side and room limit: retail 20 x 20 and 16 rooms; the PC port enlarges both for mods. */
+#ifdef PORT
+#define DNG_GRID     96
+#define DNG_ROOM_MAX 160
+#define DNG_ROOM_AREA DNG_GRID
+#define DNG_EVENT_MAX 768
+#define DNG_BOX_MAX 160
+#define DNG_CELLS (DNG_GRID * DNG_GRID)
+#define DNG_GRID_LAST (DNG_GRID - 1)
+#define DNG_ROOM_AREA_LAST (DNG_ROOM_AREA - 1)
+#include "moonmod/dungeonmap_layout.hpp"
+#else
+#define DNG_GRID     20
+#define DNG_ROOM_MAX 16
+#define DNG_ROOM_AREA 16
+#define DNG_EVENT_MAX 48
+#define DNG_BOX_MAX 24
+#define DNG_CELLS 400
+#define DNG_GRID_LAST 19
+#define DNG_ROOM_AREA_LAST 15
+#define DNG_REGULAR_CHEST_MAX DNG_BOX_MAX
+#define DNG_BUILD_AREA      16
+#define DNG_BUILD_ROOM_MIN  3
+#define DNG_BUILD_ROOM_SPAN 2
+#define DNG_BUILD_ROOM_SPAN_F 2.0f
+#define DNG_MAP_TILE        16
+#define DNG_MAP_X 380
+#define DNG_MAP_Y 64
+#define DNG_MAP_SCALE       0.1f
+#endif
+
 /**
  * Kinds of dungeon event, as DUNGEON_EVENT::kind holds them.
  */
@@ -122,7 +153,7 @@ struct ATRA_BOLL {
     s32   atra_no; /**< Identifier of the atla inside the ball. */
     s32   used;    /**< 1 if the slot is in use. */
     float phase;   /**< Angle that makes the ball move up and down. */
-    s32   unk_1C;
+    s32   zone_floor; /**< MoonMod (dungeons.set_zones source_floor): 1 + the floor the atla belongs to; 0, the map's own. */
 };
 
 /**
@@ -193,7 +224,7 @@ class CDungeonMap {
 public:
     s32              unk_0000;
     s32              unk_0004;
-    s32              room_seen[16];         /**< 1 for each room that the player found. */
+    s32              room_seen[DNG_ROOM_MAX];         /**< 1 for each room that the player found. */
     CFireOmni        fire;                  /**< Draws the fire and the raster of every map part. */
     CWater           water;                 /**< Draws the water surface. */
     float            draw_dist_scale;       /**< Scale that the draw distance uses. */
@@ -207,12 +238,12 @@ public:
     CFrame          *dummy_frame[3];        /**< Models that a dummy model can draw with. */
     CFrame          *bg_model[6];           /**< Models that draw behind the floor. */
     CDungeonParts    parts[72];             /**< Map parts that the floor is built from. */
-    s32              mask[400];             /**< 1 for each grid cell that the mini map shows. */
-    DUNGEON_EVENT    events[48];            /**< Places that start an event. */
-    MAP_CELL         cells[400];            /**< 20 x 20 grid of the floor. */
-    ROOM_INFO        rooms[16];             /**< Position and extent of each room. */
+    s32              mask[DNG_CELLS];             /**< 1 for each grid cell that the mini map shows. */
+    DUNGEON_EVENT    events[DNG_EVENT_MAX];  /**< Places that start an event. */
+    MAP_CELL         cells[DNG_CELLS];            /**< 20 x 20 grid of the floor. */
+    ROOM_INFO        rooms[DNG_ROOM_MAX];             /**< Position and extent of each room. */
     s32              room_num;              /**< Number of rooms on the floor. */
-    TREASURE_BOX     boxes[24];             /**< Treasure boxes that stand on the floor. */
+    TREASURE_BOX     boxes[DNG_BOX_MAX];     /**< Treasure boxes that stand on the floor. */
     s32              box_num;               /**< Number of treasure boxes on the floor. */
     CFrame          *box_lid_model;         /**< Model that draws the lid of a wooden treasure box. */
     CFrame          *box_body_model;        /**< Model that draws a wooden treasure box. */
@@ -221,7 +252,7 @@ public:
     CFrame          *chest_body_model;      /**< Model that draws a metal treasure box. */
     CFrame          *chest_collision_model; /**< Model that the collision of a metal treasure box uses. */
     CFrame          *fall_model;            /**< Model that draws the hole a fallen map part leaves. */
-    ATRA_BOLL        atra[8];               /**< Atla balls that lie on the floor. */
+    ATRA_BOLL        atra[80];              /**< Atla balls that lie on the floor (MoonMod: 80, eight zones' floors of the game's 8 and room for mods' spheres). */
     s32              atra_num;              /**< Number of atla balls on the floor. */
     CFrame          *atra_model;            /**< Model that draws an atla ball. */
     CFrame          *collision_model;       /**< Model that the collision of an atla ball uses. */
@@ -233,7 +264,8 @@ public:
     /**
      * Puts one non-player character on the floor.
      */
-    void SetNPC(int npc_no, unsigned int *pack, int parts_no, sceVu0FVECTOR pos, sceVu0FVECTOR rot, int visible, int motion_no, CDataAlloc2<1> *alloc);
+    void SetNPC(int npc_no, unsigned int *pack, int parts_no, sceVu0FVECTOR pos, sceVu0FVECTOR rot, int visible, int motion_no, CDataAlloc2<1> *alloc,
+                char *cfg_name = nullptr); // MoonMod: cfg_name for a pack whose config is not info.cfg (a mainchara pack's base.cfg)
 
     /**
      * Sets the number of copies to draw of every character to zero.
@@ -393,6 +425,12 @@ public:
      * Puts an atla ball on the floor at a position, with the event that picks it up.
      */
     void SetAtraBoll(float *pos, int atra_no);
+    /** MoonMod: puts a ball holding atra_no (a mod's sphere, mod_atla.hpp) on a free spot of the floor, as the floor's
+     * own Atla are put; its slot, or -1 when the floor has no room left or no free spot was found. */
+    int PutAtraBollAnywhere(int atra_no);
+    /** MoonMod: puts a ball holding atra_no at pos, in a new slot or one whose ball is gone; its slot, or -1 when all
+     * eight hold a ball. */
+    int PutAtraBoll(float *pos, int atra_no);
 
     /**
      * Puts a treasure chest on the floor.
@@ -433,6 +471,14 @@ public:
      * Puts the part that closes the right edge of the grid in every row.
      */
     void SetUnderLoad();
+    /**
+     * MoonMod: locks the floor's shortcut doors and hides their keys (dungeons.set_shortcuts).
+     */
+    void PlaceShortcutDoors(int first_build);
+    /**
+     * MoonMod: closes the Warden room's other doorways (dungeons.set_warden_room).
+     */
+    void PlaceWardenRoom(int first_build);
 
     /**
      * Fills list with the column and row of each cell that holds a part from
@@ -482,6 +528,8 @@ STATIC_ASSERT(sizeof(MAP_TRAP_CIRCLE) == 0x20);
 STATIC_ASSERT(sizeof(ROOM_LINK_RESULT) == 0x18);
 STATIC_ASSERT(sizeof(DUNGEON_EVENT) == 0x50);
 STATIC_ASSERT(sizeof(MAP_NPC_MODEL) == 0x1330);
-STATIC_ASSERT(sizeof(CDungeonMap) == 0x10B10);
+#ifndef PORT
+STATIC_ASSERT(sizeof(CDungeonMap) == 0x10B10 + 72 * sizeof(ATRA_BOLL)); // MoonMod: atra holds 80
+#endif
 
 } // namespace dc::game

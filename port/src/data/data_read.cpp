@@ -24,9 +24,9 @@
 #include <utility>
 #include <vector>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/model_gltf.hpp"
 #include "dataalloc.hpp"
+#include "dcdata.hpp"
 #include "platform/data_archive.hpp"
 #include "platform/load_work_profile.hpp"
 #include "platform/paths.hpp"
@@ -520,6 +520,21 @@ bool DataFileExists(std::string_view path) {
     return Lookup(path) != nullptr;
 }
 
+bool DataDirectoryIndexed(std::string_view directory) {
+    if (!data_indexed || directory.empty()) {
+        return false;
+    }
+    std::string folded = dcdata::FoldPath(directory);
+    while (!folded.empty() && folded.back() == '/') {
+        folded.pop_back();
+    }
+    if (folded.empty()) {
+        return false;
+    }
+    const std::string prefix = folded + "/";
+    return std::ranges::any_of(data_index, [&prefix](const auto &entry) { return entry.first.starts_with(prefix); });
+}
+
 std::uintmax_t DataFileSize(std::string_view path) {
     const IndexedFile *file = Lookup(path);
     return file != nullptr ? file->size : 0;
@@ -765,6 +780,15 @@ void DataReadClearPackCapacities() {
     loaded_capacities.clear();
     copied_capacities_by_owner.clear();
     copied_capacity_count.store(0, std::memory_order_relaxed);
+}
+
+void DataReadTrackUnindexedFile(const void *bytes, std::size_t capacity) {
+    if (bytes == nullptr || capacity == 0) {
+        return;
+    }
+    ForgetPackCapacities(bytes);
+    ForgetOverwrittenCapacities(bytes, capacity);
+    TrackPackCapacity(bytes, capacity, bytes);
 }
 
 void DataReadForgetPackCapacities(const void *owner) {

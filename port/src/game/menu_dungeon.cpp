@@ -49,6 +49,10 @@
 #include "texture.hpp"
 #include "userstatus.hpp"
 #include "weaponelement.hpp"
+#include "monstorunit.hpp"
+#include "text/gametext.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/item_icon_override.hpp"
 
 namespace dc::game {
 
@@ -80,8 +84,9 @@ struct CHARA_CHANGE_MENU {
     s8              party_size;     /**< Number of party members on the ring. */
     CharaChangeStep step;           /**< Step of the menu's state machine. */
     float           turn_frame;     /**< Frames the ring has spent turning toward the newly selected member. */
-    float           ring_pos[6][2]; /**< Each member's offset from the ring's centre. */
-    s16             ring_slot[6];   /**< Each member's place on the ring, counted from the front. */
+    float           ring_pos[CHARA_MAX][2]; /**< Each member's offset from the ring's centre (MoonMod: registered ones' too). */
+    s16             ring_slot[CHARA_MAX];   /**< Each member's place on the ring, counted from the front. */
+    s8              members[CHARA_MAX];     /**< MoonMod: the character at each place of the ring (the party in index order). */
     float           turn_direction; /**< Direction the ring turns: 1 after selecting the previous member, -1 after the next. */
     s16             reset_on_open;  /**< Cleared when the menu opens; nothing reads it. */
     u8              unk_4a[2];
@@ -95,7 +100,7 @@ struct CHARA_CHANGE_MENU {
     u8              unk_5e[2];
 };
 
-STATIC_ASSERT(sizeof(CHARA_CHANGE_MENU) == 0x60);
+STATIC_ASSERT(sizeof(CHARA_CHANGE_MENU) == 0x60 + (CHARA_MAX - 6) * 0xA); // retail 0x60; MoonMod's ring places add 0xA each
 
 /**
  * State of the debug item menu, which hands out any item on request.
@@ -114,7 +119,6 @@ CHARA_CHANGE_MENU ChangeMenu;
 CTexture *DunLogBoard2;
 
 /** Number of floors available in each dungeon. */
-constexpr std::array<int, 7> maxFloorTbl__4 = {15, 17, 18, 18, 15, 25, 100};
 
 int  DunEnterMenuKey();
 void DunEnterDraw();
@@ -386,8 +390,8 @@ int InitDunEnterMenu(int texture_block, int dungeon, int requested_floor) {
     int floor = DEnterStatusPt->floor_reached[dungeon];
 
     if (dungeon == 5) {
-        if (floor >= maxFloorTbl__4[dungeon]) {
-            floor = maxFloorTbl__4[dungeon] - 1;
+        if (floor >= maxFloorTbl__3[dungeon]) {
+            floor = maxFloorTbl__3[dungeon] - 1;
         }
 
         std::println("maxfloor = {}", floor);
@@ -399,7 +403,7 @@ int InitDunEnterMenu(int texture_block, int dungeon, int requested_floor) {
         DEnterMenu.floor_count = 1;
     }
 
-    for (floor = 0; floor < maxFloorTbl__4[dungeon]; floor++) {
+    for (floor = 0; floor < maxFloorTbl__3[dungeon]; floor++) {
         DEnterMenu.max_atra[floor] = DEnterStatusPt->GetMaxAtraNum(dungeon, floor);
         DEnterMenu.collected_atra[floor] = DEnterStatusPt->GetAtraNum(dungeon, floor);
         DEnterMenu.kills[floor] = DEnterStatusPt->ChkKills(dungeon, floor);
@@ -465,6 +469,9 @@ int DunEnterMenuLoop() {
     ReadBG();
     int result = DunEnterMenuKey();
     DunEnterDraw();
+#ifdef PORT
+    moonmod::DrawChronicleDungeonBadges();
+#endif
     ItemVolumeStep.LoopStep(60);
 
     if (0 <= result) {
@@ -571,7 +578,7 @@ int DunEnterMenuKey() {
 
             if (DebugMode) {
                 if (GamePad.Down2(PAD_R1)) {
-                    int max_floor = maxFloorTbl__4[DEnterMenu.dungeon];
+                    int max_floor = maxFloorTbl__3[DEnterMenu.dungeon];
                     DEnterMenu.floor_count = max_floor;
 
                     for (int floor = 0; floor < DEnterMenu.floor_count; floor++) {
@@ -836,7 +843,7 @@ void DunEnterBoard(int x, int y, int alpha) {
         position = row_y + 4;
         DrawDunEnterFloorName(column_x, position, i + 1, top, bottom, alpha);
         const int dungeon = DEnterMenu.dungeon;
-        const int max_floor = maxFloorTbl__4[dungeon];
+        const int max_floor = maxFloorTbl__3[dungeon];
 
         if (i == max_floor - 1) {
             const int draw_x = column_x + 0x82;
@@ -880,7 +887,7 @@ void DunEnterBoard(int x, int y, int alpha) {
     row_y--;
 
     for (int floor = 0; floor < 100; floor++) {
-        if (floor == maxFloorTbl__4[DEnterMenu.dungeon] - 1) {
+        if (floor == maxFloorTbl__3[DEnterMenu.dungeon] - 1) {
             break;
         }
 
@@ -1133,7 +1140,20 @@ void StartQuickChange(u_long128 *buffer, int texture_block, int *positions, int 
         return;
     }
 
-    ChangeMenu.selected = ChangeStatusDataPt->cur_chara;
+    // MoonMod: the ring holds the party's members in index order (a registered one who joined a story party after the
+    // six), and `selected` is a place on it.
+    ChangeMenu.party_size = 0;
+    for (int chara = 0; chara < CharaCount() && ChangeMenu.party_size < CHARA_MAX; chara++) {
+        if (InParty(*ChangeStatusDataPt, chara)) {
+            ChangeMenu.members[ChangeMenu.party_size++] = static_cast<s8>(chara);
+        }
+    }
+    ChangeMenu.selected = 0;
+    for (int i = 0; i < ChangeMenu.party_size; i++) {
+        if (ChangeMenu.members[i] == ChangeStatusDataPt->cur_chara) {
+            ChangeMenu.selected = static_cast<s8>(i);
+        }
+    }
     ItemVolumeStep.CheckItemVolume();
     ChangeMenu.unk_4c = 0;
     StayTex = TexManager.GetTexture("stayframe", -1);
@@ -1148,7 +1168,7 @@ void StartQuickChange(u_long128 *buffer, int texture_block, int *positions, int 
 
     if (zone < 6 && zone >= 0) {
         ChangeMenu.change_blocked = 1;
-    } else if (status->cur_chara == CHARA_OSMOND && BtActStatus.ground_kind == 10) {
+    } else if (CombatChara(status->cur_chara) == CHARA_OSMOND && BtActStatus.ground_kind == 10) {
         ChangeMenu.change_blocked = 2;
     }
 
@@ -1168,7 +1188,6 @@ void StartQuickChange(u_long128 *buffer, int texture_block, int *positions, int 
         }
     }
 
-    ChangeMenu.party_size = ChangeStatusDataPt->party_size;
     ChangeMenu.reset_on_open = 0;
     float step = TWO_PI / ChangeMenu.party_size;
 
@@ -1929,17 +1948,18 @@ int CharaChangeKey() {
                 }
 
                 CDngStatusData *status = ChangeStatusDataPt;
-                int             hp = status->hp[ChangeMenu.selected];
-                int             flags = status->GetActiveCharaStatus(ChangeMenu.selected);
+                const int       chosen = ChangeMenu.members[ChangeMenu.selected];
+                int             hp = status->hp[chosen];
+                int             flags = status->GetActiveCharaStatus(chosen);
 
                 if (hp <= 0 || (flags & AILMENT_KNOCKED_OUT)) {
                     ComMenuSePlay(MENU_SOUND_REFUSE);
                     return 0;
                 }
 
-                if (ChangeMenu.selected != status->cur_chara) {
+                if (chosen != status->cur_chara) {
                     ComMenuSePlay(MENU_SOUND_CONFIRM);
-                    SetStatusChara(ChangeStatusDataPt, ChangeMenu.selected);
+                    SetStatusChara(ChangeStatusDataPt, chosen);
 
                     if (ChangeMenu.mode == 1) {
                         ChangeStatusDataPt->LostItem(ITEM_STAND_IN_POWDER);
@@ -1989,7 +2009,7 @@ int CharaChangeKey() {
                 ChangeMenu.step = CharaChangeStep::Turning;
                 BreakReadBG();
                 u_long128 *buffer = chara_change_buf;
-                CharaChangeInitToGL(buffer, ChangeMenu.selected);
+                CharaChangeInitToGL(buffer, ChangeMenu.members[ChangeMenu.selected]);
                 ComMenuSePlay(MENU_SOUND_CURSOR);
             }
 
@@ -2068,23 +2088,37 @@ void CharaChangeDraw() {
 
         CTexture *portraits = QuickCharaTex;
 
-        for (int chara = 0; chara < ChangeMenu.party_size; chara++) {
-            float x = QuickCharaPos[0] + ChangeMenu.ring_pos[chara][0];
-            float y = QuickCharaPos[1] + ChangeMenu.ring_pos[chara][1];
+        for (int place = 0; place < ChangeMenu.party_size; place++) {
+            const int chara = ChangeMenu.members[place];
+            float x = QuickCharaPos[0] + ChangeMenu.ring_pos[place][0];
+            float y = QuickCharaPos[1] + ChangeMenu.ring_pos[place][1];
             int   shade = 0x80;
-            int   u = chara * 0x30;
+            const int atlas = CombatChara(chara); // MoonMod: the atlas has the game's six
+            int   u = atlas * 0x30;
             int   v = 0;
+            int   cell = 0x30;
+            CTexture *picture = portraits;
 
-            if (chara > 2) {
-                u = (chara - 3) * 0x30;
+            if (atlas > 2) {
+                u = (atlas - 3) * 0x30;
                 v = 0x30;
+            }
+
+            // MoonMod: a registered character's face is a picture of its own.
+            {
+                if (CTexture *portrait = CharaPortraitTexture(chara)) {
+                    picture = portrait;
+                    u = 0;
+                    v = 0;
+                    cell = 0x80;
+                }
             }
 
             if (ChangeStatusDataPt != nullptr && ChangeStatusDataPt->hp[chara] <= 0) {
                 shade = 0x40;
             }
 
-            DrawMenu2DSprite(portraits, CRect_i_(x, y, 0x30, 0x30), CRect_i_(u, v, 0x30, 0x30), shade, shade, shade, alpha);
+            DrawMenu2DSprite(picture, CRect_i_(x, y, 0x30, 0x30), CRect_i_(u, v, cell, cell), shade, shade, shade, alpha);
         }
 
         if (ChangeMenu.step != CharaChangeStep::Loaded && ChangeMenu.step != CharaChangeStep::Loading && ChangeMenu.step != CharaChangeStep::Blocked && ChangeMenu.step != CharaChangeStep::Unk4) {
@@ -2763,3 +2797,39 @@ void DrawItemDataView(int item_no) {
 } // namespace
 
 } // namespace dc::game
+
+namespace moonmod {
+
+bool ChronicleDungeonBadgesVisible();
+int  ChronicleDungeonTierBadge(int dungeon, int floor);
+
+// Dungeon+'s tier badges on the entrance menu: each listed floor's tier beside it, and the selected floor's
+// tier with the keys that change it at the top.
+void DrawChronicleDungeonBadges() {
+    using namespace dc::game;
+    if (!ChronicleDungeonBadgesVisible() || DEnterMenu.state != DUN_ENTER_SELECT || !DEnterMenu.textures_ready) {
+        return;
+    }
+    static std::array<dc::text::GameText, 6> labels;
+    for (int row = 0; row < 5; ++row) {
+        const int floor = DEnterMenu.scroll_top + row;
+        if (floor >= DEnterMenu.floor_count) {
+            break;
+        }
+        const int tier = ChronicleDungeonTierBadge(DEnterMenu.dungeon, floor);
+        if (tier == 0) {
+            continue;
+        }
+        labels[row].KeepGameRandom(true);
+        labels[row].SetColour(FONT_COLOR_YELLOW);
+        labels[row].Set("+" + std::to_string(tier));
+        labels[row].Draw(186, static_cast<int>(DEnterMenu.list_y + 40 * floor + 12));
+    }
+    const int tier = ChronicleDungeonTierBadge(DEnterMenu.dungeon, DEnterMenu.selected_floor);
+    labels[5].KeepGameRandom(true);
+    labels[5].SetColour(FONT_COLOR_YELLOW);
+    labels[5].Set("DUNGEON+ TIER " + std::to_string(tier) + "   {square}/{triangle} TIER");
+    labels[5].Draw(110, 52);
+}
+
+} // namespace moonmod

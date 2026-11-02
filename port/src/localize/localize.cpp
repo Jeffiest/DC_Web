@@ -22,9 +22,9 @@
 #include <unordered_map>
 #include <utility>
 
-#include "../../../tools/dcdata/dcdata.hpp"
 #include "data/data_read.hpp"
 #include "dataread.hpp"
+#include "dcdata.hpp"
 #include "mainselect.hpp"
 #include "options/menu_option.hpp"
 #include "platform/config.hpp"
@@ -57,6 +57,8 @@ struct State {
     std::unordered_map<const void *, std::string> packs;
     // Packs hand out pointers that callers keep, so what was built is never freed.
     std::map<std::string, std::unique_ptr<std::vector<s16>>> built;
+    // Text mods set at run time (MoonMod's game.text.set), over the language files: file key > id > text.
+    std::map<std::string, std::map<int, std::string>> mod_text;
 };
 
 State &Get() {
@@ -139,6 +141,11 @@ const LocalizeTable &Table() {
     }
     state.language = LanguageCode;
     state.table = LoadLanguage(LanguageCode);
+    for (const auto &[file, texts] : state.mod_text) {
+        for (const auto &[id, text] : texts) {
+            state.table.files[file][id] = text;
+        }
+    }
     if (LanguageFile(LanguageCode).empty()) {
         return state.table;
     }
@@ -746,6 +753,57 @@ void LocalizeSetDirectories(std::vector<fs::path> directories) {
     state.directories = std::move(directories);
     state.directories_set = true;
     state.language = -1;
+}
+
+namespace {
+bool SplitMessageKey(std::string_view key, std::string &file, int &id) {
+    const size_t dot = key.rfind('.');
+    if (dot == std::string_view::npos || dot == 0 || dot + 1 >= key.size() || key.size() > 200) {
+        return false;
+    }
+    bool ok = false;
+    id = ParseId(std::string(key.substr(dot + 1)), ok);
+    file = std::string(key.substr(0, dot));
+    return ok;
+}
+} // namespace
+
+bool LocalizeSetModText(std::string_view key, const std::optional<std::string> &text) {
+    std::string file;
+    int         id = 0;
+    if (!SplitMessageKey(key, file, id)) {
+        return false;
+    }
+    State &state = Get();
+    if (text) {
+        state.mod_text[file][id] = *text;
+    } else {
+        auto found = state.mod_text.find(file);
+        if (found != state.mod_text.end()) {
+            found->second.erase(id);
+            if (found->second.empty()) {
+                state.mod_text.erase(found);
+            }
+        }
+    }
+    // The table is built again, with the mods' text over the language's, when a message file next loads.
+    state.language = -1;
+    return true;
+}
+
+std::optional<std::string> LocalizeGetText(std::string_view key) {
+    std::string file;
+    int         id = 0;
+    if (!SplitMessageKey(key, file, id)) {
+        return std::nullopt;
+    }
+    const LocalizeTable &table = Table();
+    const auto           texts = table.files.find(file);
+    if (texts == table.files.end()) {
+        return std::nullopt;
+    }
+    const auto text = texts->second.find(id);
+    return text == texts->second.end() ? std::nullopt : std::optional<std::string>(text->second);
 }
 
 void LocalizeReset() {

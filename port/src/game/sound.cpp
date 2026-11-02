@@ -14,6 +14,7 @@
 #include "audio/mixer.hpp"
 #include "audio/soundtrack.hpp"
 #include "audio/trace.hpp"
+#include "moonmod/audio_api.hpp"
 #include "dataread.hpp"
 #include "platform/audio.hpp"
 #include "platform/config.hpp"
@@ -315,8 +316,11 @@ void StartSequence(int port, int seq_no, const int *volume) {
         Player().Stop(port);
     }
     Player().SetSequence(port, g_slot_sequences[slot][seq_no]);
-    // The soundtrack option: a recording named for this sequence plays in its place.
-    Player().SetStream(port, audio::SoundtrackFor(SequenceName(*state.sequence[seq_no])));
+    // A mod's music (audio.music_set), else the soundtrack option: a recording named for this
+    // sequence plays in its place.
+    const std::string_view sequence_name = SequenceName(*state.sequence[seq_no]);
+    std::shared_ptr<const audio::PcmTrack> stream = moonmod::ModMusicFor(sequence_name);
+    Player().SetStream(port, stream != nullptr ? std::move(stream) : audio::SoundtrackFor(sequence_name));
     Player().SetVolume(port, volume != nullptr ? *volume : state.sequence[seq_no]->volume);
     Player().Rewind(port, 0);
     Player().Play(port);

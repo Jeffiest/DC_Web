@@ -128,6 +128,12 @@ void BtSetStatusErr(int status);
 void BtStatusErrDraw(int y);
 
 /**
+ * Draws the mod notice on screen (ui.notify) in the dungeon message window, unless the game's own message has its
+ * place (native_busy), when the notice waits; a notice counts down only while it is drawn.
+ */
+void DrawModNotice(bool native_busy);
+
+/**
  * Draws one item into the reserved slot area.
  */
 void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax, int dsay);

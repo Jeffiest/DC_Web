@@ -9,6 +9,7 @@
 #include "editground.hpp"
 #include "editmapscript.hpp"
 #include "itemdata.hpp"
+#include "playable_chara.hpp"
 #include "main.hpp"
 #include "savedata.hpp"
 
@@ -52,11 +53,14 @@ constexpr std::array<const char *, TOWN_COUNT> kTowns = {
 };
 
 DiscordActivity Playing(int chara, std::string state) {
-    const Character &character = kCharacters[chara >= CHARA_TOAN && chara <= CHARA_OSMOND ? chara : CHARA_TOAN];
-    return {.details = std::format("Playing as {}", character.name),
+    // MoonMod: a registered character shows his own name and the picture of the character he fights as.
+    const PlayableChara *extra = ExtraChara(chara);
+    const Character &character = kCharacters[extra != nullptr ? extra->fights_as : chara >= CHARA_TOAN && chara <= CHARA_OSMOND ? chara : CHARA_TOAN];
+    const std::string name = extra != nullptr ? extra->name : character.name;
+    return {.details = std::format("Playing as {}", name),
             .state = std::move(state),
             .large_image = character.image,
-            .large_text = character.name};
+            .large_text = name};
 }
 
 DiscordActivity Away(std::string details) {

@@ -111,7 +111,9 @@ int IsNotBuildUpWeapon(int weapon_no) {
         return 0;
     }
 
-    return 1;
+    // MoonMod: one that builds up only into registered weapons (weapons.build_up_register)
+    int to = 0;
+    return MoonModBuildUps(weapon_no, &to, 1) > 0 ? 0 : 1;
 }
 
 void SetWeaponBuildValue(WEAPON_HAVE *weapon, int destination_no) {
@@ -164,7 +166,7 @@ int EnableBuildUpModel(WEP_BUILDUP_INFO *build_info, WEAPON_HAVE *weapon) {
     const WEAPON_DATA *weapon_data = GetWeaponData(weapon_no);
     const s8           owner = weapon_data->owner;
     const int          default_weapon_no = GetDefaultWeaponNo(owner);
-    const int          weapon_max = MenuCharaWeaponMax[owner];
+    const int          weapon_max = MenuCharaWeaponMax[CombatChara(owner)];
     int                count = 0;
 
     // Positions 0-20 are flagged in buildup_mask0, positions above 20 in buildup_mask1.
@@ -182,6 +184,18 @@ int EnableBuildUpModel(WEP_BUILDUP_INFO *build_info, WEAPON_HAVE *weapon) {
 
             count++;
         }
+    }
+
+    // MoonMod: and into registered weapons (weapons.build_up_register), while the callers' tables hold them (the
+    // smallest has room for three and its end)
+    int linked[8];
+    const int linked_count = MoonModBuildUps(weapon_no, linked, 8);
+    for (int i = 0; i < linked_count && count < 3; i++) {
+        build_info[count].weapon_no = static_cast<s16>(linked[i]);
+        WEAPON_HAVE destination_have;
+        WepDataListToHaveCopy(linked[i], &destination_have);
+        build_info[count].enabled = CompareBuildUpModelData2(&destination_have, weapon) ? 1 : 0;
+        count++;
     }
 
     build_info[count].weapon_no = -1;

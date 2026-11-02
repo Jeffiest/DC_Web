@@ -1,3 +1,4 @@
+#include "gfx/gfx.hpp"
 #include "options/screen.hpp"
 
 #include <algorithm>
@@ -19,6 +20,8 @@
 #include "menu_draw.hpp"
 #include "menu_manual.hpp"
 #include "menuetc.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "options/mod_manager_ui.hpp"
 #include "platform/display.hpp"
 #include "platform/input.hpp"
 #include "platform/window.hpp"
@@ -409,7 +412,53 @@ void RunMouse() {
     }
 }
 
+void RunManagerInput() {
+    InputMenuMouse mouse = InputTakeMenuMouse();
+    const std::uint32_t clicked = mouse.buttons & ~g_screen.mouse_buttons;
+    const bool moved = mouse.dx != 0.0f || mouse.dy != 0.0f;
+    g_screen.mouse_buttons = mouse.buttons;
+    if (moved || clicked != 0) {
+        if (!g_screen.pointing) {
+            g_screen.pointing = true;
+            g_screen.pointer_x = g_screen.cursor_x + 26.0f;
+            g_screen.pointer_y = g_screen.cursor_y + 14.0f;
+        }
+        int width = 0;
+        int height = 0;
+        const float scale = WindowSize(width, height)
+                                ? 1.0f / std::min(width / 640.0f, height / 480.0f)
+                                : 1.0f;
+        const auto visible = gfx::VisibleLogicalRect(gfx::kMainTarget);
+        g_screen.pointer_x = std::clamp(g_screen.pointer_x + mouse.dx * scale, visible.x, visible.x + visible.w - 1);
+        g_screen.pointer_y = std::clamp(g_screen.pointer_y + mouse.dy * scale, visible.y, visible.y + visible.h - 1);
+    }
+    const std::uint16_t held = HeldButtons();
+    const int moves = Pressed(held, PAD_DPAD, true);
+    const int pages = Pressed(held, PAD_L1 | PAD_L2 | PAD_R1 | PAD_R2, false);
+    const int actions = Pressed(held, PAD_CROSS | PAD_CIRCLE | PAD_SQUARE | PAD_TRIANGLE, false);
+    const auto [manager_x, manager_y] = mod_manager_ui::InputPoint(g_screen.pointer_x, g_screen.pointer_y);
+    moonmod::HandleManagerInput({
+        .up = (moves & PAD_UP) != 0,
+        .down = (moves & PAD_DOWN) != 0,
+        .left = (moves & PAD_LEFT) != 0,
+        .right = (moves & PAD_RIGHT) != 0,
+        .confirm = (actions & PAD_CROSS) != 0,
+        .cancel = (actions & PAD_CIRCLE) != 0,
+        .next_focus = (pages & (PAD_R1 | PAD_R2)) != 0,
+        .previous_focus = (pages & (PAD_L1 | PAD_L2)) != 0,
+        .mouse_left = (clicked & 1) != 0,
+        .mouse_right = (clicked & 2) != 0,
+        .mouse_x = manager_x,
+        .mouse_y = manager_y,
+        .wheel = mouse.wheel,
+    });
+}
+
 void RunKeys() {
+    if (moonmod::ManagerOpen()) {
+        RunManagerInput();
+        return;
+    }
     if (g_screen.binding_row >= 0) {
         RunBindingCapture();
         return;
@@ -682,9 +731,11 @@ int Run() {
             if (g_screen.bar_frames > 0) {
                 g_screen.bar_frames--;
             }
-            RunMouse();
-            if (g_screen.step == OPTION_STEP_RUN) {
-                RunKeys();
+            if (g_screen.step == OPTION_STEP_RUN && moonmod::ManagerOpen()) {
+                RunManagerInput();
+            } else {
+                RunMouse();
+                if (g_screen.step == OPTION_STEP_RUN) RunKeys();
             }
             ShowHelp();
             break;

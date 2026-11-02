@@ -377,9 +377,9 @@ int MouseCameraPolys(CDungeonMap &map, CBoxVu0 &box, std::vector<CCPoly> &polys)
             }
         }
     } else {
-        for (int j = 0; j < 20; ++j) {
-            for (int i = 0; i < 20; ++i) {
-                auto &cell = map.cells[i + j * 20];
+        for (int j = 0; j < DNG_GRID; ++j) {
+            for (int i = 0; i < DNG_GRID; ++i) {
+                auto &cell = map.cells[i + j * DNG_GRID];
                 if (cell.parts_no == -1) {
                     continue;
                 }

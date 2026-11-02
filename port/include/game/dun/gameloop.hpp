@@ -7,6 +7,7 @@
 #include "dataalloc.hpp"
 #include "hit_machingun_effect.hpp"
 #include "hitmark.hpp"
+#include "monstorunit.hpp"
 #include "runscript.hpp"
 #include "textureanime.hpp"
 
@@ -50,6 +51,8 @@ enum GameTask {
     GAME_TASK_MAPJUMP_FADE_START       = 0x97,  /**< Fading out for a map jump. */
     GAME_TASK_MAPJUMP_FADE_WAIT        = 0x98,  /**< Jumping once the fade ends. */
     GAME_TASK_PAUSE                    = 0x9B,  /**< Paused. */
+    GAME_TASK_MOD_CHOICE               = 0x9C,  /**< MoonMod: paused on a mod's choice panel (ui.choice_open). */
+    GAME_TASK_MOD_MENU                 = 0x9D,  /**< MoonMod: paused on a mod's run menu (ui.run_menu_set). */
     GAME_TASK_URA_SWAP                 = 0xA0,  /**< Switching between the floor and its back floor. */
     GAME_TASK_ESCAPE_INIT              = 0xAA,  /**< Starting an escape. */
     GAME_TASK_ESCAPE_LOOP              = 0xAB,  /**< Running an escape. */
@@ -850,6 +853,9 @@ extern u_int *shortAtraEffectPtr;
  * The models of the items the player is running.
  */
 extern CActiveItemPack activeItem;
+#ifdef PORT
+#include "moonmod/gameloop_moonmod.hpp"
+#endif
 
 /**
  * The model a large treasure box opens with.
@@ -1157,7 +1163,7 @@ extern ENEMY_LIFE_GAGE EnemyLifeGage;
 extern GAME_ENV        GameEnv;
 extern CRandomItem     MainRandomItem;
 extern s32             MonstorNameOff;
-extern CDataAlloc2<1>  MonstorScriptBuffer[16];
+extern CDataAlloc2<1>  MonstorScriptBuffer[MONSTOR_SLOT_MAX];
 extern CHitPointMark   MyHitPointMark[16];
 extern CCharacter      NewChangeFx;
 extern s32             NewChangeFxFlag;

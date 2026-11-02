@@ -250,51 +250,38 @@ into the speeds as a box's does. Two rules keep it from doing harm:
 
 - A vertex comes no nearer a limb than it rested when the cloth settled on the body (first step, or
   after a cut): cloth authored lying against an arm isn't pushed off it, and an arm raised through
-  where the cloth rests still pushes it. Skipping a limb wherever the rest place lay inside it let
-  Toan's arms pass through the poncho's shoulders when he raises them over the snake in the attract
-  movie: overlaps up to 0.74 deep, now at most 0.34 there.
+  where the cloth rests still pushes it. In the attract movie, Toan's arms raised over the snake overlap
+  the poncho's shoulders by at most 0.34, against 0.74 in Original.
 - A limb pressing a vertex towards the torso (a one-joint chain whose end the other chains branch from:
   the pelvis, the spine up to the shoulders) stops it at the torso's surface, or where it rests if that
-  is nearer. An arm swinging in front of Toan's poncho pressed it into his chest,
-  which the PS2's cloth never shows; squeezed between the two, the cloth now stays on the chest and the
-  arm overlaps it. The push is `cloth_body::PushOutOfBody` (`port/include/game/cloth.hpp`), tested on its own.
+  is nearer. Squeezed between an arm and the chest, the cloth stays on the chest and the arm overlaps
+  it. The push is `cloth_body::PushOutOfBody` (`port/include/game/cloth.hpp`), tested on its own.
 
 The torso's surface is the body's own mesh. When the cloth settles, the skinned meshes the character
 draws (Toan's `skin`; a cloth's frame is not drawn, so the poncho's starting mesh is left out) are read
 as they stand, each vertex given to the bone whose capsule surface it lies nearest (the head, hands and
 feet among them, so a hand at his side doesn't widen him), and the torso's faces are measured from the
 spine outwards in 12 directions at 6 heights, in the spine joint's frame so the shape turns with him.
-The steps then only look the shape up. A round torso 0.4 of the spine's length thick, the first
-version, reached 1.29 all round: right for Toan's chest (1.26 at its deepest) but 0.3 to 0.7 out behind
-his back (0.6 at the waist, 1.0 at the shoulders), so it held the poncho's back panel off him (a
-quarter of the time, by up to 0.4) where the PS2 lets it lie. Fitted, the back hangs as the PS2's does
-(its rows' mean distances from the spine within 0.01) and never goes into his back, and the front
-stays off the chest as well as before. A torso the mesh says too little about (fewer than 8 vertices,
-or faces in under half the directions: Toan's pelvis, whose vertices the legs take) stays round.
+The steps then only look the shape up. A round torso would be right for Toan's chest but stand 0.3 to
+0.7 out behind his back, holding the poncho's back panel off him; fitted, the back hangs as the PS2's
+does and never goes into his back. A torso the mesh says too little about (fewer than 8 vertices, or
+faces in under half the directions: Toan's pelvis, whose vertices the legs take) stays round, 0.4 of
+its length thick.
 
 The torso also keeps the cloth off the chest: out to its surface, or for cloth authored resting inside
-it (Toan's collar, up to 0.8 deep in his chest mesh) no deeper than it rests. Pushed to the surface, the
-collar puffed; left alone, it sank up to 1.0 deeper than it rests in the attract movie's poses. What
-still shows there, the poncho inside his chest and shoulders while he rides Dran, is the PS2's own: the
-collar follows its rest place into the chest as his skinned chest and raised shoulders swell 0.3 and
-more past their standing shape, Original clips the same, and neither a torso refitted every step nor a
-limit of 0.3 under the surface changed it. The PS2's
-step carries the cloth along with a share of the body's movement (`FOLLOW`) but none of its turning,
-so a quick about-turn (15 degrees a tick, a dozen ticks) swung Toan's chest through the poncho. Carrying
-the cloth round with turns faster than 3 degrees a tick, as current engines limit the angular inertia a
-cloth feels, was tried first: it stopped the clipping but cut the poncho's movement against the body by
-60% running in circles, and it looked stiff. The backstop keeps all of the PS2's movement (0.225 against
-0.223 running in circles) and cut cloth inside the chest by 75 to 90%; on an about-turn the poncho still
-swings round his side, round the chest instead of through it.
+it (Toan's collar, up to 0.8 deep in his chest mesh) no deeper than it rests. The PS2's step carries
+the cloth along with a share of the body's movement (`FOLLOW`) but none of its turning, so a quick
+about-turn swings the chest through the poncho; with the torso keeping it off, the poncho keeps all of
+the PS2's swing and goes round the chest instead of through it. What still shows in the attract movie,
+the poncho inside Toan's chest and shoulders while he rides Dran, is the PS2's own: the collar follows
+its rest place into the chest as his skinned chest and raised shoulders swell past their standing
+shape, and Original clips the same.
 
-Everything else is the PS2's, so the cloth looks and moves as it always has, except that arms and legs
-no longer pass through it.
-
-A full position-based (XPBD) solver was tried first and dropped. Dark Cloud's cloth is tuned to the
-PS2's soft, four-pass springs: they let the poncho stretch a quarter or more round the authored boxes,
-many of whose rest places lie inside them. Held to its lengths, the poncho rode up off the body and
-showed the belt; softened enough to hang right, it stretched off the neck, jittered at two and a half
-times the PS2's rate and flipped up over Toan's face.
+Everything else is the PS2's, so the cloth looks and moves as it always has, except that the body no
+longer passes through it. Dark Cloud's cloth is tuned to the PS2's soft, four-pass springs, which let
+the poncho stretch a quarter or more round the authored boxes, so a stiffer solver such as XPBD doesn't
+suit it: held to its lengths, the poncho rides up off the body; softened enough to hang right, it
+stretches and jitters.
 
 Both keep the vertices, speeds and normals in `CCloth`, so drawing is unchanged and the two can be
 switched at any time. The Options screen's Display page has the Cloth row (Original, Enhanced);
@@ -399,8 +386,8 @@ source only over the bytes it was converted from, or the zeros stripping left of
 mod changed keeps what it has. A rebuilt model, weight or bind pose must match its CRC, or the file
 keeps what it read. A motion keeps the disc's key frames in every channel: the game reads every
 vertex channel of a frame at the first one's key, and blends towards keys by frame. The channels'
-order matters for the same reason: rebuilt sorted by frame, Saget's vertex animation in the attract
-movie, read against the wrong first channel, wrote past his mesh and crashed its draw. So the sidecar
+order matters for the same reason: a vertex animation read against the wrong first channel writes past
+its mesh. So the sidecar
 lists every channel of a motion in its order, with its header words (the same three in every channel
 of a file: tool leftovers), and keeps with their words the keys a clip can't give back bit for bit
 (glTF's unit rotations change the last bit of a disc rotation that wasn't quite one); every motion

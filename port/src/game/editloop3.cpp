@@ -68,6 +68,7 @@
 #include "sysmes.hpp"
 #include "textureanime.hpp"
 #include "visualvu1.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -887,6 +888,9 @@ int EdSelectVillager(VILLAGER_INFO *villagers, float clock, EDIT_MAP_INFO *map_i
         villagers[i].name[0] = '\0';
     }
 
+    // A mod's villagers take the free slots after the native ones.
+    ChronicleAddModVillagers(villagers, villagers == EdVillagerInfo ? restore_info.data() : nullptr);
+
     return i;
 }
 
@@ -1157,6 +1161,9 @@ void EdInitVilagerPosition(CNPCharacter *villagers, VILLAGER_INFO *info, CEditGr
             }
         }
 
+#ifdef PORT
+        ChroniclePlaceModVillagers(villagers, info);
+#endif
         return;
     }
 
@@ -1332,6 +1339,9 @@ void EdInitVilagerPosition(CNPCharacter *villagers, VILLAGER_INFO *info, CEditGr
     }
 
     srand(random_state);
+#ifdef PORT
+    ChroniclePlaceModVillagers(villagers, info);
+#endif
 }
 
 namespace {
@@ -2397,6 +2407,9 @@ void EdFadeInit() {
 }
 
 void EdFadeIn(int frames, float red, float green, float blue) {
+    // MoonMod (quick passage, O2 C0): the place walked into doesn't fade in from black, whether its init, its own
+    // start script or an arrival event asks for the fade
+    if ((frames < 0 || frames > 1) && (moonmod::ChronicleHoldingPicture() || moonmod::ChronicleWalkArrivalFade())) frames = 1;
     if (fade_in_out == 0 || frames < 0) {
         fade_col[3] = 128.0f;
     }
@@ -2416,6 +2429,16 @@ void EdFadeIn(int frames, float red, float green, float blue) {
 }
 
 void EdFadeOut(int frames, float red, float green, float blue) {
+    // MoonMod (O2 C1, L5): a door into a dungeon, with quick passage on, opens onto the dungeon without the black:
+    // the fade counts as done at once (the event's own return code comes after its fade, so the door says it)
+    const ED_EVENT_POINT *door = EdMoveCharaInfo.param.point;
+    if (moonmod::ChronicleQuickPassageOn() && door != nullptr &&
+        std::strncmp(door->destination, "dungeon", sizeof(door->destination)) == 0) {
+        fade_in_out = 0;
+        fade_col[3] = 0.0f;
+        fade_end = 1;
+        return;
+    }
     if (fade_in_out == 0 || frames < 0) {
         fade_col[3] = 0.0f;
     }
@@ -9241,9 +9264,17 @@ int EdSearchNearNPC(CCharacter *character, CNPCharacter *npcs, int count) {
     character->GetRotation(character_rotation);
 
     for (i = 0; i < count; i++) {
+#ifdef PORT
+        // A mod's villager has no native villager id; it can be talked to from any side.
+        const bool mod_villager = npcs == EdVillager && ChronicleModVillagerInSlot(i) >= 0;
+        if (npcs[i].villager_id < 0 && !mod_villager) {
+            continue;
+        }
+#else
         if (npcs[i].villager_id < 0) {
             continue;
         }
+#endif
 
         int available = npcs[i].initialized != 0 && npcs[i].draw_enabled != 0;
 
@@ -9279,7 +9310,11 @@ int EdSearchNearNPC(CCharacter *character, CNPCharacter *npcs, int count) {
         npcs[i].GetDir(*character, direction);
         float npc_angle = atan2f(direction[0], direction[2]);
         npcs[i].GetRotation(npc_rotation);
+#ifdef PORT
+        int talk_direction = mod_villager ? 1 : EdEventInfo.villagers[npcs[i].villager_id].talk_direction;
+#else
         int talk_direction = EdEventInfo.villagers[npcs[i].villager_id].talk_direction;
+#endif
 
         if (AngleCmp(npc_angle, npc_rotation[1], HALF_PI_SHORT) != 0 && talk_direction == 0 && npcs[i].event_status == 0) {
             continue;

@@ -290,34 +290,44 @@ STATIC_ASSERT(sizeof(MONSTOR_GUARD_WINDOW) == 0x20);
 /**
  * Runs the monsters of one dungeon floor.
  */
+#ifdef PORT
+#define MONSTOR_SLOT_MAX 256
+// Kinds of monster a floor can load: a boss a mod places brings its whole native cast (the Ice Queen's is seven), and
+// a map of eight zones (dungeons.set_zones source_floor) loads eight floors' rosters.
+#define MONSTOR_MODEL_MAX 48
+#else
+#define MONSTOR_SLOT_MAX 16
+#define MONSTOR_MODEL_MAX 9
+#endif
+
 class CMonstorUnit {
 public:
-    CDataAlloc2<1>       *script[16];       /**< Script working memory for each monster on the floor. */
+    CDataAlloc2<1>       *script[MONSTOR_SLOT_MAX];       /**< Script working memory for each monster on the floor. */
     CFrame               *collision;        /**< Collision model that every monster on the floor shares. */
     s32                   back_dungeon;     /**< Nonzero on the back dungeon, where monsters stay angry, give double experience and carry no key. */
     s32                   model_count;      /**< Kinds of monster loaded for the floor. */
     s32                   alive_count;      /**< Monsters alive on the floor. */
-    s32                   script_state[16]; /**< 1 while each monster's script is running. */
+    s32                   script_state[MONSTOR_SLOT_MAX]; /**< 1 while each monster's script is running. */
     s32                   current_monster;  /**< Index of the monster being stepped or drawn. */
     s32                   requested_event;  /**< Event a monster's script asked to run, or -1. */
     s32                   paused;           /**< Nonzero while the monsters are paused; their motions restart when play resumes. */
     s32                   unk_09C;
-    CMonstorChara         base_chara[9];   /**< Characters loaded for each kind of monster on the floor. */
-    MONSTOR_MODEL         model[9];        /**< Parameters of each kind of monster on the floor. */
-    char                 *script_data[9];  /**< Script of each kind of monster on the floor. */
-    MONSTOR               monster[16];     /**< What each monster of the floor is doing. */
-    CMonstorChara         chara[16];       /**< The characters each monster draws with. */
-    CRunScript            interpreter[16]; /**< Script interpreter of each monster. */
-    MONSTOR_EFFECT_STATE  effect[16];      /**< Hits each monster can take. */
-    MONSTOR_EFFECT_STATE2 effect2[16];     /**< Hits each monster gives. */
-    MONSTOR_EFFECT_STATE3 effect3[16];     /**< Spheres that block the player around each monster. */
-    MONSTOR_SOUND         sound[16];       /**< Sounds each monster plays. */
-    MONSTOR_EVENT_STATE   event[16];       /**< First projectile each monster fires. */
-    MONSTOR_EVENT_STATE   event2[16];      /**< Second projectile each monster fires. */
+    CMonstorChara         base_chara[MONSTOR_MODEL_MAX]; /**< Characters loaded for each kind of monster on the floor. */
+    MONSTOR_MODEL         model[MONSTOR_MODEL_MAX];      /**< Parameters of each kind of monster on the floor. */
+    char                 *script_data[MONSTOR_MODEL_MAX]; /**< Script of each kind of monster on the floor. */
+    MONSTOR               monster[MONSTOR_SLOT_MAX];     /**< What each monster of the floor is doing. */
+    CMonstorChara         chara[MONSTOR_SLOT_MAX];       /**< The characters each monster draws with. */
+    CRunScript            interpreter[MONSTOR_SLOT_MAX]; /**< Script interpreter of each monster. */
+    MONSTOR_EFFECT_STATE  effect[MONSTOR_SLOT_MAX];      /**< Hits each monster can take. */
+    MONSTOR_EFFECT_STATE2 effect2[MONSTOR_SLOT_MAX];     /**< Hits each monster gives. */
+    MONSTOR_EFFECT_STATE3 effect3[MONSTOR_SLOT_MAX];     /**< Spheres that block the player around each monster. */
+    MONSTOR_SOUND         sound[MONSTOR_SLOT_MAX];       /**< Sounds each monster plays. */
+    MONSTOR_EVENT_STATE   event[MONSTOR_SLOT_MAX];       /**< First projectile each monster fires. */
+    MONSTOR_EVENT_STATE   event2[MONSTOR_SLOT_MAX];      /**< Second projectile each monster fires. */
 
     union {
-        s16                  event_flags[16][16]; /**< Guard windows of each monster, as the words set-up clears. */
-        MONSTOR_GUARD_WINDOW guard[16];           /**< Guard windows of each monster. */
+        s16                  event_flags[MONSTOR_SLOT_MAX][16]; /**< Guard windows of each monster, as the words set-up clears. */
+        MONSTOR_GUARD_WINDOW guard[MONSTOR_SLOT_MAX];           /**< Guard windows of each monster. */
     };
 
     /**
@@ -531,7 +541,9 @@ public:
     int SetupViewMonstor(int model_no, float *position, int event_flag);
 };
 
+#ifndef PORT
 STATIC_ASSERT(sizeof(CMonstorUnit) == 0x60750);
+#endif
 
 /**
  * Animation frame and phase of one rendered bee.
@@ -583,6 +595,10 @@ void InitBee(CFrame *frame, int count);
 
 /** Model, script and combat parameters of every kind of monster. */
 extern "C" MONSTOR_MODEL MonstorTable[167];
+
+#ifdef PORT
+#include "moonmod/monstorunit_moonmod.hpp"
+#endif
 
 /** Projectile effects the monsters fire, indexed by MONSTOR_MODEL::shot_effect. */
 extern "C" BT_SHOT_EFFECT *BtEntryEffectTbl[35];

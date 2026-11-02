@@ -1,5 +1,7 @@
 #include "editpartsinfo.hpp"
 
+#include "moonmod/editpartsinfo_moonmod.hpp"
+
 #include "editatra.hpp"
 #include "editloop3.hpp"
 #include "savedata.hpp"
@@ -10,8 +12,13 @@
 namespace dc::game {
 
 EDITPARTS_INFO *CEditPartsInfo::GetPartsInfo(int index) {
-    if (index < 0 || index >= 24) {
+    // The plots after the native ones are a mod's Georama pieces (moonmod/editpartsinfo_moonmod.hpp).
+    if (index < 0 || index >= CHRONICLE_GEORAMA_PART_CAPACITY) {
         return nullptr;
+    }
+
+    if (index >= CHRONICLE_GEORAMA_NATIVE_PART_COUNT) {
+        return ChronicleModGeoramaPartsInfo(this, index);
     }
 
     return &parts[index];
@@ -69,11 +76,12 @@ int CEditPartsInfo::GetRequest(int index) {
 int CEditPartsInfo::GetNextPartsNum(int index) {
     int remaining = 0;
 
-    for (int i = index + 1; i < 24; i++) {
+    for (int i = index + 1; i < CHRONICLE_GEORAMA_PART_CAPACITY; i++) {
         EDITPARTS_INFO *info = GetPartsInfo(i);
 
+        // A free mod plot has no info; the plots after it may still hold pieces.
         if (info == nullptr) {
-            break;
+            continue;
         }
 
         if (CheckPartsInfo(info) != 0) {
@@ -89,12 +97,11 @@ int CEditPartsInfo::GetNextParts(int index) {
         index++;
         EDITPARTS_INFO *info = GetPartsInfo(index);
 
-        if (info == nullptr) {
-            return -1;
-        }
-
-        if (CheckPartsInfo(info) != 0) {
+        if (info != nullptr && CheckPartsInfo(info) != 0) {
             return index;
+        }
+        if (index >= CHRONICLE_GEORAMA_PART_CAPACITY - 1) {
+            return -1;
         }
     }
 }
@@ -102,6 +109,11 @@ int CEditPartsInfo::GetNextParts(int index) {
 void CEditPartsInfo::Clear() {
     for (EDITPARTS_INFO &part : parts) {
         part.placed = 0;
+    }
+    for (int part_id = CHRONICLE_GEORAMA_NATIVE_PART_COUNT; part_id < CHRONICLE_GEORAMA_PART_CAPACITY; ++part_id) {
+        if (EDITPARTS_INFO *info = GetPartsInfo(part_id); info != nullptr) {
+            info->placed = 0;
+        }
     }
 }
 
@@ -140,6 +152,9 @@ void CEditPartsInfo::Load(int georama_no, CSaveData *save_data, int load_request
 
     Initialize(georama_no);
     SV_GEORAMA_DATA *georama = save_data->GetGrdData(georama_no);
+#ifdef PORT
+    ChronicleModGeoramaTableLoaded(this, georama_no);
+#endif
 
     if (georama == nullptr) {
         return;
@@ -182,6 +197,9 @@ void CEditPartsInfo::Initialize(int georama_no) {
     }
 
     unk_1624 = 0;
+#ifdef PORT
+    ChronicleModGeoramaTableInitialized(this);
+#endif
 
     for (int plot = 0; plot < 24; plot++) {
         const EDIT_PARTS_ATRA *source = nullptr;

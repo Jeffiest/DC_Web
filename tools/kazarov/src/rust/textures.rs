@@ -2192,18 +2192,14 @@ fn convert_tree_profile(
     if jobs == 0 || jobs > 64 {
         return Err(fail("jobs must be between 1 and 64"));
     }
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()
-        .map_err(|e| fail(e.to_string()))?
-        .install(|| {
-            let source = if dc1_profile {
-                super::archive::SourceTree::directory_dc1(raw)?
-            } else {
-                super::archive::SourceTree::directory(raw)?
-            };
-            convert_source_with_profile_progress(&source, output, jobs, &Phase::noop(), dc1_profile)
-        })
+    super::in_pool(jobs, || {
+        let source = if dc1_profile {
+            super::archive::SourceTree::directory_dc1(raw)?
+        } else {
+            super::archive::SourceTree::directory(raw)?
+        };
+        convert_source_with_profile_progress(&source, output, jobs, &Phase::noop(), dc1_profile)
+    })
 }
 
 /// Reports completed conversion files while retaining deterministic output ordering.

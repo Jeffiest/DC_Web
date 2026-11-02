@@ -11,7 +11,10 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "boxvu0.hpp"
 #include "collision.hpp"
@@ -439,13 +442,38 @@ int FrameNameComp(char *left, char *right) {
     return StrCmp(left, right);
 }
 
+namespace {
+
+// MoonMod: the names SearchFrame tries on one model's root when a name isn't found there (a player form's stand-ins).
+CFrame                                          *g_alias_root = nullptr;
+std::vector<std::pair<std::string, std::string>> g_aliases;
+
+} // namespace
+
+void SetFrameAliases(CFrame *root, std::vector<std::pair<std::string, std::string>> aliases) {
+    g_alias_root = aliases.empty() ? nullptr : root;
+    g_aliases = std::move(aliases);
+}
+
 CFrame *CFrame::SearchFrame(char *name) {
+    CFrame *found = SearchFrameExact(name);
+    if (found == nullptr && this == g_alias_root) {
+        for (auto &[looked_up, stand_in] : g_aliases) {
+            if (looked_up == name) {
+                return SearchFrameExact(stand_in.data());
+            }
+        }
+    }
+    return found;
+}
+
+CFrame *CFrame::SearchFrameExact(char *name) {
     if (StrCmp(this->name, name) != 0) {
         return this;
     }
 
     for (CFrame *frame = child; frame != nullptr; frame = frame->brother) {
-        CFrame *found = frame->SearchFrame(name);
+        CFrame *found = frame->SearchFrameExact(name);
 
         if (found != nullptr) {
             return found;

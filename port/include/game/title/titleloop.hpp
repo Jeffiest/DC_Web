@@ -59,4 +59,10 @@ extern int brinkcnt;
  */
 extern int EffCnt;
 
+/**
+ * Opens the title mode screen of the mod whose sandbox session just ended (moonmod/title_modes.hpp), if any;
+ * called right after TitleInit.
+ */
+void TitlePortReopenMode();
+
 } // namespace dc::game

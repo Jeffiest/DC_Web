@@ -912,7 +912,7 @@ extern s16 BtlDrawTbl[2][8];
 /**
  * Holds each party member's place on the character page's turntable.
  */
-extern SYS_CHARA_INFO SysChara[6];
+extern SYS_CHARA_INFO SysChara[CHARA_MAX];
 
 /**
  * Holds each party member's starting weapon.

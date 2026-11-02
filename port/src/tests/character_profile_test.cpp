@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "../../../tools/dcdata/character_profile.hpp"
+#include "character_profile.hpp"
 
 namespace dc::test {
 

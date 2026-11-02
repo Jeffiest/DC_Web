@@ -1,6 +1,7 @@
 #include "input/mouse_look.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
@@ -267,6 +268,7 @@ void TownMouseApply(CCamera *shown, CEditGround *ground, int map, int mode) {
     if (!ground) {
         return;
     }
+    if (request.yaw==0.0f) return;
     int     mask = request.fishing ? 1 : 0xFFFF;
     CBoxVu0 box = CameraBox(*camera);
     int     count = MouseCameraPolys(*ground, box, mask, g_town_polys);

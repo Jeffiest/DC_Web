@@ -177,4 +177,15 @@ void LocalizeSetDirectories(std::vector<std::filesystem::path> directories);
  */
 void LocalizeReset();
 
+/**
+ * Sets the text a mod gives a message ("<file key>.<id>", as the language files key it), or with no text takes
+ * it back; false for a key that is not a message key. It applies when the message file next loads.
+ */
+bool LocalizeSetModText(std::string_view key, const std::optional<std::string> &text);
+
+/**
+ * The text the language file or a mod gives a message, or nothing when it stays as the disc has it.
+ */
+std::optional<std::string> LocalizeGetText(std::string_view key);
+
 } // namespace dc::localize

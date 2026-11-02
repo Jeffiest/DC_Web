@@ -1,4 +1,5 @@
 #include "itemdata.hpp"
+#include "shop.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,9 @@
 #include <iterator>
 #include <print>
 #include <string>
+#include <vector>
+
+#include "text/gametext.hpp"
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -1126,7 +1130,8 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
 /*
  * Weapon, attachment, item and item-id tables, indexed by the accessors below.
  */
-WEAPON_DATA WeaponList[120] = {
+// Retail's 120 weapons, then 32 slots for the weapons mods register (items 377-408).
+WEAPON_DATA WeaponList[152] = {
     {48, 1,   0,  70, 0,   CHARA_TOAN,   {0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0},      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},           32,  8,  0, 0, 0x0000, 0, 0x00000000, 0x00000000, 25,  24,  0,  0}, /* Dagger[broken1] */
     {48, 6,   30, 70, 2,   CHARA_TOAN,   {2, 1, 0, 0, 0, 0}, 2, {0, 0, 0, 4, 0},      {0, 0, 0, 0, 0, 4, 0, 0, 0, 0},           32,  8,  0, 0, 0x0000, 0, 0x00000000, 0x00000000, 25,  24,  1,  0}, /* Dagger */
     {40, 8,   20, 60, 4,   CHARA_TOAN,   {2, 1, 0, 0, 0, 0}, 2, {6, 0, 0, 0, 0},      {0, 0, 0, 0, 0, 0, 10, 0, 0, 0},          40,  9,  0, 0, 0x0000, 0, 0x00002000, 0x00004000, 26,  25,  2,  0}, /* Baselard */
@@ -1530,7 +1535,8 @@ ITEM_DATA ITEM_LIST[175] = {
     {ITEM_SORT_KEY_ITEM, 0, 0x00000000, 0x0018, 0,   0,  0, ITEM_STACK_NEVER }, /* Almighty Pass */
 };
 
-COM_ITEM_INFO ComItemInfo[296] = {
+// Retail's items 81 to 376, then the 32 weapon slots mods register (items 377-408).
+COM_ITEM_INFO ComItemInfo[328] = {
     {ITEMKIND_ATTACH, 0, 0,   120, 81 }, /* id  81  Supernova */
     {ITEMKIND_ATTACH, 0, 1,   121, 82 }, /* id  82  Fire */
     {ITEMKIND_ATTACH, 0, 2,   122, 83 }, /* id  83  Ice */
@@ -1909,6 +1915,267 @@ int GetCommonItemDataMsg(int item_no) {
 
 int GetCommonItemDataSystemMsg(int item_no) {
     return GetCommonItemDataMsg(item_no) + 100;
+}
+
+namespace {
+
+// What each appended weapon slot (items 377-408) was registered from and the model it draws.
+constexpr int                        kModWeaponFirst = 377;
+constexpr int                        kModWeaponCount = 32;
+std::array<s16, kModWeaponCount>     moonmod_weapon_template = [] {
+    std::array<s16, kModWeaponCount> slots{};
+    slots.fill(-1);
+    return slots;
+}();
+std::array<std::array<char, 16>, kModWeaponCount> moonmod_weapon_model{};
+// A registered weapon's message number (COM_ITEM_INFO::msg): its name is line msg + 100 and its description msg + 500,
+// as the game's are; the text is the mod's (SetMoonModWeaponText), served by MoonModWeaponTextLine.
+constexpr int kModWeaponMsgBase = 4000;
+struct ModWeaponText {
+    std::string      name, description;
+    std::vector<s16> name_codes, description_codes;
+};
+std::array<ModWeaponText, kModWeaponCount> moonmod_weapon_text{};
+std::array<s16, kModWeaponCount>           moonmod_weapon_template_msg{};
+std::array<float, kModWeaponCount> moonmod_weapon_menu_scale = [] {
+    std::array<float, kModWeaponCount> scales{};
+    scales.fill(1.0f);
+    return scales;
+}();
+
+bool IsModWeaponSlot(int item_no) {
+    return item_no >= kModWeaponFirst && item_no < kModWeaponFirst + kModWeaponCount;
+}
+
+} // namespace
+
+int MoonModWeaponTemplate(int item_no) {
+    return IsModWeaponSlot(item_no) ? moonmod_weapon_template[item_no - kModWeaponFirst] : -1;
+}
+
+const char *MoonModWeaponModel(int item_no) {
+    return IsModWeaponSlot(item_no) ? moonmod_weapon_model[item_no - kModWeaponFirst].data() : "";
+}
+
+bool SetMoonModWeaponModel(int item_no, const char *stem) {
+    if (!IsModWeaponSlot(item_no) || stem == nullptr || std::strlen(stem) >= 16) {
+        return false;
+    }
+    std::snprintf(moonmod_weapon_model[item_no - kModWeaponFirst].data(), 16, "%s", stem);
+    return true;
+}
+
+void SetMoonModWeaponText(int item_no, std::string_view name, std::string_view description) {
+    if (!IsModWeaponSlot(item_no)) {
+        return;
+    }
+    ModWeaponText &text = moonmod_weapon_text[item_no - kModWeaponFirst];
+    text.name = name;
+    text.description = description.empty() ? name : description;
+    text.name_codes.clear();
+    text.description_codes.clear();
+    dc::text::GameTextEncode(text.name, text.name_codes);
+    dc::text::GameTextEncode(text.description, text.description_codes);
+}
+
+const s16 *MoonModWeaponTextLine(int line) {
+    for (const auto [first, field] : {std::pair{kModWeaponMsgBase + 100, &ModWeaponText::name_codes},
+                                      std::pair{kModWeaponMsgBase + 500, &ModWeaponText::description_codes}}) {
+        const int slot = line - first;
+        if (slot >= 0 && slot < kModWeaponCount && !(moonmod_weapon_text[slot].*field).empty()) {
+            return (moonmod_weapon_text[slot].*field).data();
+        }
+    }
+    return nullptr;
+}
+
+namespace {
+std::vector<std::pair<int, int>> &ModBuildUps() {
+    static std::vector<std::pair<int, int>> links;
+    return links;
+}
+} // namespace
+
+void AddMoonModBuildUp(int from_item_no, int to_item_no) {
+    auto &links = ModBuildUps();
+    if (std::ranges::find(links, std::pair{from_item_no, to_item_no}) == links.end()) {
+        links.emplace_back(from_item_no, to_item_no);
+    }
+}
+
+int MoonModBuildUps(int from_item_no, int *to_item_nos, int max) {
+    int count = 0;
+    for (const auto &[from, to] : ModBuildUps()) {
+        if (from == from_item_no && count < max) {
+            to_item_nos[count++] = to;
+        }
+    }
+    return count;
+}
+
+void ClearMoonModBuildUps() {
+    ModBuildUps().clear();
+}
+
+namespace {
+struct ModChestWeapon {
+    std::string owner;
+    int         item_no;
+    int         dungeon;
+    int         floor_from;
+    int         percent;
+};
+std::vector<ModChestWeapon> &ModChestWeapons() {
+    static std::vector<ModChestWeapon> weapons;
+    return weapons;
+}
+} // namespace
+
+void AddMoonModChestWeapon(std::string_view owner, int item_no, int dungeon, int floor_from, int percent) {
+    for (ModChestWeapon &entry : ModChestWeapons()) {
+        if (entry.owner == owner && entry.item_no == item_no) {
+            entry.dungeon = dungeon;
+            entry.floor_from = floor_from;
+            entry.percent = percent;
+            return;
+        }
+    }
+    ModChestWeapons().push_back({std::string(owner), item_no, dungeon, floor_from, percent});
+}
+
+void ClearMoonModChestWeapons(std::string_view owner) {
+    std::erase_if(ModChestWeapons(), [owner](const ModChestWeapon &entry) { return owner.empty() || entry.owner == owner; });
+}
+
+int MoonModChestWeapon(int item_no, int dungeon, int floor, const int *placed, int placed_count) {
+    for (const ModChestWeapon &entry : ModChestWeapons()) {
+        if ((entry.dungeon >= 0 && entry.dungeon != dungeon) || floor < entry.floor_from) continue;
+        if (std::find(placed, placed + placed_count, entry.item_no) != placed + placed_count) continue;
+        if (static_cast<int>(100.0f * static_cast<float>(rand()) / 2147483648.0f) < entry.percent) return entry.item_no;
+    }
+    return item_no;
+}
+
+int MoonModWeaponTemplateLine(int line) {
+    for (const int first : {kModWeaponMsgBase + 100, kModWeaponMsgBase + 500}) {
+        const int slot = line - first;
+        if (slot >= 0 && slot < kModWeaponCount && moonmod_weapon_template_msg[slot] != 0) {
+            return moonmod_weapon_template_msg[slot] + (first - kModWeaponMsgBase);
+        }
+    }
+    return -1;
+}
+
+float MoonModWeaponMenuScale(int item_no) {
+    return IsModWeaponSlot(item_no) ? moonmod_weapon_menu_scale[item_no - kModWeaponFirst] : 1.0f;
+}
+
+namespace {
+std::array<s8, kModWeaponCount> moonmod_weapon_holder = [] {
+    std::array<s8, kModWeaponCount> holders{};
+    holders.fill(-1);
+    return holders;
+}();
+} // namespace
+
+int MoonModWeaponHolder(int item_no) {
+    return IsModWeaponSlot(item_no) ? moonmod_weapon_holder[item_no - kModWeaponFirst] : -1;
+}
+
+void SetMoonModWeaponHolder(int item_no, int chara) {
+    if (IsModWeaponSlot(item_no)) {
+        moonmod_weapon_holder[item_no - kModWeaponFirst] = static_cast<s8>(chara);
+    }
+}
+
+void SetMoonModWeaponMenuScale(int item_no, float scale) {
+    if (IsModWeaponSlot(item_no)) {
+        moonmod_weapon_menu_scale[item_no - kModWeaponFirst] = scale;
+    }
+}
+
+bool RegisterMoonModWeapon(int item_no, int template_item_no, int attack, int durability, int attack_max, int magic_max,
+                           int owner, char *error, std::size_t error_size) {
+    auto fail = [error, error_size](const char *message) {
+        if (error != nullptr && error_size > 0) {
+            std::snprintf(error, error_size, "%s", message);
+        }
+        return false;
+    };
+    if (!IsModWeaponSlot(item_no)) {
+        return fail("native weapon id is outside the reserved mod range");
+    }
+    if (template_item_no < ITEM_WEAPON_START || template_item_no >= ITEM_WEAPON_START + 120) {
+        return fail("template item is not a built-in Chronicle weapon");
+    }
+    if (owner < -1 || owner >= CharaCount()) {
+        return fail("weapon owner must be a playable character index");
+    }
+    COM_ITEM_INFO *target_common = GetCommonItemInfo(item_no);
+    COM_ITEM_INFO *source_common = GetCommonItemInfo(template_item_no);
+    WEAPON_DATA   *target_weapon = &WeaponList[item_no - ITEM_WEAPON_START];
+    WEAPON_DATA   *source_weapon = GetWeaponData(template_item_no);
+    if (target_common == nullptr || source_common == nullptr || source_weapon == nullptr ||
+        source_common->kind != ITEMKIND_WEAPON) {
+        return fail("native weapon table entry is unavailable");
+    }
+    if (target_common->kind != 0 || target_weapon->owner != 0 || target_weapon->durability != 0 ||
+        target_weapon->attack != 0 || target_weapon->attack_max != 0 || target_weapon->magic_max != 0) {
+        return fail("reserved weapon slot is already in use");
+    }
+
+    *target_common = *source_common;
+    target_common->index = static_cast<s16>(item_no - ITEM_WEAPON_START);
+    // MoonMod: its own message number, so the menus name and describe it as itself (SetMoonModWeaponText), not as
+    // its template; until a mod gives it text, the lines are the template's.
+    target_common->msg = static_cast<s16>(kModWeaponMsgBase + (item_no - kModWeaponFirst));
+    moonmod_weapon_text[item_no - kModWeaponFirst] = {};
+    moonmod_weapon_template_msg[item_no - kModWeaponFirst] = source_common->msg;
+    *target_weapon = *source_weapon;
+    if (attack >= 0) {
+        target_weapon->attack = static_cast<s16>(attack);
+    }
+    if (durability >= 0) {
+        target_weapon->durability = static_cast<s16>(durability);
+    }
+    if (attack_max >= 0) {
+        target_weapon->attack_max = static_cast<s16>(attack_max);
+    }
+    if (magic_max >= 0) {
+        target_weapon->magic_max = static_cast<s16>(magic_max);
+    }
+    if (owner >= 0) {
+        target_weapon->owner = static_cast<u8>(owner);
+    }
+    // A new definition must not inherit a retail synthesis destination by accident.
+    target_weapon->buildup_mask0 = 0;
+    target_weapon->buildup_mask1 = 0;
+    target_weapon->chain_pos = 0;
+    moonmod_weapon_template[item_no - kModWeaponFirst] = static_cast<s16>(template_item_no);
+    moonmod_weapon_model[item_no - kModWeaponFirst][0] = '\0';
+    moonmod_weapon_menu_scale[item_no - kModWeaponFirst] = 1.0f;
+    moonmod_weapon_holder[item_no - kModWeaponFirst] = -1;
+    // It costs what its template costs in a shop until shops.set_price says otherwise.
+    PriceList[item_no - ITEM_ATTACH_START] = PriceList[template_item_no - ITEM_ATTACH_START];
+    if (error != nullptr && error_size > 0) {
+        error[0] = '\0';
+    }
+    return true;
+}
+
+void ResetMoonModWeaponSlotsForTests() {
+    for (int item_no = kModWeaponFirst; item_no < kModWeaponFirst + kModWeaponCount; ++item_no) {
+        if (COM_ITEM_INFO *common = GetCommonItemInfo(item_no)) {
+            *common = {};
+        }
+        WeaponList[item_no - ITEM_WEAPON_START] = {};
+        moonmod_weapon_template[item_no - kModWeaponFirst] = -1;
+        moonmod_weapon_model[item_no - kModWeaponFirst][0] = '\0';
+        moonmod_weapon_menu_scale[item_no - kModWeaponFirst] = 1.0f;
+        moonmod_weapon_holder[item_no - kModWeaponFirst] = -1;
+        moonmod_weapon_text[item_no - kModWeaponFirst] = {};
+        PriceList[item_no - ITEM_ATTACH_START] = {};
+    }
 }
 
 } // namespace dc::game

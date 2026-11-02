@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <print>
@@ -31,6 +32,7 @@
 #include "text/caption_text.hpp"
 #include "texture.hpp"
 #include "tim2.hpp"
+#include "moonmod/mod_texture.hpp"
 
 namespace dc::game {
 
@@ -41,8 +43,8 @@ using namespace dc::text;
 
 namespace {
 
-constexpr int kBlockCount = 72;
-constexpr int kTextureCount = 196;
+constexpr int kBlockCount = kTextureManagerBlocks;
+constexpr int kTextureCount = kTextureManagerTextures;
 
 struct DummyTexture {
     std::string name;
@@ -566,9 +568,13 @@ void Enter(CTextureManager &manager, EnterMode mode, int block, char *name, u_ch
                                          clut == nullptr ? 0 : static_cast<std::size_t>(clut_bytes), decoded,
                                          resolution_error, entry_index, bpp);
             canvas_backing = !baked && resolution_error == "canvas texture keeps its runtime backing";
-            if (!baked && !canvas_backing) {
+            // MoonMod: a picture the data set never baked (a story event's character, say) decodes from the game's
+            // own bytes, as an unsourced one does, rather than stopping the game.
+            const bool unbaked = !baked && !canvas_backing && resolution_error.starts_with("missing texture document");
+            if (!baked && !canvas_backing && !unbaked) {
                 StopBakedTexture(name, resolution_error);
             }
+            unsourced = unbaked;
         } else {
             // Pixels outside any data source (a synthetic or runtime image) have no baked document
             // and decode from the bytes given.
@@ -593,6 +599,7 @@ void Enter(CTextureManager &manager, EnterMode mode, int block, char *name, u_ch
             }
         }
         LocalizeTexture(name, decoded);
+        ModsTextureOverride(name, decoded);
         caption::PreparePainted(name, decoded);
         MakeGroundPeriodic(name, decoded);
         DumpTexture(name, decoded);
@@ -618,7 +625,7 @@ void Enter(CTextureManager &manager, EnterMode mode, int block, char *name, u_ch
             tex->tex1 = SCE_GS_SET_TEX1(0, 2, 1, 5, 1, lod.L, lod.K);
         }
     }
-    manager.texture_max = 195;
+    manager.texture_max = kTextureCount - 1;
 }
 
 } // namespace
@@ -641,7 +648,9 @@ void CTextureManager::Initialize(int size) {
     texture_max = 1;
     vram_work = 8960;
     vram_size = size;
-    vram_max = vram_size;
+    // MoonMod: the VRAM here is bookkeeping (each texture has storage of its own), so a block may run past the
+    // PS2's 4 MB: a floor with borrowed models (a boss and its cast from another dungeon) fills more than its share.
+    vram_max = vram_size * 4;
     vram_fix = size;
 
     // The frame-copy area water samples, a field of the frame on PS2: the water unit fills it.
@@ -912,7 +921,7 @@ int LoadImage(u_int *packet, int dbp, int dpsm, int dbw, u_long128 *source, int 
 // Every texture is resident on the renderer from the moment it is entered, so a block never needs
 // uploading; only its bookkeeping remains.
 void CTextureManager::ReloadTexture(sceVif1Packet *packet, int block) {
-    if (block < 0 || block >= 72) {
+    if (block < 0 || block >= kBlockCount) {
         last_block = -1;
         return;
     }
@@ -943,7 +952,7 @@ void CTextureManager::BeginEnterTextureBlock(int block) {
 // Native textures occupy independent storage, so simulated VRAM overlap never overwrites either
 // image; only the staging bounds check and block finalization remain.
 void CTextureManager::EndEnterTextureBlock(int block) {
-    if (block < 0 || block >= 72) {
+    if (block < 0 || block >= kBlockCount) {
         return;
     }
     if (buffer_used > buffer_size) {
@@ -958,7 +967,7 @@ void CTextureManager::EndEnterTextureBlock(int block) {
 }
 
 int CTextureManager::DeleteTextureBlock(int block) {
-    if (block >= 72) {
+    if (block >= kBlockCount) {
         return 0;
     }
     if (block >= 0) {
@@ -1130,6 +1139,35 @@ int CTextureManager::EnterTextureFile(LOADTEXTURE_INFO *table) {
 }
 
 void CTextureManager::print_buff_info() {
+}
+
+namespace {
+// MoonMod (O2 C1): the texture manager of each world not current
+std::map<int, std::unique_ptr<CTextureManager>> &KeptManagers() {
+    static std::map<int, std::unique_ptr<CTextureManager>> kept;
+    return kept;
+}
+} // namespace
+
+void TextureManagerSwitchWorld(int from, int to) {
+    if (from == to) return;
+    auto &kept = KeptManagers();
+    auto &slot = kept[from];
+    if (!slot) slot = std::make_unique<CTextureManager>(TexManager);
+    else *slot = TexManager;
+    PortSetTextureWorld(to);
+    auto it = kept.find(to);
+    if (it != kept.end() && it->second) TexManager = *it->second;
+}
+
+void TextureManagerSwap(int world) {
+    auto it = KeptManagers().find(world);
+    if (it != KeptManagers().end() && it->second) std::swap(TexManager, *it->second);
+}
+
+bool TextureManagerKept(int world) {
+    auto it = KeptManagers().find(world);
+    return it != KeptManagers().end() && it->second != nullptr;
 }
 
 } // namespace dc::game

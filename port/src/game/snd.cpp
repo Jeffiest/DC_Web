@@ -21,6 +21,7 @@
 #include "boxvu0.hpp"
 #include "camera.hpp"
 #include "dataread.hpp"
+#include "playable_chara.hpp"
 #include "editatra.hpp"
 #include "mglib.hpp"
 #include "rect.hpp"
@@ -33,6 +34,7 @@
 #include "text/glyph_draw.hpp"
 #include "texture.hpp"
 #include "ui/framework/buttons.hpp"
+#include "editpartsinfo.hpp"
 
 namespace dc::game {
 
@@ -1835,6 +1837,10 @@ EDIT_PARTS_ATRA *GetEditAtraPartsData(int ground, int number) {
         return nullptr;
     }
 
+    // A mod's Georama piece keeps its Atla data in the MoonFactory registry.
+    if (number >= CHRONICLE_GEORAMA_NATIVE_PART_COUNT && number < CHRONICLE_GEORAMA_PART_CAPACITY) {
+        return GetChronicleModGeoramaAtra(ground, number);
+    }
     if (number < 0 || number >= 24) {
         return nullptr;
     }
@@ -2264,7 +2270,10 @@ SND_SE_INFO *GetSeInfo(int se_no) {
     }
 
     if (se_no >= 400 && se_no < 500 && now_voice_set >= 0) {
-        SND_SE_INFO *table = voice_info[now_voice_set];
+        // MoonMod: a registered character's own set (100 + his index, CharaVoiceSet) is laid out as the voice of the
+        // character he fights as, so its cues read that character's table
+        const int table_no = now_voice_set >= 100 ? CombatChara(now_voice_set - 100) : now_voice_set;
+        SND_SE_INFO *table = table_no >= 0 && table_no < static_cast<int>(voice_info.size()) ? voice_info[table_no] : nullptr;
 
         if (table != nullptr) {
             return &table[se_no - 400];

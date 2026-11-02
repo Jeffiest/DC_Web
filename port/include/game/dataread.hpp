@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 /**
  * @file
  * Declares the calls that read a file off the disc, and the ones that reach
@@ -56,6 +58,11 @@ void InitReadBG();
  * directly, so it must be reachable by it and should be 64-byte aligned.
  */
 int LoadFileBG(char *name, u_long128 *buffer, int *out_size);
+
+/**
+ * Whether a game file can be read: in the data, through a mod's path alias, or as a mod's replacement or new file.
+ */
+bool GameFileAvailable(std::string_view path);
 
 /**
  * Returns an allocated background-read queue slot.

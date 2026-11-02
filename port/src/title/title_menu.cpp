@@ -9,6 +9,7 @@
 
 #include "gamepad.hpp"
 #include "localize/localize.hpp"
+#include "moonmod/title_modes.hpp"
 #include "snd.hpp"
 #include "sound.hpp"
 #include "text/captionfont.hpp"
@@ -36,7 +37,7 @@ constexpr std::array kRows = {
     Row{.key = "title.menu.option",   .english = "OPTION"  },
     Row{.key = "title.menu.exit",     .english = "EXIT"    },
 };
-static_assert(kRows.size() == kRowCount);
+static_assert(kRows.size() == kRetailRowCount + 1);
 
 // Where the letters stand on the PAL screen. Retail's painted capitals are 16 tall, from 263 across,
 // with their tops about 29 apart from 306, and the trademark lines start at about 405: a fourth row
@@ -118,13 +119,33 @@ void CloseConfirm() {
 
 } // namespace
 
+int ModRowCount() {
+    return static_cast<int>(moonmod::TitleModes().size());
+}
+
+int ExitRow() {
+    return kRetailRowCount + ModRowCount();
+}
+
+int RowCount() {
+    return ExitRow() + 1;
+}
+
+int ModeAt(int row) {
+    return row >= kRetailRowCount && row < ExitRow() ? row - kRetailRowCount : -1;
+}
+
+int BannerShift() {
+    return ModRowCount() * kRowStride;
+}
+
 float HandY(int row) {
     return static_cast<float>(kFirstTextTop + row * kRowStride) - kHandAboveText;
 }
 
 int RowAt(float x, float y) {
     const auto top = static_cast<float>(kFirstTextTop - kRowAboveText);
-    if (x < kRowLeft || x >= kRowLeft + kRowWidth || y < top || y >= top + kRowCount * kRowStride) {
+    if (x < kRowLeft || x >= kRowLeft + kRowWidth || y < top || y >= top + RowCount() * kRowStride) {
         return -1;
     }
     return static_cast<int>((y - top) / kRowStride);
@@ -165,7 +186,7 @@ void Draw(int selected, int selected_alpha, int other_alpha) {
     // Label puts the capitals' top 3 below its y, less half what the scale adds to their height.
     const int cap_offset = static_cast<int>(std::lround(3.0f - ((kCapHeight - 14.5f) * 0.5f)));
 
-    for (int row = 0; row < kRowCount; ++row) {
+    for (int row = 0; row < RowCount(); ++row) {
         const bool chosen = row == selected;
         style.fill_r = kCreamR;
         style.fill_g = kCreamG;
@@ -173,7 +194,9 @@ void Draw(int selected, int selected_alpha, int other_alpha) {
         style.drop_shadow = false;
         style.halo = kHaloReach;
         style.halo_strength = kHaloStrength;
-        const std::string text = LocalizeText(kRows[row].key, kRows[row].english);
+        const int         mode = ModeAt(row);
+        const Row        &retail = kRows[row < kRetailRowCount ? row : kRetailRowCount];
+        const std::string text = mode >= 0 ? moonmod::TitleModes()[mode].label : LocalizeText(retail.key, retail.english);
         ui::Label         label(text, style);
         label.Draw(kTextLeft + static_cast<int>(std::lround(BearingFromS(text))), kFirstTextTop + row * kRowStride - cap_offset,
                    // Retail's alphas on the painting's doubled texels (above).

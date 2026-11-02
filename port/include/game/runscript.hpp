@@ -299,4 +299,19 @@ void EventScriptSetItemGet(int item);
  */
 int PortEdRunEvent(int program, CDataAlloc2<1> *arena);
 
+/**
+ * The monster scripts' external function for an operation (BtSetEventExtendTable), or nullptr.
+ */
+int (*MonsterScriptExtension(int operation))(RS_STACKDATA *, int);
+
+/**
+ * Clears a boss cast's own bank of the integers monster scripts share (GL_INT), as its arena starts them.
+ */
+void ResetMonsterScriptGlobals(int bank);
+
+/**
+ * One integer of a boss cast's own bank (what its scripts' SET_GLOBAL_INT and GET_GLOBAL_INT reach), or null.
+ */
+int *MonsterScriptGlobal(int bank, int index);
+
 } // namespace dc::game

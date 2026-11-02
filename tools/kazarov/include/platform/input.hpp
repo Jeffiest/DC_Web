@@ -54,6 +54,8 @@ struct InputPadState {
     std::uint8_t  left_y = kInputAxisCentre;
     std::uint8_t  right_x = kInputAxisCentre;
     std::uint8_t  right_y = kInputAxisCentre;
+    std::uint8_t  left_trigger = 0;
+    std::uint8_t  right_trigger = 0;
     // D-pad bits the left-stick keys add only while the game is not reading the left stick: the
     // screens that read the d-pad alone (the developer menu, the dungeon loader).
     std::uint16_t stick_dpad = 0;
@@ -167,12 +169,23 @@ InputPadState InputApplyKeyboardMouse(InputPadState base, const InputKeyboardMou
 // The stick byte the game's AxisCalibration reads as deflection * 128, deflection in [-1, 1]: the
 // dead zone is stepped over, so any motion moves the game.
 std::uint8_t InputStickByte(float deflection);
+// Normalizes an SDL gamepad trigger sample to its host input byte range (0..255).
+std::uint8_t InputTriggerByte(int raw_value);
 
 // Rebinds one action ("cross", "up", "lx-", "rx", ...) to the names given: SDL key names, Mouse1 to
 // Mouse5 (left, right, middle, X1, X2), and for the whole-axis actions lx ly rx ry MouseX or MouseY
 // with an optional sign and scale (-MouseY, MouseX*0.5), which make the mouse a stick instead of
 // the camera's own. Returns false if the action or a name is unknown or does not fit the action.
 bool InputBindKeys(std::string_view action, std::span<const std::string_view> keys);
+
+// Mod-owned digital actions use the same key, mouse-button and gamepad-button sources as host
+// bindings, without changing the controls the game reads. Action ids must be namespaced by owner.
+bool InputBindModAction(std::string_view action, std::span<const std::string_view> sources);
+bool InputModActionExists(std::string_view action);
+bool InputModActionHeld(std::string_view action);
+bool InputModActionConsumePress(std::string_view action);
+bool InputUnbindModAction(std::string_view action);
+void InputUnbindModActionsByPrefix(std::string_view prefix);
 
 // Restores the default bindings and mouse settings.
 void InputResetBindings();
@@ -193,6 +206,10 @@ struct InputMenuMouse {
 // While on, the mouse is a menu's pointer: its motion and buttons reach InputTakeMenuMouse and no
 // longer press pad 0's bound buttons or turn its stick. Capture works as ever.
 void InputSetMenuMouse(bool on);
+
+// Route whole mouse-wheel notches to the pad: mode 0 is Left/Right, mode 1 is Up/Down,
+// and mode 2 leaves the existing camera-zoom behavior in control.
+void InputSetWheelMode(int mode);
 
 void InputSetMenuNavigation(bool on);
 

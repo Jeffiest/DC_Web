@@ -35,6 +35,11 @@ std::uintmax_t DataFileSize(std::string_view path);
 bool DataFileExists(std::string_view path);
 
 /**
+ * Whether the game's data holds files below a folder ("gedit/e01/chara"), as a mod's override may add to it.
+ */
+bool DataDirectoryIndexed(std::string_view directory);
+
+/**
  * How many times the data has been indexed: what read it before can be stale once this changes.
  */
 std::uint64_t DataReadGeneration();
@@ -131,6 +136,13 @@ void DataReadInvalidateCopiedSources(const void *owner, std::size_t allocation_q
  * Drops source mappings owned by one storage buffer before that buffer is re-carved.
  */
 void DataReadForgetPackCapacities(const void *owner);
+
+/**
+ * Records a file read from outside the index (a mod's replacement) at bytes, as DataReadLoadFile records an
+ * indexed one: what earlier loads left there is forgotten, and the bytes are a pack of that capacity with no
+ * retail identity, so its members are found and its textures decode from its own bytes.
+ */
+void DataReadTrackUnindexedFile(const void *bytes, std::size_t capacity);
 
 /**
  * Clears pack bounds for buffers invalidated when the game resets its data arenas.

@@ -75,6 +75,28 @@ struct ATRA_SAVE {
 STATIC_ASSERT(sizeof(ATRA_SAVE) == 0xC);
 
 /**
+ * MoonMod: a per-character array of the save, laid out as the game's T[6] (so the save's size and every offset hold),
+ * with the entries of the registered characters (index 6 up to CHARA_MAX - 1) kept outside the save. Field tells the
+ * arrays of one type apart. Reach entries with []; the save's six are data.
+ */
+template <typename T, int Field>
+struct CharaSlots {
+    T data[SAVE_CHARA_COUNT];
+
+    T &operator[](int chara) { return chara < SAVE_CHARA_COUNT ? data[chara] : Extra(chara); }
+    const T &operator[](int chara) const { return chara < SAVE_CHARA_COUNT ? data[chara] : Extra(chara); }
+
+    /** Room for every character, registered or not (std::size). */
+    static constexpr int size() { return CHARA_MAX; }
+
+    /** A registered character's entry, which no save holds. */
+    static T &Extra(int chara) {
+        static T values[CHARA_MAX - SAVE_CHARA_COUNT]{};
+        return values[chara - SAVE_CHARA_COUNT];
+    }
+};
+
+/**
  * Stores the party's characters, inventory, and dungeon progress.
  */
 class CUserStatus {
@@ -86,8 +108,8 @@ public:
     s8        prev_floor; /**< Floor occupied before the current floor. */
     s8        cur_chara;  /**< Index of the currently controlled party member. */
     s8        party_size; /**< Party members who have joined. */
-    s16       max_hp[6];  /**< Maximum life of each party member. */
-    s16       hp[6];      /**< Current displayed life of each party member. */
+    CharaSlots<s16, 1>       max_hp;  /**< Maximum life of each party member. */
+    CharaSlots<s16, 2>       hp;      /**< Current displayed life of each party member. */
     char      unk_01E[0x25A];
     s32       atra_grid[6][40][8];   /**< Atla each floor slot asks for, or -1 empty, -2 any atla, -3 collected. */
     ATRA_SAVE atra_registry[6][100]; /**< Atla each dungeon's floor slots still ask for. */
@@ -97,22 +119,22 @@ public:
     char      unk_42A6[25];
     s8        floor_reached[7]; /**< Deepest floor reached in each dungeon, or -1 if never entered. */
     char      unk_42C6[2];
-    s32       ailments[6];             /**< Status ailments each party member suffers. @see StatusAilment. */
-    s16       ailment_frames[6];       /**< Frames left of each party member's status ailment. */
-    float     water_max[6];            /**< Most water each character can hold, ten to a drop. */
-    float     water_now[6];            /**< Water each character holds now. */
+    CharaSlots<s32, 3>       ailments;             /**< Status ailments each party member suffers. @see StatusAilment. */
+    CharaSlots<s16, 4>       ailment_frames;       /**< Frames left of each party member's status ailment. */
+    CharaSlots<float, 5>     water_max;            /**< Most water each character can hold, ten to a drop. */
+    CharaSlots<float, 6>     water_now;            /**< Water each character holds now. */
     s32       overflow_flag;           /**< Whether the player carries more items than the pack holds. */
     s32       special_flag_238;        /**< Set when item 238 is picked up. */
-    s32       skill_owned[6];          /**< Whether each character has received their event skill. */
+    CharaSlots<s32, 7>       skill_owned;          /**< Whether each character has received their event skill. */
     s32       minimap_status;          /**< Current minimap visibility mode. */
-    s8        equipped_weapon_slot[6]; /**< Specifies each character's equipped weapon slot. */
+    CharaSlots<s8, 8>        equipped_weapon_slot; /**< Specifies each character's equipped weapon slot. */
 
     union {
         u16 money;        /**< Gilda the party carries. */
         s16 money_signed; /**< Signed view of the Gilda the party carries. */
     };
 
-    s32 defense[6]; /**< Defense of each party member, raised by their favourite food up to 99. */
+    CharaSlots<s32, 9> defense; /**< Defense of each party member, raised by their favourite food up to 99. */
 
     union {
         ITEM_PACK item_pack; /**< Dungeon items the player carries. */
@@ -125,17 +147,17 @@ public:
     };
 
     char           unk_450A[2];
-    WEAPON_HAVE    chara_weapons[6][11]; /**< Specifies the weapons owned by each character. */
+    CharaSlots<WEAPON_HAVE[11], 10> chara_weapons; /**< Specifies the weapons owned by each character. */
     DNG_CONSUMABLE consumable_items[43]; /**< Specifies the stored consumable items. */
-    s16            next_hp[6];           /**< Life each party member's gauge is moving towards. */
-    s16            life_step[6];         /**< Life each party member's gauge moves by each step, or 0 when still. */
-    s32            unk_8A74[6];
-    s32            unk_8A8C[6];
+    CharaSlots<s16, 11>            next_hp;           /**< Life each party member's gauge is moving towards. */
+    CharaSlots<s16, 12>            life_step;         /**< Life each party member's gauge moves by each step, or 0 when still. */
+    CharaSlots<s32, 13>            unk_8A74;
+    CharaSlots<s32, 14>            unk_8A8C;
     s8             event_flags[50]; /**< Flags the dungeon's event scripts set and read. */
-    s16            drink_next[6];   /**< Water each party member's gauge is moving towards. */
-    s16            drink_step[6];   /**< Water each party member's gauge moves by each step, or 0 when still. */
+    CharaSlots<s16, 15>            drink_next;   /**< Water each party member's gauge is moving towards. */
+    CharaSlots<s16, 16>            drink_step;   /**< Water each party member's gauge moves by each step, or 0 when still. */
     char           unk_8AEE[2];
-    float          thirst_damage[6];       /**< Progress towards the next point of life lost to an empty water gauge. */
+    CharaSlots<float, 17>          thirst_damage;       /**< Progress towards the next point of life lost to an empty water gauge. */
     s32            water_drain_disable;    /**< 1 while the active character's water does not drain. */
     s32            step_disable;           /**< 1 while the gauges, and the player's status ailments, stand still. */
     s32            res_limit_zone_current; /**< Restriction zone the party is fenced into. @see ResLimitZone. */

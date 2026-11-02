@@ -119,21 +119,17 @@ constexpr int kTorsoSectors = 12; /**< How many directions round its axis a tors
 constexpr int kTorsoBands = 6;    /**< How many heights along its axis a torso's shape is measured at. */
 
 /**
- * A capsule of the body, from a to b, radius thick.
+ * A capsule of the body, from a to b, radius thick. A torso fitted to the body's mesh (FitTorsos)
+ * is shaped instead: unfitted, it is round, radius thick.
  */
 struct Capsule {
-    std::array<float, 3> a;
-    std::array<float, 3> b;
-    float                radius;
-    bool                 torso = false; /**< Keeps the cloth off itself, and stops the limbs pressing the cloth into it. */
-    /**
-     * A torso fitted to the body's mesh (FitTorsos): how far its surface lies from the axis, by direction
-     * round it (measured from `side`, a direction square to the axis that turns with the body) and by
-     * height from a to b. Unfitted, the torso is round, `radius` thick.
-     */
-    std::array<float, 3>                           side = {};
-    std::array<float, kTorsoSectors * kTorsoBands> shape = {};
-    bool                                           fitted = false;
+    std::array<float, 3>                           a;              /**< Start of the axis, in world space. */
+    std::array<float, 3>                           b;              /**< End of the axis, in world space. */
+    float                                          radius;         /**< Thickness of a round capsule. */
+    bool                                           torso = false;  /**< Keeps the cloth off itself, and stops the limbs pressing the cloth into it. */
+    std::array<float, 3>                           side = {};      /**< A torso's direction square to its axis that turns with the body; shape is measured round from it. */
+    std::array<float, kTorsoSectors * kTorsoBands> shape = {};     /**< How far a fitted torso's surface lies from its axis, by height from a to b, then by direction round it. */
+    bool                                           fitted = false; /**< Whether shape holds the torso's surface. */
 };
 
 /**
@@ -152,8 +148,7 @@ struct Mesh {
 /**
  * Fits the torsos among `capsules` to `body` as it stands: how far out from the axis each direction meets
  * the torso's faces. A vertex belongs to the capsule whose surface it lies nearest, `others` (the head,
- * the hands, the feet) among them, so arms and hands held against the torso don't fatten it. A round
- * capsule sized from the spine's length stood out behind Toan's back, his chest being deeper than it.
+ * the hands, the feet) among them, so arms and hands held against the torso don't fatten it.
  */
 void FitTorsos(std::span<Capsule> capsules, std::span<const Capsule> others, const Mesh &body);
 

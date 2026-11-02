@@ -4,6 +4,7 @@
 
 #include <libvu0.h>
 
+#include "itemdata.hpp"
 #include "rect.hpp"
 
 namespace dc::game {
@@ -86,6 +87,6 @@ extern int element_tbl[6];
 /**
  * Default weapon of each character, as the hit-value unit holds it.
  */
-extern int defWeapon__2[6];
+extern int defWeapon__2[SAVE_CHARA_COUNT];
 
 } // namespace dc::game

@@ -2,12 +2,14 @@
 
 #include <libvu0.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
 #include "character.hpp"
 #include "dngstatusdata.hpp"
 #include "dun/gameloop.hpp"
+#include "dungeonmap.hpp"
 #include "gameutil.hpp"
 #include "hitvalue.hpp"
 #include "mathutil.hpp"
@@ -80,9 +82,25 @@ void CRandomItem::MapSymbolDraw() {
 
     for (int i = 0; i < 32; i++) {
         if (id[i] != -1 && amount[i] == -1) {
+#ifdef PORT
+            // MoonMod: the game's own spot on its own mini map; otherwise on the mini map as it is laid out (its tile
+            // and corner follow the floor's size, and a region's scrolls).
+            if (DNG_MAP_TILE == 16 && DNG_MAP_X == 380 && DNG_MAP_Y == 64 && DngMiniMapClipX1 < 0) {
+                int x = static_cast<int>(0.1f * (position[i][0] - 80.0f));
+                int y = static_cast<int>(0.1f * (position[i][2] - 80.0f));
+                set2DSprite(Vif1Packet, texture, CRect_i_(x + 0x184, y + 0x48, 8, 8), CRect_i_(0x50, 0x68, 8, 8));
+                continue;
+            }
+            const int size = std::max(6, DNG_MAP_TILE / 2);
+            const int x = static_cast<int>(DNG_MAP_SCALE * (position[i][0] - 80.0f)) + DNG_MAP_X + DNG_MAP_TILE / 2;
+            const int y = static_cast<int>(DNG_MAP_SCALE * (position[i][2] - 80.0f)) + DNG_MAP_Y + DNG_MAP_TILE / 2;
+            if (!DngMiniMapShows(x, y, size, size)) continue;
+            set2DSprite(Vif1Packet, texture, CRect_i_(x, y, size, size), CRect_i_(0x50, 0x68, 8, 8));
+#else
             int x = static_cast<int>(0.1f * (position[i][0] - 80.0f));
             int y = static_cast<int>(0.1f * (position[i][2] - 80.0f));
             set2DSprite(Vif1Packet, texture, CRect_i_(x + 0x184, y + 0x48, 8, 8), CRect_i_(0x50, 0x68, 8, 8));
+#endif
         }
     }
 }
@@ -128,7 +146,8 @@ int CRandomItem::CheckPosition() {
             pickup_blocked[i] = 0;
         }
 
-        if (pickup_blocked[i] != 0 || distance[i] > 5.0f) {
+        // MoonMod: a pile a mod put down (dungeons.drop_gilda, id 2) is taken from a step away, the game's own underfoot.
+        if (pickup_blocked[i] != 0 || distance[i] > (id[i] == 2 ? 90.0f : 5.0f)) {
             continue;
         }
 

@@ -1,5 +1,7 @@
 #include "editground.hpp"
 
+#include "platform/arena.hpp"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -47,7 +49,7 @@ int CEditGround::SetMapParts(int parts_no, float x, float y, float z, int rot_y)
         return -1;
     }
 
-    if (parts_no < 0 || parts_no >= 24) {
+    if (parts_no < 0 || parts_no >= CHRONICLE_GEORAMA_PART_CAPACITY) {
         return -1;
     }
 
@@ -1664,14 +1666,15 @@ void CEditGround::Save([[maybe_unused]] char *path) {
 }
 
 void CEditGround::Load(char *data) {
-    std::unique_ptr<char[]> buffer;
-    char                   *file = data;
+    char *file = data;
 
     Clear();
 
     if (data == nullptr) {
-        buffer = std::make_unique<char[]>(4000);
-        file = buffer.get();
+        // Retail read the layout into 4000 bytes of stack; an arena block lets a mod's layout grow to 64 KiB
+        // (dataread.cpp checks the room before reading a larger override).
+        static const char layout_key = 0;
+        file = reinterpret_cast<char *>(ArenaBlock(&layout_key, 64 * 1024, 0));
 
         if (!LoadFile2("gdata0.edt", file, nullptr, 0)) {
             return;
@@ -1686,7 +1689,7 @@ void CEditGround::Load(char *data) {
         const SV_GRD_PART *record = &records[i];
         int                parts_id = record->part_id;
 
-        if (parts_id < 0 || parts_id >= 24) {
+        if (parts_id < 0 || parts_id >= CHRONICLE_GEORAMA_PART_CAPACITY) {
             break;
         }
 
@@ -1701,7 +1704,7 @@ void CEditGround::Load(char *data) {
         const SV_GRD_PART *record = &records[i];
         int                parts_id = record->part_id;
 
-        if (parts_id < 0 || parts_id >= 24) {
+        if (parts_id < 0 || parts_id >= CHRONICLE_GEORAMA_PART_CAPACITY) {
             break;
         }
 
@@ -1723,7 +1726,7 @@ void CEditGround::Load(char *data) {
         const SV_GRD_PART *record = &records[i];
         int                parts_id = record->part_id;
 
-        if (parts_id < 0 || parts_id >= 24) {
+        if (parts_id < 0 || parts_id >= CHRONICLE_GEORAMA_PART_CAPACITY) {
             break;
         }
 

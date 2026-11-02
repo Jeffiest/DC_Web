@@ -104,8 +104,8 @@ TEST_F(ItemDocuments, TheExportHasEveryRowOfEveryTable) {
     EXPECT_EQ(Document("attachments.json")["attachments"].size(), 50u);
     EXPECT_EQ(Document("weapons.json")["weapons"].size(), 120u);
     EXPECT_EQ(Document("bait.json")["bait"].size(), esa_info.size());
-    EXPECT_EQ(Document("item_common.json")["records"].size(), std::size(ComItemInfo));
-    EXPECT_EQ(Document("prices.json")["prices"].size(), std::size(PriceList));
+    EXPECT_EQ(Document("item_common.json")["records"].size(), kRetailCommonItemCount);
+    EXPECT_EQ(Document("prices.json")["prices"].size(), kRetailCommonItemCount);
 }
 
 TEST_F(ItemDocuments, TheExportLoadsBackByteForByte) {
@@ -178,7 +178,7 @@ TEST_F(ItemDocuments, AnUnknownFieldIsReportedButNotRefused) {
 TEST_F(ItemDocuments, EveryVanillaItemIsRegisteredWithTheTraitsItsRowsGive) {
     Order("");
     const auto all = item::All();
-    ASSERT_EQ(all.size(), std::size(ComItemInfo));
+    ASSERT_EQ(all.size(), kRetailCommonItemCount);
     std::set<std::string> ids;
     for (const item::Def *def : all) {
         EXPECT_TRUE(item::ValidId(def->id)) << def->id;

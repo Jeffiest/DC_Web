@@ -15,6 +15,11 @@ include(FetchContent)
 add_compile_options(-pthread -fexceptions)
 add_link_options(-pthread -fexceptions)
 
+# A game link runs Asyncify and wasm-opt over the whole game in several GiB; darkcloud and darkcloud_gl linking at
+# once ran a CI runner out of memory, so links take turns.
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS dc_web_link=1)
+set(CMAKE_JOB_POOL_LINK dc_web_link)
+
 # SDL3, static.
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
@@ -106,10 +111,10 @@ function(dc_web_port target)
         ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp ${DC_WEB_DIR}/src/touch.cpp)
 endfunction()
 
-# The page around the game (site/): copied beside darkcloud.js, so the build directory serves as is.
-file(GLOB DC_WEB_SITE CONFIGURE_DEPENDS ${DC_WEB_DIR}/site/*)
+# The page around the game (site/, with the animation editor in site/anim/): copied beside darkcloud.js, so the
+# build directory serves as is.
 add_custom_target(dc_web_site
-    COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_SITE} ${CMAKE_BINARY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${DC_WEB_DIR}/site ${CMAKE_BINARY_DIR}
     COMMENT "Copying the web page")
 
 # What the page loads. The game runs on a pthread; the main thread keeps the page responsive, and the canvas
@@ -131,7 +136,7 @@ set(DC_WEB_LINK_OPTIONS
     -sFORCE_FILESYSTEM=1
     -sEXIT_RUNTIME=1
     -sENVIRONMENT=web,worker,node
-    -sEXPORTED_RUNTIME_METHODS=FS,callMain
+    -sEXPORTED_RUNTIME_METHODS=FS,callMain,ENV
     -Wl,--error-limit=0)
 
 # The WebGPU probe (probe/): what the renderer's WebGPU backend will rely on, with the game's thread model.
@@ -151,6 +156,24 @@ add_custom_command(TARGET webgpu_probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_DIR}/probe/probe.html ${CMAKE_BINARY_DIR}
     VERBATIM)
 add_dependencies(webgpu_probe dc_web_site)
+
+# The animation editor's model converter (anim/): Kazarov's Rust core built for wasm32-unknown-emscripten with
+# dcdata's configuration reader, run in a worker by site/anim/. A build of its own (anim/CMakeLists.txt), without
+# the game's -pthread and JavaScript exceptions; its dc_anim_convert.js and .wasm land in anim/ beside the page.
+include(ExternalProject)
+ExternalProject_Add(dc_anim_convert
+    SOURCE_DIR ${DC_WEB_DIR}/anim
+    BINARY_DIR ${CMAKE_BINARY_DIR}/anim-build
+    CMAKE_GENERATOR ${CMAKE_GENERATOR}
+    CMAKE_ARGS
+        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DCMAKE_BUILD_TYPE=Release
+    BUILD_ALWAYS TRUE
+    INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_BINARY_DIR}/anim-build/dc_anim_convert.js ${CMAKE_BINARY_DIR}/anim-build/dc_anim_convert.wasm
+        ${CMAKE_BINARY_DIR}/anim)
+add_dependencies(dc_anim_convert dc_web_site)
 
 # Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, for the browser (test/gfx_tests.html, whose
 # ?renderer=gl loads the second). Not built by default: `cmake --build --preset web --target kazarov_gfx_tests

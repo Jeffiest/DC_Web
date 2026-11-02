@@ -398,6 +398,10 @@ TEST(PlatformPad, BackButtonActions) {
 }
 
 TEST(PlatformPad, InputBindings) {
+    // Earlier tests start input, open the controllers they find and script pads; start from none.
+    InputShutdown();
+    InputSetOverride(0, nullptr);
+    InputSetOverride(1, nullptr);
     const std::array<std::string_view, 2> keys = {"Space", "Z"};
     ASSERT_TRUE(InputBindKeys("cross", keys));
     const std::array<std::string_view, 1> unknown = {"NoSuchKey"};
@@ -409,6 +413,14 @@ TEST(PlatformPad, InputBindings) {
     ASSERT_TRUE(InputGetPad(0).buttons == 0);
     ASSERT_TRUE(InputGetPad(0).left_x == 128);
     ASSERT_TRUE(!InputGetPad(1).connected);
+}
+
+TEST(PlatformPad, TriggerAxisNormalization) {
+    EXPECT_EQ(InputTriggerByte(-32768), 0);
+    EXPECT_EQ(InputTriggerByte(0), 0);
+    EXPECT_EQ(InputTriggerByte(16384), 128);
+    EXPECT_EQ(InputTriggerByte(32767), 255);
+    EXPECT_EQ(InputTriggerByte(32768), 255);
 }
 
 TEST(PlatformPad, InputWithoutVideo) {

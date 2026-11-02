@@ -9,7 +9,10 @@
 #include <string_view>
 #include <vector>
 
+#include <SDL3/SDL.h>
+
 #include "localize/localize.hpp"
+#include "moonmod/manager_ui.hpp"
 #include "options/menu_option.hpp"
 #include "platform/input.hpp"
 #include "platform/window.hpp"
@@ -595,6 +598,8 @@ std::string PictureShadowText(const Config &config) {
 }
 
 constexpr Row kGameRows[] = {
+    Row{.key = "mod_manager", .label = "Mod Manager", .help = "Manage local mods,\nsettings, and load order.",
+        .activate = moonmod::OpenManager},
     GameRow<&ConfigGameOptions::save_cursor_position, true>("game.save_cursor_position", "Save Cursor Position",
                                                             "On|Off", 0x15E),
     GameRow<&ConfigGameOptions::clock, true>("game.clock", "Clock", "On|Off", 0x162),
@@ -610,6 +615,10 @@ constexpr Row kGameRows[] = {
     GameRow<&ConfigGameOptions::player_damage, true>("game.player_damage", "Party Damage", "On|Off", 0x166),
     GameRow<&ConfigGameOptions::enemy_hp, true>("game.enemy_hp", "Enemy HP", "On|Off", 0x167),
     GameRow<&ConfigGameOptions::names, true>("game.names", "Names", "On|Off", 0x168),
+    OnOffRow<&Config::dungeon_aerial_map>("game.dungeon_aerial_map", "Dungeon Aerial Map",
+                                          "\"Dungeon Aerial Map\"\nEnlarges the floor map\ninto a centred top-down view.\nUnexplored rooms stay hidden."),
+    OnOffRow<&Config::fit_dungeon_map>("game.fit_dungeon_map", "Fit Dungeon Map",
+                                       "\"Fit Dungeon Map\"\nKeeps the whole generated\nmap on screen. It does not\nreveal unexplored rooms."),
     OnOffRow<&Config::discord_rich_presence>("discord.rich_presence", "Enable Discord",
                                              "\"Discord Rich Presence\"\nShows what you are\nplaying on Discord."),
     OnOffRow<&Config::element_quick_select>("game.element_quick_select", "Element Quick Select",
@@ -929,7 +938,7 @@ std::vector<std::pair<std::string, std::string>> RowStrings() {
             if (row.help != nullptr) {
                 add(prefix + ".help", row.help);
             }
-            if (row.names != nullptr) {
+            if (row.names != nullptr && row.count != nullptr) {
                 const int count = row.count(ConfigGet());
                 for (int choice = 0; choice < count; ++choice) {
                     add(prefix + ".choice." + std::to_string(choice), ChoiceName(row.names, choice));
@@ -946,6 +955,9 @@ std::string RowValue(const Row &row, const Config &config) {
     if (row.action != nullptr) {
         return InputBindingLabel(row.action);
     }
+    if (row.text == nullptr && row.get == nullptr) {
+        return {};
+    }
     std::string value = row.text != nullptr ? ValueText(row, row.text(config)) : ChoiceText(row, row.get(config));
     if (ConfigAppliesOnRestart(row.key)) {
         value += " *";
@@ -954,7 +966,8 @@ std::string RowValue(const Row &row, const Config &config) {
 }
 
 bool StepRow(const Row &row, Config &config, int direction, bool wrap) {
-    if (row.count == nullptr || row.get == nullptr || row.set == nullptr || direction == 0) {
+    if (row.activate != nullptr || row.count == nullptr || row.get == nullptr || row.set == nullptr ||
+        direction == 0) {
         return false;
     }
     const int count = row.count(config);
@@ -974,11 +987,13 @@ bool StepRow(const Row &row, Config &config, int direction, bool wrap) {
 void ResetPage(const Page &page, Config &config) {
     const Config defaults;
     for (const Row &row : page.rows) {
-        if (row.action != nullptr) {
+        if (row.activate != nullptr) {
+            continue;
+        } else if (row.action != nullptr) {
             RemoveBinding(config, row.action);
         } else if (row.restore != nullptr) {
             row.restore(config, defaults);
-        } else {
+        } else if (row.set != nullptr && row.get != nullptr) {
             row.set(config, row.get(defaults));
         }
     }

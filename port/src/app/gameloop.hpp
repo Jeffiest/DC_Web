@@ -163,4 +163,14 @@ void GameFollowMapJump();
  */
 void GameApplyLoopResult(int loop_mode, int result);
 
+/**
+ * Test hook: grants built stock as town:plot:count once a town starts; plot -1 grants each loaded native plot.
+ */
+bool GameSetGeoramaStock(const char *spec);
+
+/**
+ * Turns a continuing mode result into a return when MapJump has queued a destination.
+ */
+int GameLoopResultWithPendingMapJump(int loop_result);
+
 } // namespace dc::app

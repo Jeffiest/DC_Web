@@ -11,6 +11,7 @@
 #include "mainselect.hpp"
 #include "platform/input.hpp"
 #include "ui/menu_pointer.hpp"
+#include "moonmod/chronicle_adapter.hpp"
 
 namespace dc::game {
 
@@ -113,6 +114,9 @@ void PadHoldDown(int mask) {
 
 int pad_button_read(PAD_STATUS *status, int port, int slot) {
     static thread_local auto data = std::make_unique<unsigned char[]>(32);
+    if (port == 0) {
+        moonmod::RefreshChronicleWheelMode();
+    }
     InputLatchPad(port);
     if (port == 0) {
         DualSenseUpdate();
@@ -126,6 +130,9 @@ int pad_button_read(PAD_STATUS *status, int port, int slot) {
     if (data[0] == 0) {
         int button = ((data[2] << 8) | data[3]) ^ 0xffff;
         status->button = button & 0xffff;
+        if (port == 0) {
+            status->button &= ~moonmod::ChronicleBlockedNativeButtons();
+        }
         status->right_x = data[4];
         status->right_y = data[5];
         status->left_x = data[6];
