@@ -332,7 +332,10 @@ struct Runtime::Impl {
         if (ec) return {};
         const std::string content_hash = NativePluginFileSha256(record.manifest.native_library);
         if (content_hash.empty()) return {};
-        const auto relative = record.manifest.native_library.lexically_relative(record.package_root).generic_string();
+        // Against the manifest's canonical root, as the library's path is: the folder's own path can be another
+        // spelling of it (a link, or Windows' short names such as RUNNER~1), which would put the library outside.
+        const auto relative =
+            record.manifest.native_library.lexically_relative(record.manifest.package_root).generic_string();
         if (relative.empty() || relative.starts_with("..")) return {};
         return record.manifest.version + "|" + relative + "|" + std::to_string(size) + "|" +
                std::to_string(static_cast<long long>(modified.time_since_epoch().count())) + "|" + content_hash;
