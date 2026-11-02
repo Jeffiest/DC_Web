@@ -280,6 +280,9 @@ void MGSetViewMatrix(float (*view)[4], float *position);
  * Sets the matrix that puts the world in front of the eye, leaving where the eye stands.
  */
 void MGSetViewMatrix(sceVu0FMATRIX view);
+// MoonMod (O2 C1, L4): MGSetViewMatrix for a second camera drawn within the tick (a doorway's view of another
+// place), which is no camera cut: the tick's own view comes back before the frame ends.
+void MGSetViewMatrixQuiet(sceVu0FMATRIX view, float *position);
 
 /**
  * Initializes the renderer, its GS state, and its shared vectors and matrices.

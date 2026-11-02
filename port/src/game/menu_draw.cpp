@@ -48,6 +48,7 @@
 #include "ui/menu_pointer.hpp"
 #include "ui/name_mouse.hpp"
 #include "userstatus.hpp"
+#include "moonmod/item_icon_override.hpp"
 
 namespace dc::game {
 
@@ -890,6 +891,13 @@ void FadeTexX(int left_x, int left_width, int right_x, int right_width, char *na
 }
 
 CTexture *RetCTex(short item_no, int &u, int &v) {
+    // A mod's own icon first: its whole 32x32 texture is the cell.
+    if (CTexture *own = ItemIconOverrideTexture(item_no)) {
+        u = 0;
+        v = 0;
+        return own;
+    }
+
     const COM_ITEM_INFO *info = GetCommonItemInfo(item_no);
 
     if (info == nullptr) {
@@ -1296,8 +1304,8 @@ void InitPersonalBoardMode(CUserStatus *status, PERSONAL_BOARD *board, int mode,
             full = BOARD_PAGE_ATTACH;
         }
 
-        for (const auto &weapons : PerBoardStatusPt->chara_weapons) {
-            if (weapons[10].item_no >= ITEM_WEAPON_START) {
+        for (int chara = 0; chara < CharaCount(); chara++) {
+            if (PerBoardStatusPt->chara_weapons[chara][10].item_no >= ITEM_WEAPON_START) {
                 full = BOARD_PAGE_WEAPON;
                 break;
             }
@@ -1633,7 +1641,8 @@ int PersonalRetMax(int board_mode) {
         case BOARD_PAGE_ITEM:
             return PerBoardPt->item_pack->num;
         case BOARD_PAGE_WEAPON:
-            return 60;
+            // MoonMod: ten slots for each character's place, a registered one's in the party included
+            return CharaSlotsInPlay(*PerBoardStatusPt) * 10;
         case BOARD_PAGE_ATTACH:
             return 40;
         case BOARD_PAGE_ATLA_VILLAGE:
@@ -1780,14 +1789,13 @@ void CommonIconDraw(int page, int count, int x, int y, int top, int bottom, int 
             }
 
             draw_x = weapon_x;
-            const int party = PerBoardStatusPt->party_size;
 
             for (int i = 0; i < count; i++) {
                 const int slot = i % 10;
                 const int item_no = weapons[slot].item_no;
                 const int equipped = PerBoardStatusPt->equipped_weapon_slot[i / 10];
 
-                if (party >= i / 10 + 1 && equipped >= 0 && slot == equipped) {
+                if (InParty(*PerBoardStatusPt, i / 10) && equipped >= 0 && slot == equipped) {
                     DrawNowEquipWeaponMark(draw_x - 2, draw_y - 4, top + 1, bottom, alpha);
 
                     if (icon != nullptr) {
@@ -2193,7 +2201,7 @@ int IsEnableTrushThrow(int item_no) {
             }
         }
 
-        if (PerBoardStatusPt->party_size - 1 < owner) {
+        if (!InParty(*PerBoardStatusPt, owner)) {
             enable = true;
         }
 
@@ -2511,6 +2519,11 @@ int WhatIsKindofItem(int item_no) {
 }
 
 int WhoIsWeaponEquip(int weapon_no) {
+    // MoonMod: a registered character's weapon sits in that character's row (Opar's staffs), not its owner's
+    if (const int holder = MoonModWeaponHolder(weapon_no); holder >= 0) {
+        return holder;
+    }
+
     const COM_ITEM_INFO *info = GetCommonItemInfo(weapon_no);
 
     if (info == nullptr || info->kind != ITEMKIND_WEAPON) {
@@ -2663,7 +2676,7 @@ int GetNowModeMaxNum(int page, int *overflow) {
             break;
         }
         case BOARD_PAGE_WEAPON:
-            for (int chara = 0; chara < 6; chara++) {
+            for (int chara = 0; chara < CharaCount(); chara++) {
                 const WEAPON_HAVE *weapons = status->chara_weapons[chara];
 
                 for (int i = 0; i < 11; i++) {

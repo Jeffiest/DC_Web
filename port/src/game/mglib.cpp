@@ -25,6 +25,8 @@
 #include "mathutil.hpp"
 #include "platform/clock.hpp"
 #include "rect.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "render/draw2d.hpp"
 #include "render/draw3d.hpp"
 #include "render/gs_state.hpp"
 #include "render/screen.hpp"
@@ -113,6 +115,7 @@ constexpr float kCameraCutDistance = 200.0f;
 constexpr float kCameraCutCosine = 0.7071f;
 
 bool          g_have_tick_view = false;
+bool          g_quiet_view = false; // MoonMod (O2 C1, L4): MGSetViewMatrixQuiet is setting the view
 sceVu0FMATRIX g_tick_view;
 
 // The logical frame's rect of a GS sprite whose corners are 12.4 window offsets on the field.
@@ -216,7 +219,7 @@ void Blit(const ResolvedRect &src, const ResolvedRect &dst, gfx::Filter filter) 
 
 // The view against the last one the previous tick drew with.
 void CheckCameraCut(sceVu0FMATRIX view) {
-    if (!gfx::Recording() || !g_have_tick_view) {
+    if (!gfx::Recording() || !g_have_tick_view || g_quiet_view) {
         return;
     }
     float before[16];
@@ -436,6 +439,49 @@ void MGBeginFrame() {
 // Retail waits for the next VSync unless one already passed while the frame was built and the
 // game asked not to wait twice (mgWaitVSync 0). The count only moves when the clock is pumped, so
 // it is pumped first to see whether a tick went by.
+namespace {
+
+// MoonMod (quick passage, O2 C0): while a jump between a town and a dungeon holds the picture, the last good frame
+// (the tick before the hold, kPreviousFrame) is kept in a frame-shaped target and drawn over everything each tick
+// draws, so the place being built shows nothing until it is ready; the frames still run, their uploads with them.
+void DrawHeldPicture() {
+    static gfx::TextureHandle held = gfx::kNullTexture;
+    static bool               holding = false;
+    if (!moonmod::ChronicleHoldingPicture()) {
+        if (holding) {
+            holding = false;
+            gfx::CutInterpolation();
+        }
+        return;
+    }
+    if (held == gfx::kNullTexture) held = gfx::NamedRenderTarget("moonmod held picture", 640, SCREEN_HEIGHT, false, false, true);
+    if (held == gfx::kNullTexture) return;
+    const gfx::LogicalRect visible = gfx::VisibleLogicalRect(gfx::kMainTarget);
+    const auto             quad = [&](gfx::TextureHandle texture) {
+        gfx::TextureBinding binding;
+        binding.texture = texture;
+        binding.filter = gfx::Filter::Nearest;
+        const float x0 = visible.x, y0 = visible.y, x1 = visible.x + visible.w, y1 = visible.y + visible.h;
+        const std::array<gfx::Vertex2D, 4> vertices = {
+            draw2d::Vertex(x0, y0, 0.0f, x0, y0, 0x80, 0x80, 0x80, 0x80),
+            draw2d::Vertex(x1, y0, 0.0f, x1, y0, 0x80, 0x80, 0x80, 0x80),
+            draw2d::Vertex(x1, y1, 0.0f, x1, y1, 0x80, 0x80, 0x80, 0x80),
+            draw2d::Vertex(x0, y1, 0.0f, x0, y1, 0x80, 0x80, 0x80, 0x80),
+        };
+        gfx::Draw2D(gfx::Primitive::Quads, vertices, binding, gfx::DrawState{});
+    };
+    if (!holding) {
+        holding = true;
+        gfx::SetRenderTarget(held);
+        quad(gfx::kPreviousFrame);
+        gfx::SetRenderTarget(gfx::kMainTarget);
+    }
+    quad(held);
+    gfx::CutInterpolation();
+}
+
+} // namespace
+
 void MGEndFrame() {
     static const bool                        trace_phases = std::getenv("DC_PERF_END_FRAME") != nullptr;
     std::array<EndFrameClock::time_point, 5> stamps{};
@@ -469,6 +515,7 @@ void MGEndFrame() {
         gfx::DisplayListRef list;
         if (gfx::Recording()) {
             textwipe::DrawDivider();
+            DrawHeldPicture();
             list = gfx::EndRecording();
             if (trace_phases) {
                 stamps[2] = EndFrameClock::now();
@@ -650,6 +697,12 @@ void MGSetViewMatrix(sceVu0FMATRIX view, float *position) {
     mgRenderInfo.position[1] = position[1];
     mgRenderInfo.position[2] = position[2];
     mgRenderInfo.position[3] = 0.0f;
+}
+
+void MGSetViewMatrixQuiet(sceVu0FMATRIX view, float *position) {
+    g_quiet_view = true;
+    MGSetViewMatrix(view, position);
+    g_quiet_view = false;
 }
 
 void MGSetFogParm(float near_z, float far_z, u_char r, u_char g, u_char b, float far_fog, float near_fog) {

@@ -161,6 +161,14 @@ void PortReleaseOwner(PortTextureOwner owner);
 bool PortKeyLive(unsigned key);
 
 /**
+ * MoonMod (O2 C1): the texture world, the arena world's twin. Entries are registered in the current world, and
+ * releasing the manager's entries releases only the current world's, so a town and a dungeon kept loaded side by
+ * side keep their textures. World 0 is the default.
+ */
+void PortSetTextureWorld(int world);
+int  PortTextureWorld();
+
+/**
  * The GS local-to-local transfer MGMoveImage describes, in texels of the two images: TBP0/PSM of
  * each side. Images copy on the renderer; palettes copy their CPU shadow in CLUT image positions
  * and re-upload. False if either side is unknown or the two cannot be copied between.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string_view>
 #include "common.h"
 
 #include <libpkt.h>
@@ -221,6 +222,10 @@ struct VILLAGER_INFO {
 
 /** Runtime metadata for the ten villagers selected for the current period. */
 extern VILLAGER_INFO EdVillagerInfo[10];
+
+#ifdef PORT
+#include "moonmod/editloop_moonmod.hpp"
+#endif
 
 /**
  * Stores the fog parameters belonging to one lighting preset.
@@ -678,6 +683,14 @@ int EditInit(void *param);
  * Runs one frame of the editor and reports what it is to do next.
  */
 int EditLoop();
+
+/**
+ * MoonMod: a developer's test (--jump house:<interior>, e.g. house:i01h01, Toan's house): once the town walks, into
+ * that house as by its door, with the house's plot (i0<town>h<NN>: plot NN - 1) marked complete, so the people its
+ * completion event stands there stand there. house:i01h01@150 starts the house with its event 150 (as a door's start
+ * event); without one, its own. Empty: none.
+ */
+void SetDevHouseJump(std::string_view interior);
 
 /**
  * Reports whether any modal editor event currently blocks normal input.

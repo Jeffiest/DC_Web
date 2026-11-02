@@ -7,6 +7,8 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
+#include <map>
 #include <cstdlib>
 #include <memory>
 #include <numbers>
@@ -23,6 +25,11 @@
 #include "platform/settings.hpp"
 #include "platform/touchpad.hpp"
 #include "platform/window.hpp"
+
+std::uint8_t InputTriggerByte(int raw_value) {
+    const float normalized = std::clamp(static_cast<float>(raw_value) / 32767.0f, 0.0f, 1.0f);
+    return static_cast<std::uint8_t>(std::lround(normalized * 255.0f));
+}
 
 namespace {
 
@@ -210,6 +217,10 @@ InputMouseLook                                               g_mouse_look;
 InputMouseLookTotal                                          g_mouse_look_total;
 bool                                                         g_mouse_zoom = false;
 float                                                        g_scripted_wheel = 0.0f;
+float                                                        g_routed_wheel = 0.0f;
+// 0 Left/Right, 1 Up/Down, 2 native camera zoom.
+int                                                          g_wheel_mode = 2;
+std::uint16_t                                                g_wheel_press = 0;
 std::int64_t                                                 g_last_latch_tick = -1;
 std::int64_t                                                 g_latch_serial = 0;
 std::int64_t                                                 g_stick_read_serial = -1;
@@ -249,6 +260,9 @@ bool             g_touch_tap_shown = false;
 // buttons, the script's keys) were held at the last poll, for their press edges.
 std::array<int, kHostActionCount>  g_host_presses{};
 std::array<bool, kHostActionCount> g_host_polled{};
+std::map<std::string, std::vector<Source>, std::less<>> g_mod_bindings;
+std::map<std::string, bool, std::less<>> g_mod_polled;
+std::map<std::string, unsigned, std::less<>> g_mod_presses;
 
 std::string Lower(std::string_view text) {
     std::string lower(text);
@@ -535,6 +549,8 @@ void ReadGamepad(SDL_Gamepad *gamepad, InputPadState &state) {
             state.buttons |= pressed;
         }
     }
+    state.left_trigger = InputTriggerByte(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+    state.right_trigger = InputTriggerByte(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
     if (PadDefault(kInputL2) && TriggerHeld(gamepad, 0)) {
         state.buttons |= kInputL2;
     }
@@ -641,6 +657,9 @@ InputKeyboardMouse LiveKeyboardMouse() {
 void Compose(int pad) {
     g_state[pad] = pad == 0 ? InputApplyKeyboardMouse(g_device[pad], LiveKeyboardMouse()) : g_device[pad];
     InputPadState &state = g_state[pad];
+    if (pad == 0) {
+        state.buttons |= g_wheel_press;
+    }
     if (pad == 0 && g_look_left && !Deflected(state.left_x) && !Deflected(state.left_y)) {
         state.left_x = state.right_x;
         state.left_y = state.right_y;
@@ -759,6 +778,42 @@ bool HostPolledHeld(std::size_t host) {
         }
     }
     return std::ranges::any_of(PadSources(kFirstHostAction + host, g_pad_type), GamepadSourceHeld);
+}
+
+bool ModActionHeldInternal(std::string_view action) {
+    const auto found = g_mod_bindings.find(action);
+    if (found == g_mod_bindings.end()) return false;
+    for (const Source &source : found->second) {
+        switch (source.kind) {
+            case Source::Key:
+                if (g_keys[source.code] ||
+                    std::ranges::find(g_scripted.keys, source.code) != g_scripted.keys.end()) return true;
+                break;
+            case Source::MouseButton:
+                if (((MouseButtons() | g_scripted.mouse_buttons) & (1u << (source.code - 1))) != 0) return true;
+                break;
+            case Source::GamepadButton:
+            case Source::GamepadTrigger:
+                if (GamepadSourceHeld(source)) return true;
+                break;
+            case Source::MouseAxis:
+                break;
+        }
+    }
+    return false;
+}
+
+void PollModActions() {
+    for (const auto &[action, sources] : g_mod_bindings) {
+        (void)sources;
+        const bool held = ModActionHeldInternal(action);
+        bool &previous = g_mod_polled[action];
+        if (held && !previous) {
+            unsigned &presses = g_mod_presses[action];
+            if (presses < 255) ++presses;
+        }
+        previous = held;
+    }
 }
 
 bool MouseAxisBound(int code) {
@@ -1096,6 +1151,7 @@ void InputPoll() {
     }
     ReadTouchpad(g_slots[0].gamepad);
     PollHostActions();
+    PollModActions();
 }
 
 void InputHandleEvent(const SDL_Event &event) {
@@ -1159,6 +1215,8 @@ void InputHandleEvent(const SDL_Event &event) {
             g_mouse_look.zoom = 0.0f;
             g_mouse_look.zoom_reset = false;
             g_scripted_wheel = 0.0f;
+            g_routed_wheel = 0.0f;
+            g_wheel_press = 0;
             g_host_presses[kZoomResetHost] = 0;
             g_menu_dx = 0.0f;
             g_menu_dy = 0.0f;
@@ -1166,6 +1224,7 @@ void InputHandleEvent(const SDL_Event &event) {
         default:
             break;
     }
+    PollModActions();
 }
 
 void InputLatchPad(int pad) {
@@ -1215,9 +1274,22 @@ void InputLatchPad(int pad) {
     // Menus take the live wheel themselves. Everything else drains it each pad read, including
     // disabled zoom and loads, so it cannot be played back when gameplay next owns the camera.
     float wheel = g_menu_mouse ? 0.0f : MouseTakeWheel() + std::exchange(g_scripted_wheel, 0.0f);
+    g_wheel_press = 0;
+    if (!g_menu_mouse && g_wheel_mode != 2) {
+        g_routed_wheel += std::isfinite(wheel) ? wheel : 0.0f;
+        if (g_routed_wheel >= 1.0f) {
+            g_routed_wheel -= 1.0f;
+            g_wheel_press = g_wheel_mode == 0 ? kInputLeft : kInputUp;
+        } else if (g_routed_wheel <= -1.0f) {
+            g_routed_wheel += 1.0f;
+            g_wheel_press = g_wheel_mode == 0 ? kInputRight : kInputDown;
+        }
+    } else if (g_wheel_mode == 2) {
+        g_routed_wheel = 0.0f;
+    }
     bool  reset = g_host_presses[kZoomResetHost] != 0;
     g_host_presses[kZoomResetHost] = 0;
-    if (g_mouse_zoom && !g_menu_mouse &&
+    if (g_wheel_mode == 2 && g_mouse_zoom && !g_menu_mouse &&
         static_cast<double>(ticks) <= kMouseLookMaxGapSeconds * ClockTickRate()) {
         g_mouse_look.zoom = std::isfinite(wheel) ? wheel : 0.0f;
         g_mouse_look.zoom_reset = reset;
@@ -1243,10 +1315,20 @@ void InputSetMenuMouse(bool on) {
     g_mouse_look.zoom = 0.0f;
     g_mouse_look.zoom_reset = false;
     g_scripted_wheel = 0.0f;
+    g_routed_wheel = 0.0f;
+    g_wheel_press = 0;
     g_host_presses[kZoomResetHost] = 0;
     g_host_polled[kZoomResetHost] = HostPolledHeld(kZoomResetHost);
     MouseTakeWheel();
     Compose(0);
+}
+
+void InputSetWheelMode(int mode) {
+    g_wheel_mode = mode >= 0 && mode <= 2 ? mode : 2;
+    if (g_wheel_mode == 2) {
+        g_routed_wheel = 0.0f;
+        g_wheel_press = 0;
+    }
 }
 
 void InputSetMenuNavigation(bool on) {
@@ -1561,6 +1643,56 @@ bool InputBindKeys(std::string_view action, std::span<const std::string_view> ke
     return false;
 }
 
+bool InputBindModAction(std::string_view action, std::span<const std::string_view> sources) {
+    EnsureBindings();
+    if (action.empty() || action.size() > 192 || action.find(':') == std::string_view::npos ||
+        sources.empty() || sources.size() > 8) return false;
+    std::vector<Source> parsed;
+    if (!ParseSources(sources, ActionKind::Host, parsed)) return false;
+    const std::string key(action);
+    g_mod_bindings[key] = std::move(parsed);
+    g_mod_presses[key] = 0;
+    g_mod_polled[key] = ModActionHeldInternal(key);
+    return true;
+}
+
+bool InputModActionExists(std::string_view action) {
+    return g_mod_bindings.contains(action);
+}
+
+bool InputModActionHeld(std::string_view action) {
+    EnsureBindings();
+    return ModActionHeldInternal(action);
+}
+
+bool InputModActionConsumePress(std::string_view action) {
+    const auto found = g_mod_presses.find(action);
+    if (found == g_mod_presses.end() || found->second == 0) return false;
+    --found->second;
+    return true;
+}
+
+bool InputUnbindModAction(std::string_view action) {
+    const std::string key(action);
+    const bool removed = g_mod_bindings.erase(key) != 0;
+    g_mod_polled.erase(key);
+    g_mod_presses.erase(key);
+    return removed;
+}
+
+void InputUnbindModActionsByPrefix(std::string_view prefix) {
+    auto it = g_mod_bindings.begin();
+    while (it != g_mod_bindings.end()) {
+        if (std::string_view(it->first).starts_with(prefix)) {
+            g_mod_polled.erase(it->first);
+            g_mod_presses.erase(it->first);
+            it = g_mod_bindings.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 std::span<const InputActionInfo> InputActions() {
     static const std::vector<InputActionInfo> actions = [] {
         std::vector<InputActionInfo> list;
@@ -1855,6 +1987,7 @@ void InputSetScriptedDevices(const InputKeyboardMouse &held) {
     g_scripted = held;
     g_scripted_wheel = held.mouse_wheel;
     PollHostActions();
+    PollModActions();
 }
 
 static bool g_movement_locked = false;

@@ -7,6 +7,8 @@
 #include "memorycardaccess.hpp"
 #include "menu_draw.hpp"
 #include "menuetc.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "options/mod_manager_ui.hpp"
 #include "options/screen.hpp"
 #include "rect.hpp"
 #include "snd.hpp"
@@ -91,8 +93,9 @@ void DrawSelection(int alpha) {
         int val_left = val_center - (val_w / 2);
         int val_right = val_left + val_w;
 
-        int  choice = row.get(config);
-        int  count = row.count(config);
+        // Action rows (the mod manager button, key bindings) have no choice list.
+        int  choice = row.get != nullptr ? row.get(config) : 0;
+        int  count = row.count != nullptr ? row.count(config) : 1;
         bool has_prev = (choice > 0);
         bool has_next = (choice < count - 1);
 
@@ -203,7 +206,8 @@ void DrawRows(int alpha) {
 
             val_lbl.Draw(val_center, y, alpha);
 
-            if (selected && row.action == nullptr && row.activate == nullptr) {
+            if (selected && row.action == nullptr && row.activate == nullptr && row.get != nullptr &&
+                row.count != nullptr) {
                 int choice = row.get(config);
                 int count = row.count(config);
                 int arrow_pad = 12;
@@ -284,6 +288,13 @@ void Draw() {
             break;
     }
     alpha = std::clamp(alpha, 0, 0x80);
+
+    if (moonmod::ManagerOpen()) {
+        MenuTextureReload(0x1A);
+        mod_manager_ui::Draw(alpha);
+        setbilinear(1);
+        return;
+    }
 
     if (g_screen.mode == OPTION_OPEN_TITLE) {
         DrawSprite(0x50, 0x28, 0xB3, 0x118, 0xAA, 0x28, alpha);

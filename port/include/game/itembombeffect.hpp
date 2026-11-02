@@ -21,7 +21,8 @@ public:
     float         alphas[5];    /**< Alpha values used to draw the billboards. */
     s32           active[5];    /**< Nonzero while each billboard is animated. */
     float         scale;        /**< Scale applied to every billboard. */
-    u8            unk_B8[0x8];
+    u8            smoke; /**< MoonMod: a cloud of smoke (SetSmoke), not a blast. */
+    u8            unk_B9[0x7];
 
     /**
      * Draws the bomb's blast billboards facing the camera.
@@ -37,6 +38,12 @@ public:
      * Places the bomb's five blast puffs at a position, staggering their starts.
      */
     void SetBomb(float *position, float scale);
+
+    /**
+     * MoonMod: a cloud of smoke at a position (effects.burst kind "smoke"): the blast's dark puff, five times
+     * around the point, swelling and thinning away faster than a blast.
+     */
+    void SetSmoke(float *position, float scale);
 
     /**
      * Returns 1 while any blast billboard is still animated, otherwise 0.

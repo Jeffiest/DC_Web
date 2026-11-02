@@ -1,3 +1,4 @@
+#include <cmath>
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -9,6 +10,8 @@
 #include "menu_dungeon.hpp"
 #include "menu_inventory.hpp"
 #include "userstatus.hpp"
+#include "playable_chara.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -76,7 +79,10 @@ int CDngStatusData::SearchItemIndexNo(int item_id) {
     }
 
     if (item_id >= ITEM_WEAPON_START) {
-        for (int chara_no = 0; chara_no < this->party_size; chara_no++) {
+        for (int chara_no = 0; chara_no < CharaCount(); chara_no++) {
+            if (!InParty(*this, chara_no)) {
+                continue;
+            }
             for (int slot = 0; slot < WEAPON_CAPACITY; slot++) {
                 if (this->chara_weapons[chara_no][slot].item_no == item_id) {
                     return slot;
@@ -134,8 +140,8 @@ void CDngStatusData::LostGateKey() {
 int CDngStatusData::GetLiveUnit() {
     int live_count = 0;
 
-    for (int chara_no = 0; chara_no < this->party_size; chara_no++) {
-        if (this->hp[chara_no] > 0) {
+    for (int chara_no = 0; chara_no < CharaCount(); chara_no++) {
+        if (InParty(*this, chara_no) && this->hp[chara_no] > 0) {
             live_count++;
         }
     }
@@ -186,6 +192,15 @@ int CDngStatusData::CheckItemGet(int item_id) {
 }
 
 int CDngStatusData::CheckWeaponUser(int weapon_id) {
+    // Weapons a mod registers after ITEM_WEAPON_END (itemdata.cpp) name their owner in WEAPON_DATA.
+    if (weapon_id >= ITEM_WEAPON_END && weapon_id < ITEM_WEAPON_END + 32) {
+        const WEAPON_DATA *definition = GetWeaponData(weapon_id);
+        if (const int holder = MoonModWeaponHolder(weapon_id); holder >= 0 && holder < CharaCount()) return holder;
+        return definition != nullptr && definition->owner >= CHARA_TOAN && definition->owner < CharaCount()
+                   ? definition->owner
+                   : -1;
+    }
+
     int chara_no = -1;
 
     if (weapon_id >= ITEM_WEAPON_DAGGER_BROKEN && weapon_id < ITEM_WEAPON_WOODENSLINGSHOT_BROKEN) {
@@ -309,7 +324,11 @@ int CDngStatusData::GetItem(int item_id, int qty) {
 
     if (item_id >= ITEM_WEAPON_START) {
         printf("get weapon!! %d\n", item_id);
+        // Weapons a mod registers past retail's name their owner in their own WEAPON_DATA too.
         const int chara_no = static_cast<s8>(WeaponList[item_id - ITEM_WEAPON_START].owner);
+        if (chara_no < CHARA_TOAN || chara_no >= CharaCount()) {
+            return -1;
+        }
 
         for (int slot = 0; slot < WEAPON_SLOTS; slot++) {
             if (this->chara_weapons[chara_no][slot].item_no >= ITEM_WEAPON_START) {
@@ -348,7 +367,7 @@ int CDngStatusData::CheckActItemSlot(int item_id) {
 }
 
 int CDngStatusData::CheckDefaultWeapon(int chara_no) {
-    const s32 default_weapon = defWeapon[chara_no];
+    const s32 default_weapon = defWeapon[CombatChara(chara_no)];
 
     if (default_weapon == this->chara_weapons[chara_no][this->equipped_weapon_slot[chara_no]].item_no) {
         return 0;
@@ -393,9 +412,29 @@ void CUserStatus::AddDrink(int chara_no, s16 amount, float ratio) {
 }
 
 void CUserStatus::AddNowLife(int chara_no, s16 amount, float ratio) {
+    // The mods' player damage formula (combat.formula_register) on animated native damage only; exact HP
+    // setters and healing keep their meaning.
+    if (amount < 0 && ratio > 0) {
+        int weapon_id = -1;
+        if (chara_no >= 0 && chara_no < CharaCount()) {
+            const int equipped = this->equipped_weapon_slot[chara_no];
+            if (equipped >= 0 && equipped < 11) {
+                weapon_id = this->chara_weapons[chara_no][equipped].item_no;
+            }
+        }
+        amount = static_cast<s16>(-std::clamp<int>(
+            static_cast<int>(std::lround(moonmod::ApplyChroniclePlayerDamageFormula(-static_cast<float>(amount), chara_no, weapon_id))),
+            1, 32767));
+    }
+
     if (this->life_step[chara_no] != 0) {
         this->hp[chara_no] = this->next_hp[chara_no];
         this->life_step[chara_no] = 0;
+    }
+
+    // MoonMod player.fatal_guard: a fatal animated hit leaves 1 HP while the character has a charge.
+    if (amount < 0 && ratio > 0 && this->hp[chara_no] + amount <= 0 && moonmod::ConsumeChronicleFatalGuard(chara_no)) {
+        amount = static_cast<s16>(std::min(0, 1 - this->hp[chara_no]));
     }
 
     if (0.0f == ratio) {
@@ -497,6 +536,8 @@ void CUserStatus::Step(int mode) {
                 drain *= 2.0f;
             }
 
+            drain *= moonmod::ChroniclePlayerThirstDrainScale(); // MoonMod player.tuning_set
+
             water -= drain;
 
             if (water <= 0.0f) {
@@ -515,7 +556,7 @@ void CUserStatus::Step(int mode) {
         }
     }
 
-    for (int chara_no = 0; chara_no < 6; chara_no++) {
+    for (int chara_no = 0; chara_no < CHARA_MAX; chara_no++) {
         if (this->drink_step[chara_no] != 0) {
             this->water_now[chara_no] += this->drink_step[chara_no];
 
@@ -531,7 +572,7 @@ void CUserStatus::Step(int mode) {
         }
     }
 
-    for (int chara_no = 0; chara_no < 6; chara_no++) {
+    for (int chara_no = 0; chara_no < CHARA_MAX; chara_no++) {
         if (this->life_step[chara_no] != 0) {
             this->hp[chara_no] += this->life_step[chara_no];
 
@@ -549,7 +590,13 @@ void CUserStatus::Step(int mode) {
 }
 
 void CUserStatus::Init() {
-    std::ranges::fill(this->thirst_damage, 0.0f);
+    for (int chara_no = 0; chara_no < CHARA_MAX; chara_no++) {
+        this->thirst_damage[chara_no] = 0.0f;
+        this->life_step[chara_no] = 0;
+        this->unk_8A8C[chara_no] = 0;
+        this->unk_8A74[chara_no] = 0;
+        this->drink_step[chara_no] = 0;
+    }
 
     this->water_drain_disable = 0;
     this->step_disable = 0;
@@ -557,10 +604,6 @@ void CUserStatus::Init() {
 
     this->ClearEventFlag();
 
-    std::ranges::fill(this->life_step, 0);
-    std::ranges::fill(this->unk_8A8C, 0);
-    std::ranges::fill(this->unk_8A74, 0);
-    std::ranges::fill(this->drink_step, 0);
 }
 
 void CDngStatusData::SetDead() {
@@ -597,6 +640,14 @@ void CDngStatusData::InitResLimmitZone() {
 void CDngStatusData::Initialize() {
     constexpr std::array<s32, 6> start_hp = {70, 60, 100, 90, 110, 100};
     constexpr std::array<s32, 6> start_defense = {3, 1, 12, 23, 38, 46};
+    // MoonMod: a registered character starts with his PlayableChara's (an unused index with Toan's).
+    const auto start_of = [](int chara_no, const std::array<s32, 6> &native, int PlayableChara::*field) {
+        if (chara_no < SAVE_CHARA_COUNT) {
+            return native[chara_no];
+        }
+        const PlayableChara *extra = ExtraChara(chara_no);
+        return extra != nullptr ? static_cast<s32>(extra->*field) : native[CHARA_TOAN];
+    };
 
     this->cur_georama = -1;
     this->unk_01[0] = 0;
@@ -604,11 +655,12 @@ void CDngStatusData::Initialize() {
     this->prev_floor = -1;
     this->cur_chara = CHARA_TOAN;
     this->party_size = 1;
+    ClearCharaJoined(); // MoonMod: a new game's party has no registered character in it
 
-    for (int chara_no = 0; chara_no < 6; chara_no++) {
-        this->max_hp[chara_no] = static_cast<s16>(start_hp[chara_no]);
-        this->hp[chara_no] = static_cast<s16>(start_hp[chara_no]);
-        this->defense[chara_no] = start_defense[chara_no];
+    for (int chara_no = 0; chara_no < CHARA_MAX; chara_no++) {
+        this->max_hp[chara_no] = static_cast<s16>(start_of(chara_no, start_hp, &PlayableChara::hp));
+        this->hp[chara_no] = static_cast<s16>(start_of(chara_no, start_hp, &PlayableChara::hp));
+        this->defense[chara_no] = start_of(chara_no, start_defense, &PlayableChara::defense);
         this->ailments[chara_no] = 0;
         this->ailment_frames[chara_no] = 0;
         this->equipped_weapon_slot[chara_no] = -1;

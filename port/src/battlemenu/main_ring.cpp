@@ -3,8 +3,12 @@
 
 #include "battlemenu/internal.hpp"
 #include "battlemenu/strings.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "moonmod/run_menu.hpp"
+#include "options/mod_manager_ui.hpp"
 #include "save/save_slots.hpp"
 #include "savedata.hpp"
+#include "ui/journal_character.hpp"
 
 namespace dc::battlemenu {
 
@@ -51,6 +55,19 @@ constexpr int kHelpBoxWidth = 276;
  */
 constexpr float kCaptionToMessageRatio = 1.32f;
 
+void OpenNativeManualsFromManager() {
+    moonmod::CloseManager();
+    moonmod::SetManagerNativeMenuContext(false);
+    BtlWakuMake2 = 0;
+    std::array<int, 3> blocks = {MenuExtendReadBlock, BtlMenuExReadBlock, BtlMenuManualReadBlock};
+    Btl_BattleManualInit(blocks.data(), BtlMenuReadBuf);
+    MenuSelect[0] = BTLMENU_PAGE_MANUAL;
+    BattleMenuFlag = MenuSelect[0] + BTLMENU_STATE_OPEN_OFFSET;
+    BtlEffectFlag = BTLEFFECT_PAGE_OPEN;
+    BtlEffectCt = 0;
+    ComMenuSePlay(MENU_SOUND_CONFIRM);
+}
+
 /**
  * Whether the Quit Game confirmation modal is currently open.
  */
@@ -90,6 +107,23 @@ ui::Cursor saveload_cursor;
  * Whether the save screen was opened in load mode from the town ring.
  */
 bool ingame_load_active = false;
+
+bool IsModRingSlot(int index) {
+    return index == (BtlMenuMode == BATTLE_MENU_MODE_DUNGEON ? 6 : 7);
+}
+
+std::string MainRingCaption(int index) {
+    return IsModRingSlot(index) ? "MODS" : GetBattleMenuCaption(index, BtlMenuMode, ingame_load_active);
+}
+
+void MainRingHelp(int index, std::string &title, std::string &description) {
+    if (IsModRingSlot(index)) {
+        title = "MODS";
+        description = "Open MoonFactory's in-game mod manager.";
+        return;
+    }
+    GetBattleMenuHelpData(index, BtlMenuMode, title, description);
+}
 
 /**
  * Whether an in-game save load has completed and awaits a town reload.
@@ -244,7 +278,7 @@ void DrawBtlMenuBar() {
         if (icons[i] >= 0) {
             setbilinear(0);
             MenuTextureReload(BtlMenuReadBlock);
-            caption::SetNextCaptionText(GetBattleMenuCaption(i, BtlMenuMode, ingame_load_active));
+            caption::SetNextCaptionText(MainRingCaption(i));
             DrawMainMenuIcon(x, y, icons[i], selected, brightness, icon_alpha);
         }
     }
@@ -263,8 +297,8 @@ void DrawBattleMainOverlay() {
     const int       sel_icon = icons[MenuSelect[1]];
     MENU_ICON_INFO *info = GetMenuIconInfo(sel_icon);
 
-    ui::Label cap_lbl(GetBattleMenuCaption(MenuSelect[1], BtlMenuMode, ingame_load_active),
-                      ui::ColorWhite, ui::Alignment::Left, true, kCaptionToMessageRatio);
+    ui::Label cap_lbl(MainRingCaption(MenuSelect[1]), ui::ColorWhite, ui::Alignment::Left, true,
+                      kCaptionToMessageRatio);
     int       width = cap_lbl.GetWidth() + 0x52;
     if (info != nullptr && width < (info->label_width + 0x4A)) {
         width = info->label_width + 0x4A;
@@ -433,6 +467,15 @@ void PortDrawBattleMenu() {
 
     DrawMenu2DSprite(&frame, MenuDispRc, MenuDispRc, bright, bright, bright, 0x80);
 
+    if (moonmod::ManagerOpen()) {
+        setbilinear(0);
+        MenuTextureReload(0x1A);
+        options::mod_manager_ui::Draw(0x80);
+        MenuMouseDrawOverlay();
+        setbilinear(0);
+        return;
+    }
+
     switch (BattleMenuFlag) {
         case BTLMENU_STATE_MAIN:
             DrawBattleMain();
@@ -535,7 +578,9 @@ void PortDrawBattleMenu() {
     GetMainMenuRightHelpMsgLangOffset(text_x, text_y);
 
     if (game_help) {
-        if (BtlMenuReadEndFlag != 0 && draw_help != 0) {
+        // MoonMod: a mod's weapon card takes the description's place.
+        const bool card = BattleMenuFlag == BTLMENU_STATE_WEAPON && MoonModWeaponCardShown();
+        if (BtlMenuReadEndFlag != 0 && draw_help != 0 && !card) {
             MenuHelpWinDraw(static_cast<int>(HelpWinHead[0]), static_cast<int>(HelpWinHead[1]), BtlHelpWinW, BtlHelpWinH,
                             BtlHelpWinAlpha);
             MenuTextureReload(CommonMenuMes2.tex_block);
@@ -550,7 +595,7 @@ void PortDrawBattleMenu() {
                BtlHelpWinAlpha > 0 && !quit_confirm_active && !saveload_modal_active) {
         std::string title;
         std::string desc;
-        GetBattleMenuHelpData(MenuSelect[1], BtlMenuMode, title, desc);
+        MainRingHelp(MenuSelect[1], title, desc);
 
         const int box_x = (HelpWinHead[0] > 0) ? static_cast<int>(HelpWinHead[0]) : (640 - kHelpBoxWidth - 20);
         ui::HelpBox::DrawTitled(box_x, 452, kHelpBoxWidth, text_x, title, desc, BtlHelpWinAlpha);
@@ -586,6 +631,35 @@ void PortDrawBattleMenu() {
 }
 
 int PortBattleMenuSelect() {
+    if (moonmod::ManagerOpen()) {
+        if (moonmod::TakeCharacterPageOpenRequest()) {
+            // A mod's hotkey asked for the Journal's Character page: open the native Journal on it, with
+            // the ring on the Journal icon (dungeon ring 6, town ring 7) as a hand-picked Journal would be.
+            MenuSelect[1] = BtlMenuMode == 0 ? 6 : 7;
+            ui::journal_character::RequestPendingOpen();
+            OpenNativeManualsFromManager();
+            return 1;
+        }
+        if (GamePad.Down(PAD_TRIANGLE) != 0) {
+            OpenNativeManualsFromManager();
+            return 1;
+        }
+        moonmod::HandleManagerInput({
+            .up = GamePad.Down(PAD_UP) != 0,
+            .down = GamePad.Down(PAD_DOWN) != 0,
+            .left = GamePad.Down(PAD_LEFT) != 0,
+            .right = GamePad.Down(PAD_RIGHT) != 0,
+            .confirm = GamePad.Down(PAD_CROSS) != 0,
+            .cancel = GamePad.Down(PAD_CIRCLE) != 0,
+            .next_focus = GamePad.Down(PAD_R1) != 0,
+            .previous_focus = GamePad.Down(PAD_L1) != 0,
+        });
+        if (moonmod::TakeManagerHostCloseRequest()) {
+            ComMenuSePlay(MENU_SOUND_REFUSE);
+            BattleMenuFlag = BTLMENU_STATE_EXIT;
+        }
+        return 1;
+    }
     if (MenuWarningMsgFlag != 0) {
         if (GamePad.Down(PAD_CIRCLE | PAD_CROSS) != 0) {
             MenuWarningMsgFlag = 0;
@@ -726,10 +800,10 @@ int PortBattleMenuSelect() {
                 ComMenuSePlay(MENU_SOUND_CONFIRM);
                 return 1;
             case BTLMENU_PAGE_MANUAL: {
-                BtlWakuMake2 = 0;
-                std::array<int, 3> blocks = {MenuExtendReadBlock, BtlMenuExReadBlock, BtlMenuManualReadBlock};
-                Btl_BattleManualInit(blocks.data(), buffer);
-                break;
+                moonmod::OpenManager();
+                moonmod::SetManagerNativeMenuContext(true);
+                ComMenuSePlay(MENU_SOUND_CONFIRM);
+                return 1;
             }
             case BTLMENU_PAGE_QUIT: {
                 quit_confirm_active = true;

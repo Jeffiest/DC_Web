@@ -5,6 +5,10 @@
 #include <libpkt.h>
 #include <libvu0.h>
 
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace dc::game {
 
 class CBoxVu0;
@@ -170,6 +174,11 @@ public:
     CFrame *SearchFrame(char *name);
 
     /**
+     * SearchFrame without the stand-ins.
+     */
+    CFrame *SearchFrameExact(char *name);
+
+    /**
      * Writes the frame's bound, in its parent's space when it has one, optionally including children.
      */
     void GetBoundBox(CBoxVu0 *box, int children);
@@ -229,6 +238,12 @@ public:
      */
     virtual void Initialize();
 };
+
+/**
+ * MoonMod: names SearchFrame tries on `root` when one isn't found under it ({looked up, stand-in}); a player form's
+ * stand-ins (player.form_set). An empty list, or another root, turns them off.
+ */
+void SetFrameAliases(CFrame *root, std::vector<std::pair<std::string, std::string>> aliases);
 
 class CFrameVu1;
 

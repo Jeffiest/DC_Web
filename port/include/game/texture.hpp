@@ -111,6 +111,10 @@ public:
  * The texture registry. Blocks take VRAM from the bottom and fixed textures from `vram_fix`
  * downwards; the two meeting is the error every entry point checks for.
  */
+// MoonMod raised both: a companion character and its weapon need blocks and textures of their own.
+constexpr int kTextureManagerBlocks = 128;
+constexpr int kTextureManagerTextures = 512;
+
 class CTextureManager {
 public:
     int               texture_max;   /**< Upper bound of the texture indices searched. */
@@ -119,8 +123,8 @@ public:
     int               last_block;    /**< Block most recently uploaded by ReloadTexture, or -1. */
     int               vram_max;      /**< Highest VRAM address a block may reach. */
     int               vram_fix;      /**< Bottom of the fixed textures' VRAM, which grows downwards. */
-    CTextureBlock     blocks[72];    /**< Managed texture blocks. */
-    CTexture          textures[196]; /**< Registered textures. */
+    CTextureBlock     blocks[kTextureManagerBlocks];    /**< Managed texture blocks. */
+    CTexture          textures[kTextureManagerTextures]; /**< Registered textures. */
     u_long128        *buffer;        /**< Staging buffer the blocks' pixels are copied into. */
     int               buffer_used;   /**< Quadwords of the staging buffer in use. */
     int               buffer_size;   /**< Quadwords the staging buffer holds. */
@@ -253,5 +257,17 @@ public:
  * The game's one texture registry.
  */
 extern CTextureManager TexManager;
+
+/**
+ * MoonMod (O2 C1): moves the texture manager from world `from` to world `to`: TexManager's state is kept for
+ * `from`, and `to`'s kept state, if it has one, comes back (a mode init still calls Initialize to build a place
+ * afresh). The registry's texture world follows.
+ */
+void TextureManagerSwitchWorld(int from, int to);
+// Whether world `world` has a kept texture manager.
+bool TextureManagerKept(int world);
+// Swaps TexManager with world `world`'s kept one, to draw that world for a moment (L4); the same call again puts
+// them back. The registry's world is left alone: nothing is loaded or released meanwhile.
+void TextureManagerSwap(int world);
 
 } // namespace dc::game

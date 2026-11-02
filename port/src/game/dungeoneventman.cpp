@@ -14,7 +14,7 @@ namespace dc::game {
 
 namespace {
 
-constexpr int kMapCellStride = 20;
+constexpr int kMapCellStride = DNG_GRID;
 
 bool IsActive(const CDungeonEventData &event_data) {
     return event_data.event != nullptr && event_data.enabled != 0;
@@ -190,12 +190,18 @@ void CDungeonEventMan::SetupEvent(CDungeonMap *map, int mode) {
     sceVu0FMATRIX matrix;
 
     if (mode == 1) {
-        for (int row = 0; row < 16; row++) {
-            for (int column = 0; column < 16; column++) {
+        for (int row = 0; row < DNG_ROOM_AREA; row++) {
+            for (int column = 0; column < DNG_ROOM_AREA; column++) {
                 const MAP_CELL &cell = map->cells[column + row * kMapCellStride];
                 const int       parts_id = cell.parts_no;
 
                 if (parts_id == MAP_PARTS_NONE) {
+                    continue;
+                }
+
+                // The walk-through exit room's stairs are scenery: its doorways answer the exit question,
+                // so they must not get the entrance and exit events of real stairs.
+                if (DNG_IN_EXIT_ROOM(column, row)) {
                     continue;
                 }
 

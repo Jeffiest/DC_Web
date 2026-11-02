@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "btsysscript.hpp"
+#include "moonmod/game_hooks.hpp"
 #include "character.hpp"
 #include "clsmes.hpp"
 #include "dataalloc.hpp"
@@ -287,6 +288,9 @@ void AppendDebugText(std::format_string<Args...> format, Args &&...args) {
 void MapJump(int map_no, int event_no) {
     NextMapNo = map_no;
     StartEventNo = event_no;
+#ifdef PORT
+    moonmod::ChronicleMapJumped(map_no);
+#endif
 }
 
 void MenuInit() {

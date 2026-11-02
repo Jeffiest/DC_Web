@@ -7,10 +7,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <iterator>
 #include <mutex>
 #include <thread>
 
 #include "main.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/manager_ui.hpp"
 #include "platform/clock.hpp"
 #include "platform/input.hpp"
 #include "platform/overlay.hpp"
@@ -302,6 +305,9 @@ double SecondsSince(PresentClock::time_point start) {
     return std::chrono::duration<double>(PresentClock::now() - start).count();
 }
 
+// Where mod HUD lines start, in percent of the screen height: clear of the native life, weapon and water block.
+constexpr int kModLinesTopPercent = 16;
+
 struct FpsOverlay {
     bool                on = false;
     OverlayRate         frames;
@@ -329,16 +335,59 @@ bool SameMapping(const gfx::LogicalMapping &a, const gfx::LogicalMapping &b) {
 // Recorded again only when the text or the window's mapping changed. Always drawn in the overlay's
 // own 5x7 font, so the badge looks the same on every screen: the game's message font is only
 // loaded inside a mode, which made a second, different-looking badge for the intro and loading.
+// Mods add their own lines under the badge (moonmod::ChronicleOverlayLines) and their notices over
+// gameplay (moonmod::GameToastLines), which stand in a column under the HUD, newest at the bottom.
 const gfx::DisplayList *FpsOverlayList() {
-    if (!g_fps.on) {
+    std::vector<std::string> lines;
+    if (g_fps.on) {
+        lines.push_back(GameFpsText());
+    }
+    const std::size_t badge_lines = lines.size();
+    // A dungeon draws them in its own HUD pass, in the game's lettering (topStatusInfo).
+    const bool in_hud = moonmod::ChronicleDungeonDrawsModText();
+    if (!in_hud) {
+        std::ranges::copy(moonmod::ChronicleOverlayLines(), std::back_inserter(lines));
+    }
+    std::vector<std::string> toasts;
+    if (!moonmod::ManagerOpen() && !in_hud) {
+        toasts = moonmod::GameToastLines();
+        if (!toasts.empty()) moonmod::MarkGameNoticeShown();
+    }
+    if (lines.empty() && toasts.empty()) {
         return nullptr;
     }
-    std::string         text = GameFpsText();
+    std::string text;
+    for (const std::string &line : lines) {
+        text += line + '\n';
+    }
+    for (const std::string &toast : toasts) {
+        text += '\x01' + toast + '\n';
+    }
     gfx::LogicalMapping mapping = gfx::GetLogicalMapping(gfx::kMainTarget);
     const bool          font = dc::text::caption::Ready();
     if (!g_fps.list || text != g_fps.text || !SameMapping(mapping, g_fps.mapping) || font != g_fps.font) {
         g_fps.font = font;
-        g_fps.list = OverlayRecord(text);
+        if (toasts.empty() && lines.size() == 1 && badge_lines == 1) {
+            g_fps.list = OverlayRecord(lines.front());
+        } else {
+            gfx::BeginRecording();
+            const gfx::LogicalMapping ui_mapping = gfx::GetUiMapping(gfx::kMainTarget);
+            const int                 pixel = OverlayPixelSize(mapping);
+            int                       y = pixel * kOverlayPadding;
+            for (std::size_t index = 0; index < lines.size(); ++index) {
+                // Mod lines start under the game's own status block (life, weapon and water fill the top 15%).
+                if (index == badge_lines) y = std::max(y, static_cast<int>(mapping.pixel_height) * kModLinesTopPercent / 100);
+                OverlayDrawText(lines[index], ui_mapping, pixel, pixel * kOverlayPadding, y);
+                y += 20 * pixel; // The overlay font's glyph height with its backdrop and the gap between rows.
+            }
+            int       toast_y = std::max(static_cast<int>(mapping.pixel_height) * 23 / 100, y + 10 * pixel);
+            const int toast_x = static_cast<int>(mapping.pixel_width) * 2 / 100;
+            for (const std::string &toast : toasts) {
+                OverlayDrawText(toast, ui_mapping, pixel, toast_x, toast_y);
+                toast_y += 20 * pixel;
+            }
+            g_fps.list = gfx::EndRecording();
+        }
         g_fps.text = std::move(text);
         g_fps.mapping = mapping;
     }

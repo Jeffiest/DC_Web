@@ -75,6 +75,15 @@ TEST(IntegrationGameloop, MapJumpTransitions) {
     ASSERT_TRUE(std::string_view(main_select_param) == "title");
 }
 
+TEST(IntegrationGameloop, PendingMapJumpEndsAContinuingMode) {
+    Reset(GAME_MODE_EDIT);
+    EXPECT_EQ(GameLoopResultWithPendingMapJump(0), 0);
+
+    MapJump(3, -1);
+    EXPECT_EQ(GameLoopResultWithPendingMapJump(0), 1);
+    EXPECT_EQ(GameLoopResultWithPendingMapJump(2), 2);
+}
+
 TEST(IntegrationGameloop, LoopResults) {
     struct Case {
         int mode;

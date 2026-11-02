@@ -9,6 +9,7 @@
 #include <cstring>
 #include <format>
 #include <memory>
+#include <optional>
 #include <print>
 #include <string_view>
 #include <utility>
@@ -24,11 +25,14 @@
 #include "dataread.hpp"
 #include "dataset.hpp"
 #include "dngstatusdata.hpp"
+#include "doorway_view.hpp"
 #include "dun/gameloop.hpp"
 #include "ebattle.hpp"
 #include "editground.hpp"
 #include "editloop.hpp"
 #include "editloop3.hpp"
+#include "editmapscript.hpp"
+#include "editpartsinfo.hpp"
 #include "gamemode.hpp"
 #include "gamepad.hpp"
 #include "langset.hpp"
@@ -38,6 +42,11 @@
 #include "memorycardaccess.hpp"
 #include "menu_save.hpp"
 #include "mglib.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "moonmod/runtime.hpp"
+#include "moonmod/title_modes.hpp"
 #include "nowload.hpp"
 #include "options/menu_option.hpp"
 #include "platform/clock.hpp"
@@ -55,6 +64,7 @@
 #include "title/opening.hpp"
 #include "title/rushmovi.hpp"
 #include "title/title.hpp"
+#include "title/titleloop.hpp"
 #include "wind.hpp"
 
 namespace dc::app {
@@ -128,10 +138,19 @@ bool g_debug_r3_held = false;
 
 std::vector<int> g_give;
 
+struct GeoramaStockGrant {
+    int town_id = -1;
+    int part_id = -1;
+    int available_count = 0;
+    bool applied = false;
+};
+
+std::optional<GeoramaStockGrant> g_georama_stock_grant;
+
 bool Holds(CDngStatusData &status, int item) {
     if (item >= ITEM_WEAPON_START) {
-        for (const auto &weapons : status.chara_weapons) {
-            for (const WEAPON_HAVE &weapon : weapons) {
+        for (int chara = 0; chara < SAVE_CHARA_COUNT; chara++) {
+            for (const WEAPON_HAVE &weapon : status.chara_weapons[chara]) {
                 if (weapon.item_no == item) {
                     return true;
                 }
@@ -146,15 +165,38 @@ void GiveOnArrival() {
     static int last_mode = -1;
     bool       arrived = mode != last_mode && (mode == GAME_MODE_EDIT || mode == GAME_MODE_DUNGEON);
     last_mode = mode;
-    if (!arrived || g_give.empty() || SaveData == nullptr) {
-        return;
-    }
-    CDngStatusData &status = *SaveData->GetDngStatus();
-    for (int item : g_give) {
-        if (!Holds(status, item)) {
-            status.GetItem(item, 0);
+    if (SaveData == nullptr) return;
+    if (arrived && !g_give.empty()) {
+        CDngStatusData &status = *SaveData->GetDngStatus();
+        for (int item : g_give) {
+            if (!Holds(status, item)) status.GetItem(item, 0);
         }
     }
+
+    if (mode != GAME_MODE_EDIT || pEditGround == nullptr || pEditGround->plot_parts == nullptr ||
+        g_georama_stock_grant == std::nullopt ||
+        g_georama_stock_grant->applied || NowEditMap != g_georama_stock_grant->town_id ||
+        pEditGround->map_no != g_georama_stock_grant->town_id ||
+        pEditGround->parts_info != &EditPartsInfo) {
+        return;
+    }
+    int granted_parts = 0;
+    for (int part_id = 0; part_id < 24; ++part_id) {
+        if (g_georama_stock_grant->part_id >= 0 && part_id != g_georama_stock_grant->part_id) continue;
+        const CMapParts &native = pEditGround->plot_parts[part_id];
+        EDITPARTS_INFO *plot = EditPartsInfo.GetPartsInfo(part_id);
+        SV_EDIT_PARTS_INFO *saved_plot = SaveData->GetEditPartsInfo(g_georama_stock_grant->town_id, part_id);
+        if (native.handle < 0 || native.info == nullptr || plot == nullptr || saved_plot == nullptr ||
+            plot->parts_no != part_id) {
+            continue;
+        }
+        plot->stock = std::max(plot->stock, plot->placed + g_georama_stock_grant->available_count);
+        saved_plot->stock = static_cast<s16>(std::clamp(plot->stock, 0, 32767));
+        ++granted_parts;
+        std::fprintf(stderr, "MOONFACTORY_TEST_GEORAMA_STOCK_READY|%d|%d|%d\n",
+                     g_georama_stock_grant->town_id, part_id, plot->stock - plot->placed);
+    }
+    g_georama_stock_grant->applied = granted_parts > 0;
 }
 
 struct Jump {
@@ -201,6 +243,9 @@ void ModeInit(int &title_ran, int &exist_data, bool &skip_title) {
             LangsetInit();
             break;
         case GAME_MODE_TITLE:
+            DiscardDataWorlds(); // MoonMod (L3): a save loaded next has places of its own
+            DoorwayReset();
+            DoorwayCloseTownDoors();
             LoadSystemMessage();
             GlobalNameInit();
             SndInitialize(4, 30, 4, 5);
@@ -212,6 +257,8 @@ void ModeInit(int &title_ran, int &exist_data, bool &skip_title) {
                 }
             }
             TitleInit(exist_data);
+            // Back from a mod's sandbox session: the title opens on that mod's title mode screen.
+            TitlePortReopenMode();
             break;
         case GAME_MODE_RUSH_MOVIE:
             SndInitialize(4, 30, 4, 5);
@@ -251,6 +298,23 @@ void ModeInit(int &title_ran, int &exist_data, bool &skip_title) {
         default:
             GameInit();
             break;
+    }
+}
+
+// A mod's sandbox session (title modes): a new game's save, no story, straight onto the mod's floor.
+void StartSandboxGame() {
+    char names[6][64];
+    for (int i = 0; i < 6; ++i) {
+        std::memcpy(names[i], g_save_data.GetCharaName(i), sizeof(names[i]));
+    }
+    ResetSaveKeepingConfig(g_save_data);
+    GameOptionsApply(ConfigGet().options);
+    for (int i = 0; i < 6; ++i) {
+        std::memcpy(g_save_data.GetCharaName(i), names[i], sizeof(names[i]));
+    }
+    QuestHostNewGame();
+    if (!moonmod::StartPendingChronicleSandbox()) {
+        MapJump(800, -1);
     }
 }
 
@@ -318,6 +382,8 @@ void LoadDrawEnv() {
 
 // What the developer menu's choice (and the dungeon loader's) leaves behind.
 void ApplyJump() {
+    // A developer jump can land in a town without a map jump; a sandbox session must not run there.
+    moonmod::EndChronicleSandboxInPlace("developer_jump");
     OldMapNo = -1;
     NextMapNo = -1;
     GamePad.AutoRepeatOff();
@@ -464,6 +530,12 @@ void GameFollowMapJump() {
     if (NextMapNo < 0) {
         return;
     }
+    // A sandbox session that leaves its dungeon (exit, game over, session.end) goes back to the title,
+    // and its save is thrown away: it belonged to no slot.
+    if (moonmod::RedirectChronicleSandboxMapJump()) {
+        ResetSaveKeepingConfig(g_save_data);
+        GameOptionsApply(ConfigGet().options);
+    }
     OldMapNo = MapNo;
     if (NextMapNo < 200) {
         mode = GAME_MODE_EDIT;
@@ -498,6 +570,10 @@ void GameFollowMapJump() {
     }
 }
 
+int GameLoopResultWithPendingMapJump(int loop_result) {
+    return loop_result == 0 && NextMapNo >= 0 ? 1 : loop_result;
+}
+
 void GameApplyLoopResult(int loop_mode, int result) {
     switch (loop_mode) {
         case GAME_MODE_LANGUAGE:
@@ -523,6 +599,9 @@ void GameApplyLoopResult(int loop_mode, int result) {
             if (result == 1) {
                 MapJump(400, -1);
                 StartNewGame();
+            }
+            if (result == moonmod::kTitleResultSandbox) {
+                StartSandboxGame();
             }
             if (result == 4) {
                 MapJump(801, -1);
@@ -621,12 +700,55 @@ bool GameSetGive(const char *list) {
     return !g_give.empty();
 }
 
+bool GameSetGeoramaStock(const char *spec) {
+    if (spec == nullptr) {
+        return false;
+    }
+    std::string_view rest(spec);
+    int values[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        const std::size_t separator = rest.find(':');
+        const bool has_separator = separator != std::string_view::npos;
+        if ((i < 2) != has_separator) {
+            return false;
+        }
+        const std::string_view token = has_separator ? rest.substr(0, separator) : rest;
+        if (token.empty()) {
+            return false;
+        }
+        auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), values[i]);
+        if (error != std::errc{} || end != token.data() + token.size()) {
+            return false;
+        }
+        rest = has_separator ? rest.substr(separator + 1) : std::string_view{};
+    }
+    if (values[0] < 0 || values[0] > 4 || values[1] < -1 || values[1] >= 24 ||
+        values[2] < 1 || values[2] > 64) {
+        return false;
+    }
+    g_georama_stock_grant = GeoramaStockGrant{values[0], values[1], values[2], false};
+    return true;
+}
+
 bool GameSetJump(const char *spec) {
     std::string_view text = spec;
     std::string_view name = text.substr(0, text.find(':'));
     std::string_view number = name.size() < text.size() ? text.substr(name.size() + 1) : std::string_view();
     Jump             jump;
     jump.set = true;
+    // MoonMod: house:<interior>[@<event>] (house:i01h01, Toan's house): its town, then into the house (SetDevHouseJump)
+    if (name == "house") {
+        if (number.size() < 6 || number[0] != 'i' || number[1] != '0' || number[2] < '1' || number[2] > '6' ||
+            number[3] != 'h' || (number.size() > 6 && number[6] != '@')) {
+            return false;
+        }
+        jump.mode = GAME_MODE_EDIT;
+        jump.preset = true;
+        jump.map = number[2] - '1';
+        SetDevHouseJump(number);
+        g_jump = jump;
+        return true;
+    }
     if (!number.empty()) {
         auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), jump.map);
         if (error != std::errc{} || end != number.data() + number.size() || jump.map < 0) {
@@ -724,6 +846,9 @@ int                                              g_resume_floor = -1;
 std::array<s8, sizeof(CUserStatus::event_flags)> g_resume_event_flags;
 
 void WriteAutosave() {
+    if (moonmod::SandboxActive()) {
+        return;
+    }
     if (g_autosave && ConfigGet().autosave && !SaveSlotWriteAutosave()) {
         std::println(stderr, "autosave: could not write {}", PathsDisplay(SaveSlotPath(kSaveSlotAutosave)));
     }
@@ -845,6 +970,7 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     }
 
     int  title_ran = 0;
+    int  previous_mode = -1; // the mode the last pass of the loop ran
     int  exist_data = 0;
     bool data_loaded = false;
     bool skip_title = false;
@@ -885,8 +1011,18 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         LoadDrawEnv();
 
         if (mode != GAME_MODE_UNUSED_12 && StartEventNo < 0) {
+            // MoonMod: between a town and a dungeon (through the dungeon loader or not), a mod's quick passage shows
+            // no loading card and no fade (O2 C0)
+            // and between two towns along the road, or two floors of one dungeon (ChronicleTakeRoadJump)
+            const bool road = moonmod::ChronicleTakeRoadJump();
+            const bool walk = ((mode == GAME_MODE_DUNGEON || mode == GAME_MODE_LOADER) && (previous_mode == GAME_MODE_EDIT || road)) ||
+                              (mode == GAME_MODE_EDIT && (previous_mode == GAME_MODE_DUNGEON || road));
+            const bool quick = walk && moonmod::ChronicleQuickPassage();
+            if (quick) now_loading_off();
+            moonmod::ChronicleMarkWalkArrival(quick);
             init_now_loading(MapNo);
         }
+        if (mode != GAME_MODE_LOADER) previous_mode = mode;
         GameLoadTraceCheckpoint("loading_card_started");
         GamePad.StopVibration();
         if (DebugMode) {
@@ -904,7 +1040,28 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         } else {
             g_resume_floor = -1;
         }
+        const char *scene_id = "other";
+        switch (mode) {
+            case GAME_MODE_TITLE:
+                scene_id = "title";
+                break;
+            case GAME_MODE_EDIT:
+                scene_id = "town";
+                break;
+            case GAME_MODE_DUNGEON:
+                scene_id = "dungeon";
+                break;
+            case GAME_MODE_MENU:
+                scene_id = "menu";
+                break;
+            default:
+                break;
+        }
+        moonmod::SharedRuntime().Publish("game.scene.will_enter", {{"scene_id", scene_id},
+                                                                   {"native_mode", mode},
+                                                                   {"frame", moonmod::SharedRuntime().Frame()}});
         ModeInit(title_ran, exist_data, skip_title);
+        moonmod::PreparePendingChronicleDungeonEntry();
         if (resume) {
             std::ranges::copy(g_resume_event_flags, std::begin(UserStatus->event_flags));
         }
@@ -916,6 +1073,11 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         while (check_now_loading() == 0) {
         }
         GameLoadTraceCheckpoint("loading_card_done");
+
+        moonmod::SharedRuntime().Publish("game.scene.entered",
+                                         {{"scene_id", scene_id}, {"native_mode", mode},
+                                          {"frame", moonmod::SharedRuntime().Frame()}});
+        moonmod::SharedRuntime().ObserveWorldLocationNow();
 
         MGInitVSyncCallBack(PlayTimeCount);
         LoadDrawEnv();
@@ -949,6 +1111,7 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
             result = ModeLoop(skip_title);
             GameApplyLoopResult(old_main_mode, result);
+            result = GameLoopResultWithPendingMapJump(result);
             if (result == 0 && LocalizeLanguagePending() && !MenuOptionOpen() &&
                 (mode == GAME_MODE_EDIT || mode == GAME_MODE_TITLE)) {
                 // The language was changed in this town or title and the Options screen has closed: load
@@ -960,6 +1123,10 @@ int RunGame([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             }
 
             if (result == 0 && battlemenu::TakeBattleMenuLoadRequest()) {
+                moonmod::EndChronicleSandboxInPlace("loaded_save");
+                DiscardDataWorlds(); // MoonMod (L3): the save loaded has places of its own
+                DoorwayReset();
+                DoorwayCloseTownDoors();
                 const int loaded_map = SaveData->GetMapNo();
                 MapNo = (loaded_map >= 0 && loaded_map < DUNGEON_MAP_BASE) ? loaded_map : 0;
                 LocalMapNo = MapNo;

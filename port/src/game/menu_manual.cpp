@@ -23,6 +23,7 @@
 #include "localize/localize.hpp"
 #include "memcard.hpp"
 #include "menu_draw.hpp"
+#include "ui/journal_character.hpp"
 #include "menuetc.hpp"
 #include "mglib.hpp"
 #include "rect.hpp"
@@ -129,6 +130,7 @@ namespace {
 
 // Port-only mode for the Miracle Chests tracker, outside the retail ManualMenuMode range.
 constexpr s16 kManualModeTracker = 100;
+constexpr s16 kManualModeCharacter = 101;
 
 ui::Cursor s_menu_cursor;
 
@@ -380,17 +382,20 @@ void DrawCategoryMenu() {
     const int     alpha = (ManualMenu.selection_level == -1) ? 0x40 : 0x80;
     constexpr int spacing = 28;
 
-    ui::TrackerWindow::Draw(135, 85, 220, 170, alpha, ui::BLUE_STONE_MENU);
+    const bool character = ui::journal_character::Available();
+    const int  count = character ? 6 : 5;
+    ui::TrackerWindow::Draw(135, 85, 220, character ? 198 : 170, alpha, ui::BLUE_STONE_MENU);
     MenuTextureReload(0x1A);
 
-    const std::array<std::string, 5> categories = {
+    const std::array<std::string, 6> categories = {
         LocalizeText("manual.category.georama", "Georama"),
         LocalizeText("manual.category.dungeon", "Dungeon"),
         LocalizeText("manual.category.weapon", "Weapon"),
         LocalizeText("manual.category.savings", "Savings/Other"),
-        LocalizeText("manual.category.miracle_chests", "Miracle Chests")};
+        LocalizeText("manual.category.miracle_chests", "Miracle Chests"),
+        LocalizeText("manual.category.character", "Character")};
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < count; i++) {
         const u32 color = (i == ManualMenu.category && ManualMenu.selection_level == -2)
                               ? ui::ColorYellow
                               : ui::ColorWhite;
@@ -423,6 +428,12 @@ int MenuManualKey() {
                 std::ranges::copy(k_category_list, target_buffer.begin());
                 target_buffer.back() = '\0';
                 ManualMenu.mode = MANUAL_MODE_SELECT;
+                if (ui::journal_character::TakePendingOpen() && ui::journal_character::Available()) {
+                    ManualMenu.selection_level = -2;
+                    ManualMenu.category        = 5;
+                    ManualMenu.mode = kManualModeCharacter;
+                    ui::journal_character::Open();
+                }
             }
             break;
 
@@ -439,7 +450,7 @@ int MenuManualKey() {
             int *selection = nullptr;
 
             if (ManualMenu.selection_level == -2) {
-                maximum = 4;
+                maximum = ui::journal_character::Available() ? 5 : 4;
                 selection = &ManualMenu.category;
             } else if (ManualMenu.selection_level == -1) {
                 constexpr std::array k_entry_max = {4, 4, 3, 2};
@@ -490,6 +501,9 @@ int MenuManualKey() {
                     if (ManualMenu.category == 4) {
                         ManualMenu.mode = kManualModeTracker;
                         ui::journal_chest::Open();
+                    } else if (ManualMenu.category == 5) {
+                        ManualMenu.mode = kManualModeCharacter;
+                        ui::journal_character::Open();
                     } else {
                         ManualMenu.selection_level++;
                         CommonMenuMes3.cursor_row = 0;
@@ -518,6 +532,15 @@ int MenuManualKey() {
         case kManualModeTracker:
             if (ui::journal_chest::HandleKey()) {
                 ManualMenu.mode = MANUAL_MODE_SELECT;
+            }
+            break;
+
+        case kManualModeCharacter:
+            if (ui::journal_character::HandleKey()) {
+                ManualMenu.mode = MANUAL_MODE_SELECT;
+                if (ManualMenu.category > 4 && !ui::journal_character::Available()) {
+                    ManualMenu.category = 0;
+                }
             }
             break;
 
@@ -592,6 +615,10 @@ void MenuManualDraw() {
         ui::journal_chest::Draw();
         return;
     }
+    if (ManualMenu.mode == kManualModeCharacter) {
+        ui::journal_character::Draw();
+        return;
+    }
 
     if (ManualMenu.mode >= MANUAL_MODE_OPENING && ManualMenu.mode < MANUAL_MODE_COUNT && ManualMenu.images_ready != 0) {
         MenuTextureReload(ManualMenu.image_texture_block);
@@ -649,8 +676,10 @@ std::vector<std::pair<std::string, std::string>> JournalStrings() {
         {"manual.category.weapon",         "Weapon"        },
         {"manual.category.savings",        "Savings/Other" },
         {"manual.category.miracle_chests", "Miracle Chests"},
+        {"manual.category.character",      "Character"     },
     };
     ui::journal_chest::AppendStrings(out);
+    ui::journal_character::AppendStrings(out);
     return out;
 }
 

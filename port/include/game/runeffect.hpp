@@ -66,6 +66,12 @@ public:
 STATIC_ASSERT(sizeof(CRunEffect) == 0xD0);
 
 /**
+ * MoonMod: advances and draws the smoke standing in the main floor's shut smoke gates (dungeons.set_zones smoke), a
+ * curtain of pale puffs that rise and thin in front of each doorway near the player. map_seed is the floor being drawn.
+ */
+void SmokeGatesDraw(const float *player, int map_seed);
+
+/**
  * One period of a sine the blend effects scale their offsets by, filled by initBlendCnt.
  */
 extern float waveAnimeCnt[32];

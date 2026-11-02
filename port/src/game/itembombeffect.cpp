@@ -155,7 +155,7 @@ void CItemBombEffect::Draw(CCamera *camera) {
     camera->GetPos(camera_position);
     sceGsAlpha alpha = mgAlpha;
     alpha.bits.a = 0;
-    alpha.bits.b = 2;
+    alpha.bits.b = 2; // added to the scene (the sheet's cells sit on black)
     alpha.bits.c = 0;
     alpha.bits.d = 1;
     MGSetGsALPHA(&alpha);
@@ -168,15 +168,16 @@ void CItemBombEffect::Draw(CCamera *camera) {
             continue;
         }
 
-        const std::array<int, 2> &cell = kPuffCells[std::min(i, 3)];
+        const std::array<int, 2> &cell = smoke != 0 ? kPuffCells[3] : kPuffCells[std::min(i, 3)];
         const int                 u = cell[0] << 6;
         const int                 v = cell[1] << 6;
         direction[0] = camera_position[0] - positions[i][0];
         direction[1] = 0.0f;
         direction[2] = camera_position[2] - positions[i][2];
         sceVu0Normalize(direction, direction);
-        direction[0] *= i * 5.0f + phases[i] * 2.0f;
-        direction[2] *= i * 5.0f + phases[i] * 2.0f;
+        const float toward = smoke != 0 ? 4.0f : i * 5.0f + phases[i] * 2.0f;
+        direction[0] *= toward;
+        direction[2] *= toward;
         world[0] = direction[0] + positions[i][0];
         world[1] = direction[1] + positions[i][1];
         world[2] = direction[2] + positions[i][2];
@@ -236,7 +237,7 @@ void CItemBombEffect::Step() {
             case 2:
                 counters[puff]++;
                 sizes[puff] += 0.3f;
-                alphas[puff] -= 3.0f;
+                alphas[puff] -= smoke != 0 ? 6.0f : 3.0f; // MoonMod: smoke thins away twice as fast
 
                 if (counters[puff] >= 20) {
                     counters[puff] = 0;
@@ -247,9 +248,9 @@ void CItemBombEffect::Step() {
             case 3:
                 counters[puff]++;
                 sizes[puff] += 0.1f;
-                alphas[puff] -= 2.0f;
+                alphas[puff] -= smoke != 0 ? 4.0f : 2.0f;
 
-                if (counters[puff] >= 40) {
+                if (counters[puff] >= 40 || alphas[puff] <= 0.0f) {
                     active[puff] = 0;
                 }
 
@@ -271,8 +272,29 @@ void CItemBombEffect::SetBomb(float *position, float scale) {
     }
 
     this->scale = scale;
+    smoke = 0;
     phases[0] = 2;
     phases[1] = 1;
+}
+
+void CItemBombEffect::SetSmoke(float *position, float scale) {
+    // Around the point: the middle, then four about it, a little higher each, starting a frame or two apart.
+    static constexpr std::array<std::array<float, 3>, 5> kAround = {
+        {{0.0f, 0.0f, 0.0f}, {-1.0f, 0.3f, 0.4f}, {1.0f, 0.5f, -0.3f}, {0.3f, 0.9f, 1.0f}, {-0.4f, 1.2f, -1.0f}}
+    };
+    for (int puff = 0; puff < 5; puff++) {
+        positions[puff][0] = position[0] + kAround[puff][0] * 9.0f * scale;
+        positions[puff][1] = position[1] + kAround[puff][1] * 9.0f * scale;
+        positions[puff][2] = position[2] + kAround[puff][2] * 9.0f * scale;
+        positions[puff][3] = 1.0f;
+        phases[puff] = 1;
+        counters[puff] = -(puff * 2);
+        alphas[puff] = 110.0f;
+        sizes[puff] = 14.0f;
+        active[puff] = 1;
+    }
+    this->scale = scale;
+    smoke = 1;
 }
 
 int CItemBombEffect::CheckBomb() {

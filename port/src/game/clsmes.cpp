@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "character.hpp"
+#include "mod_atla.hpp"
 #include "editpartsdata.hpp"
 #include "editpartsinfo.hpp"
 #include "gameutil.hpp"
@@ -42,6 +43,7 @@
 #include "text/text_shadow.hpp"
 #include "text/textwipe.hpp"
 #include "texture.hpp"
+#include "playable_chara.hpp"
 #include "ui/menu_pointer.hpp"
 
 namespace dc::game {
@@ -98,7 +100,19 @@ EDIT_GAIJI *const EditGaijiTbl = EditGaijiStorage + kEditGaijiCodes;
 
 namespace {
 
-s16 NameRegistTbl[8][11];
+s16 NameRegistTbl[CHARA_MAX][11];
+
+/**
+ * MoonMod: the character a name code stands for (-0x506..-0x501 the game's six, -0x507 down the registered ones,
+ * which only their made-up name lines hold; CharaNameCode), or -1 for any other code.
+ */
+int NameCodeChara(int code) {
+    if (code >= -0x506 && code < -0x500) {
+        return code + 0x506;
+    }
+    const int chara = -0x501 - code;
+    return chara >= SAVE_CHARA_COUNT && chara < CharaCount() ? chara : -1;
+}
 
 /**
  * Gives back the gaiji code of a value digit or sign, or -1 for any other
@@ -210,7 +224,7 @@ s16 ClsMes::GetGaijiW(int code) {
 }
 
 int ClsMes::GetNameLen(int chara) {
-    if (chara < 0 || chara >= 6) {
+    if (chara < 0 || chara >= CharaCount()) {
         return -1;
     }
 
@@ -226,7 +240,7 @@ int ClsMes::GetNameLen(int chara) {
 }
 
 int ClsMes::GetNameWidth(int chara) {
-    if (chara < 0 || chara >= 6) {
+    if (chara < 0 || chara >= CharaCount()) {
         return -1;
     }
 
@@ -839,7 +853,7 @@ void ClsMes::MyTextureMake() {
 namespace {
 
 s16 *SetAndGetNameRegistTbl(int chara) {
-    if (chara < 0 || chara >= 6) {
+    if (chara < 0 || chara >= CharaCount()) {
         return nullptr;
     }
 
@@ -897,8 +911,8 @@ int ClsMes::MakeMesWinTbl_system(int code, int *x, int *y) {
         const int text_code = *at;
         at++;
 
-        if (text_code >= -0x506 && text_code < -0x500) {
-            const s16 *name = SetAndGetNameRegistTbl(text_code + 0x506);
+        if (NameCodeChara(text_code) >= 0) {
+            const s16 *name = SetAndGetNameRegistTbl(NameCodeChara(text_code));
 
             if (name != nullptr) {
                 int name_code = *name;
@@ -970,8 +984,8 @@ int ClsMes::GetMesLen_system(int mes_no) {
     while (true) {
         short code = *at++;
 
-        if (code >= -0x506 && code < -0x500) {
-            len[line] += this->GetNameLen(code + 0x506);
+        if (NameCodeChara(code) >= 0) {
+            len[line] += this->GetNameLen(NameCodeChara(code));
             continue;
         }
 
@@ -1010,8 +1024,8 @@ int ClsMes::GetMesWidth_system(int mes_no) {
     while (true) {
         short code = *at++;
 
-        if (code >= -0x506 && code < -0x500) {
-            width[line] += this->GetNameWidth(code + 0x506);
+        if (NameCodeChara(code) >= 0) {
+            width[line] += this->GetNameWidth(NameCodeChara(code));
             continue;
         }
 
@@ -1059,6 +1073,27 @@ short *FindMessage(short *file, int line) {
 
 } // namespace
 
+namespace {
+
+// MoonMod: a registered character's title line (CharaTitleLine): his PlayableChara title, or his name; else null.
+short *CharaTitleLineText(int line) {
+    const int chara = line - EXTRA_CHARA_TITLE_LINE;
+    if (chara < SAVE_CHARA_COUNT || chara >= CharaCount()) {
+        return nullptr;
+    }
+    static std::array<std::vector<s16>, CHARA_MAX> titles;
+    const PlayableChara *extra = ExtraChara(chara);
+    titles[chara].clear();
+    if (extra != nullptr && !extra->title.empty()) {
+        dc::text::GameTextEncode(extra->title, titles[chara]);
+    } else {
+        titles[chara] = {static_cast<s16>(CharaNameCode(chara)), MES_CODE_END};
+    }
+    return titles[chara].data();
+}
+
+} // namespace
+
 short *ClsMes::GetTextLineDataTop(int line) {
     if (this == g_overlay_mes) {
         if (short *text = FindMessage(g_overlay_file, line)) {
@@ -1066,7 +1101,24 @@ short *ClsMes::GetTextLineDataTop(int line) {
         }
     }
 
-    return FindMessage(this->buff, line);
+    if (short *text = FindMessage(this->buff, line)) {
+        return text;
+    }
+    // MoonMod: a registered weapon's name and description (its own message number), or its template's lines.
+    if (const s16 *text = MoonModWeaponTextLine(line)) {
+        return const_cast<short *>(text);
+    }
+    if (const int template_line = MoonModWeaponTemplateLine(line); template_line >= 0) {
+        return FindMessage(this->buff, template_line);
+    }
+    // and a registered character's name line (CharaNameLine) and title line (CharaTitleLine), which the menus show
+    if (const int chara = line - EXTRA_CHARA_NAME_LINE; chara >= SAVE_CHARA_COUNT && chara < CharaCount()) {
+        static short name_lines[CHARA_MAX][2];
+        name_lines[chara][0] = static_cast<short>(CharaNameCode(chara));
+        name_lines[chara][1] = MES_CODE_END;
+        return name_lines[chara];
+    }
+    return CharaTitleLineText(line);
 }
 
 short *ClsMes::GetTextLineDataTop_system(int line) {
@@ -1079,7 +1131,32 @@ short *ClsMes::GetTextLineDataTop_system(int line) {
         }
     }
 
-    return nullptr;
+    // MoonMod: a registered weapon's name and description (its own message number), or its template's lines.
+    if (const s16 *text = MoonModWeaponTextLine(line)) {
+        return const_cast<short *>(text);
+    }
+    if (const int template_line = MoonModWeaponTemplateLine(line); template_line >= 0) {
+        for (int i = 0; i < count; i++) {
+            if (template_line == body[i * 2 + 1]) {
+                return &body[count + body[i * 2 + 2]];
+            }
+        }
+    }
+
+    // MoonMod: the system messages name a character by its name line (DeadMes, NotGetAtraMes); retail has six.
+    // A registered character's, which no message file holds, is just his name (CharaNameLine).
+    if (const int chara = line - EXTRA_CHARA_NAME_LINE; chara >= SAVE_CHARA_COUNT && chara < CharaCount()) {
+        static short name_lines[CHARA_MAX][2];
+        name_lines[chara][0] = static_cast<short>(CharaNameCode(chara));
+        name_lines[chara][1] = MES_CODE_END;
+        return name_lines[chara];
+    }
+    // MoonMod: a mod's Atla sphere's name (mod_atla.hpp)
+    if (const s16 *name = ModAtlaNameLine(line)) {
+        return const_cast<short *>(name);
+    }
+
+    return CharaTitleLineText(line);
 }
 
 void ClsMes::InitMesWinTbl() {
@@ -1236,8 +1313,8 @@ int ClsMes::MakeMesWinTbl(int mes_no) {
                     this->space_width = code + 0x800;
                 } else if (code >= -0x700 && code < -0x600) {
                     x += code + 0x700;
-                } else if (code >= -0x506 && code < -0x500) {
-                    const s16 *name = SetAndGetNameRegistTbl(code + 0x506);
+                } else if (NameCodeChara(code) >= 0) {
+                    const s16 *name = SetAndGetNameRegistTbl(NameCodeChara(code));
 
                     if (name != nullptr) {
                         int name_code = *name;
@@ -1386,8 +1463,8 @@ void ClsMes::NeedMesWinWH(int mes_no, int *out) {
                     add_value(this->values[-0x406 - code]);
                 } else if (code == -0x405 || code == -0x404 || code == -0x403 || code == -0x402 || code == -0x411 || code == -0x410 || code == -0x40F || code == -0x40E) {
                     NeedMesWinWH_sub(len, max_len, width, max_width, this->char_width, this->GetMesLen_system(code));
-                } else if (code >= -0x506 && code < -0x500) {
-                    NeedMesWinWH_sub(len, max_len, width, max_width, this->char_width, this->GetNameLen(code + 0x506));
+                } else if (NameCodeChara(code) >= 0) {
+                    NeedMesWinWH_sub(len, max_len, width, max_width, this->char_width, this->GetNameLen(NameCodeChara(code)));
                 } else if (code >= -0x300 && code < -0x251) {
                     // Reads the whole first word of the entry, not just its s16 width.
                     int cells = 0;

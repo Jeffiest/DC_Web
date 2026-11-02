@@ -163,7 +163,8 @@ ITEM_PACK *ShopUserItemPack(CUserStatus *user_status) {
 
 } // namespace
 
-ITEM_MONEY_ENTRY PriceList[296] = {
+// Retail's prices, then the 32 weapon slots mods register (items 377-408), which start at no price.
+ITEM_MONEY_ENTRY PriceList[328] = {
     {300,  150 },
     {300,  150 },
     {300,  150 },
@@ -969,7 +970,7 @@ int IsEnableCharge(int item_no) {
             }
         }
 
-        if (ShopUserStatusPt->party_size - 1 < chara_no) {
+        if (!InParty(*ShopUserStatusPt, chara_no)) {
             enable = true;
         }
 

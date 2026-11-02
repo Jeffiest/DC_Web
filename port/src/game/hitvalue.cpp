@@ -17,10 +17,11 @@
 #include "snd.hpp"
 #include "texture.hpp"
 #include "userstatus.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
-int defWeapon__2[6] = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN};
+int defWeapon__2[SAVE_CHARA_COUNT] = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN}; // MoonMod: a registered character's are his CombatChara's
 
 int element_tbl[6] = {1, 2, 4, 8, 0x10, 0};
 
@@ -43,7 +44,7 @@ int BattleSubWeaponDmg(float amount, int kind) {
         amount *= 2.0f;
     }
 
-    int default_weapon = defWeapon__2[chara_no];
+    int default_weapon = defWeapon__2[CombatChara(chara_no)];
 
     if (default_weapon == UserStatus->chara_weapons[chara_no][UserStatus->equipped_weapon_slot[chara_no]].item_no) {
         return 0;
@@ -52,6 +53,7 @@ int BattleSubWeaponDmg(float amount, int kind) {
     float wear = 1.5f - 0.01f * NowWeaponHave->endurance;
     float old_durability = weapon->durability_f;
     wear *= amount;
+    wear *= moonmod::ChroniclePlayerDurabilityWearScale(); // MoonMod player.tuning_set
     wear += 0.1f * kind;
     weapon->durability_f = old_durability - wear;
 

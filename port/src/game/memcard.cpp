@@ -519,6 +519,15 @@ int AtraBoardMaxNum(int ground) {
         count++;
     }
 
+#ifdef PORT
+    for (int part_id = CHRONICLE_GEORAMA_NATIVE_PART_COUNT;
+         part_id < CHRONICLE_GEORAMA_PART_CAPACITY; ++part_id) {
+        if (GetEditAtraPartsData(ground, part_id) != NULL) {
+            count++;
+        }
+    }
+#endif
+
     return count;
 }
 

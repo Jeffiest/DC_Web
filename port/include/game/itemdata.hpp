@@ -6,6 +6,7 @@
  */
 
 #include "common.h"
+#include <string_view>
 
 namespace dc::game {
 
@@ -388,7 +389,7 @@ enum WeaponFlag {
 // clang-format on
 
 /**
- * The six playable characters.
+ * The game's six playable characters. MoonMod's are registered past them (playable_chara.hpp).
  */
 // clang-format off
 enum Character {
@@ -401,6 +402,54 @@ enum Character {
 };
 
 // clang-format on
+
+/**
+ * MoonMod: how many characters a save holds (the game's six), and how many the engine has room for: the six and up
+ * to ten a mod registers (playable_chara.hpp), which no save ever holds. Per-character storage is CHARA_MAX long.
+ */
+constexpr int SAVE_CHARA_COUNT = 6;
+constexpr int CHARA_MAX = 16;
+
+/** MoonMod: how many playable characters there are now: the game's six and every registered one. */
+int CharaCount();
+
+/**
+ * MoonMod: the character whose native action, motions, weapon kind and voice a character uses. The game's six are
+ * their own; a registered one names his (PlayableChara::fights_as).
+ */
+int CombatChara(int chara);
+
+/** MoonMod: a playable character's API id ("toan" ... "osmond", then the registered ones), or null. */
+const char *CharaIdName(int chara);
+
+/**
+ * MoonMod: how many character slots a party of party_size uses: the game's six, and the registered ones it reaches
+ * (a party past six holds the first party_size characters). Code that goes over every character whether joined or
+ * not stops here, so a story party never touches a registered character's slot.
+ */
+int CharaSlotsInPlay(int party_size);
+
+class CUserStatus;
+
+/**
+ * MoonMod: a registered character who has joined a story party (party.join), apart from party_size: the party is the
+ * first party_size characters and every joined one. Kept beside each save (characters.json), cleared for a new game.
+ */
+bool CharaJoined(int chara);
+void SetCharaJoined(int chara, bool joined);
+void ClearCharaJoined();
+
+/** MoonMod: whether chara is in status's party: one of its first party_size, or a registered character who joined. */
+bool InParty(const CUserStatus &status, int chara);
+
+/** MoonMod: how many are in status's party. */
+int PartyCount(const CUserStatus &status);
+
+/** MoonMod: the party member `steps` places after chara in index order (before it if negative), wrapping round. */
+int NextPartyMember(const CUserStatus &status, int chara, int steps);
+
+/** MoonMod: the character slots the menus' turntables need for status's party: the six, and up to its last member. */
+int CharaSlotsInPlay(const CUserStatus &status);
 
 /**
  * The kind of an item.
@@ -451,6 +500,12 @@ enum ItemUseFlag {
     ITEMUSE_STATUS  = 0x0020, /**< Grants a status effect. */
     ITEMUSE_HEAL_HP = 0x0040, /**< Restores HP. */
     ITEMUSE_DRINK   = 0x0080, /**< Restores thirst. */
+#ifdef PORT
+    ITEMUSE_CURE_FREEZE = 0x00004000, /**< Clears the freeze ailment. */
+    ITEMUSE_CURE_POISON = 0x00008000, /**< Clears the poison ailment. */
+    ITEMUSE_CURE_CURSE  = 0x00010000, /**< Clears the curse ailment. */
+    ITEMUSE_CURE_GOO    = 0x00020000, /**< Clears the goo ailment. */
+#endif
 };
 
 // clang-format on
@@ -460,6 +515,9 @@ enum ItemUseFlag {
  */
 // clang-format off
 enum ItemKindFlag {
+#ifdef PORT
+    ITEMKINDF_USE_ON_CHARACTER = 0x0001, /**< Can run a character-targeted item effect. */
+#endif
     ITEMKINDF_CONSUMABLE = 0x0004, /**< Item is consumed on use. */
     ITEMKINDF_THROWABLE  = 0x0010, /**< Item can be thrown. */
     ITEMKINDF_RANDOM     = 0x0020, /**< Item has random properties. */
@@ -645,6 +703,42 @@ ATTACH_DATA *GetAttachData(int item_no);
  */
 WEAPON_DATA *GetWeaponData(int item_no);
 
+#ifdef PORT
+#include <cstddef>
+/* Port-only helpers for the appended MoonFactory weapon slots. */
+bool RegisterMoonModWeapon(int item_no, int template_item_no, int attack, int durability,
+                           int attack_max, int magic_max, int owner, char *error, std::size_t error_size);
+void ResetMoonModWeaponSlotsForTests();
+/* The built-in weapon a registered weapon (items 377-408) was made from, or -1. */
+int MoonModWeaponTemplate(int item_no);
+/* The model stem a registered weapon draws (commenu/weapon/<stem>.chr), or "" for the template's model. */
+const char *MoonModWeaponModel(int item_no);
+bool SetMoonModWeaponModel(int item_no, const char *stem);
+/* How much bigger (or smaller) a registered weapon is drawn in the weapon menu than its holder's weapons, or 1. */
+float MoonModWeaponMenuScale(int item_no);
+/* A registered weapon's own name and description (weapons.register), for its message lines (msg + 100, msg + 500). */
+void SetMoonModWeaponText(int item_no, std::string_view name, std::string_view description);
+/* A registered weapon's message line in the game's codes, or null when line is not one of theirs or has no text. */
+const s16 *MoonModWeaponTextLine(int line);
+/* For a registered weapon's line with no text of its own, the template's same line; otherwise -1. */
+int MoonModWeaponTemplateLine(int line);
+/* A build-up from one weapon into a registered one (weapons.build_up_register), which the native chains, numbered
+   from the owner's first weapon, cannot reach. MoonModBuildUps lists from's, in the order they were linked. */
+void AddMoonModBuildUp(int from_item_no, int to_item_no);
+int MoonModBuildUps(int from_item_no, int *to_item_nos, int max);
+void ClearMoonModBuildUps();
+/* Registered weapons a mod lets dungeon chests hold (dungeons.chest_weapons_add): a chest that rolls a weapon on
+   dungeon (-1 any) from floor_from on holds one instead, percent of the time, unless it is already in a chest there. */
+void AddMoonModChestWeapon(std::string_view owner, int item_no, int dungeon, int floor_from, int percent);
+void ClearMoonModChestWeapons(std::string_view owner);
+int MoonModChestWeapon(int item_no, int dungeon, int floor, const int *placed, int placed_count);
+void SetMoonModWeaponMenuScale(int item_no, float scale);
+/* The character whose weapons a registered weapon is among (weapons.register owner = a registered character, who
+   fights as one of the six: Opar's staffs are Toan's to the combat code but sit in Opar's row), or -1 for its owner. */
+int MoonModWeaponHolder(int item_no);
+void SetMoonModWeaponHolder(int item_no, int chara);
+#endif
+
 /**
  * Gets the message id for an item, or zero if the id has no entry.
  */
@@ -668,7 +762,14 @@ inline int GetDungeonItemEnd() { return ITEM_WEAPON_SLOT_EMPTY; }
 /**
  * Every item's kind, table index, icon and name, indexed by item number less ITEM_ATTACH_START.
  */
-extern COM_ITEM_INFO ComItemInfo[296];
+extern COM_ITEM_INFO ComItemInfo[328];
+
+/**
+ * The retail rows of ComItemInfo and WeaponList; the rows after them are the slots mods register weapons in
+ * (RegisterMoonModWeapon), which the item documents leave out.
+ */
+constexpr std::size_t kRetailCommonItemCount = 296;
+constexpr std::size_t kRetailWeaponCount = 120;
 
 /**
  * The item data table, one entry per item from ITEM_ATTACH_START on.
@@ -684,6 +785,6 @@ extern ATTACH_DATA AttachList[50];
  * Weapon table, one entry per weapon from ITEM_WEAPON_START on. CDngStatusData::GetItem reads a
  * picked-up weapon's owner from it.
  */
-extern WEAPON_DATA WeaponList[120];
+extern WEAPON_DATA WeaponList[152];
 
 } // namespace dc::game

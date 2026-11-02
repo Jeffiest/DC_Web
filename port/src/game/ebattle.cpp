@@ -17,6 +17,8 @@
 #include "dataread.hpp"
 #include "dataset.hpp"
 #include "ebattle.hpp"
+
+#include "moonmod/game_hooks.hpp"
 #include "edit.hpp"
 #include "editground.hpp"
 #include "editloop.hpp"
@@ -2050,6 +2052,19 @@ void EdMoveChara() {
             near_villager = -1;
         }
 
+        // A mod's villager: the talk button runs its native event, or tells the mod.
+        if (acted == 0 && PadDown(0x40) != 0 && (viewMode == 0 || interior != 0) && key_lock == 0 && near_villager >= 0 &&
+            ChronicleModVillagerInSlot(near_villager) >= 0) {
+            const int mod_villager = ChronicleModVillagerInSlot(near_villager);
+            const int talk_event = ChronicleModVillagerTalkEvent(mod_villager);
+            if (talk_event > 0 && EdTalkModeInit(&EdVillager[near_villager], -1) != 0) {
+                event_no = talk_event;
+            } else {
+                moonmod::ChronicleModVillagerTalked(mod_villager);
+            }
+            acted = true;
+        }
+
         if (acted == 0 && (viewMode == 0 || interior != 0) && near_villager >= 0 && EdVillagerInfo[near_villager].talk_event_no > 0 && EdVillagerInfo[near_villager].talk_event_level != 0 && EdTalkModeInit(&EdVillager[near_villager], -1) != 0) {
             event_no = EdVillagerInfo[near_villager].talk_event_no;
             acted = true;
@@ -2261,6 +2276,7 @@ void EdMoveChara() {
                 EdFishingAngleHelpMEs(FishingGetEsaItemNo());
 
                 if (FishingFishStatus(nullptr) != 8) {
+
                     chara_fishing = ED_FISHING_WAIT_BITE;
                     wait_cnt = 0;
 

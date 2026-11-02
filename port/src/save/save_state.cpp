@@ -3,9 +3,11 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -51,6 +53,40 @@ bool SaveStateRead(const std::filesystem::path &path, SaveState &state) {
     if (auto clear = json.find("game_clear"); clear != json.end() && clear->is_boolean()) {
         state.game_clear = clear->get<bool>();
     }
+    if (auto next = json.find("next_slot_generation"); next != json.end()) {
+        if (next->is_number_unsigned()) {
+            state.next_slot_generation = std::max<std::uint64_t>(1, next->get<std::uint64_t>());
+        } else if (next->is_number_integer()) {
+            const auto value = next->get<std::int64_t>();
+            if (value > 0) {
+                state.next_slot_generation = static_cast<std::uint64_t>(value);
+            }
+        }
+    }
+    if (auto generations = json.find("slot_generations"); generations != json.end() && generations->is_object()) {
+        for (auto it = generations->begin(); it != generations->end(); ++it) {
+            int         file_no = -1;
+            const auto &key = it.key();
+            const auto  parsed = std::from_chars(key.data(), key.data() + key.size(), file_no);
+            if (parsed.ec != std::errc{} || parsed.ptr != key.data() + key.size() || file_no < 0 ||
+                file_no >= 999999999) {
+                continue;
+            }
+            std::uint64_t generation = 0;
+            if (it->is_number_unsigned()) {
+                generation = it->get<std::uint64_t>();
+            } else if (it->is_number_integer() && it->get<std::int64_t>() > 0) {
+                generation = static_cast<std::uint64_t>(it->get<std::int64_t>());
+            }
+            if (generation == 0) {
+                continue;
+            }
+            state.slot_generations[file_no] = generation;
+            state.next_slot_generation = generation < std::numeric_limits<std::uint64_t>::max()
+                                             ? std::max(state.next_slot_generation, generation + 1)
+                                             : std::numeric_limits<std::uint64_t>::max();
+        }
+    }
     return true;
 }
 
@@ -61,6 +97,13 @@ bool SaveStateWrite(const std::filesystem::path &path, const SaveState &state) {
     Json json;
     json["last_save"] = state.last_save;
     json["game_clear"] = state.game_clear;
+    json["next_slot_generation"] = state.next_slot_generation;
+    json["slot_generations"] = Json::object();
+    for (const auto &[file_no, generation] : state.slot_generations) {
+        if (file_no >= 0 && generation != 0) {
+            json["slot_generations"][std::to_string(file_no)] = generation;
+        }
+    }
     std::string text = json.dump(4) + "\n";
     return FilesWrite(path, text.data(), text.size(), true) == FilesResult::kWritten;
 }

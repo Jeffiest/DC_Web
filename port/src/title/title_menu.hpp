@@ -5,23 +5,44 @@
 #include <vector>
 
 /**
- * The title screen's menu: retail's three rows (start, continue, option) and the port's Exit, drawn
- * from the font through the UI framework rather than from retail's painted rows, which have no Exit.
- * Rows keep CCursol's numbering: 0 to 2 are retail's, so TitleLoop's handling of them is unchanged,
- * and Exit comes after them. Exit asks before closing the game.
+ * The title screen's menu: retail's three rows (start, continue, option), a row for each mod title mode
+ * (moonmod/title_modes.hpp) and the port's Exit, drawn from the font through the UI framework rather than
+ * from retail's painted rows, which have no Exit. Rows keep CCursol's numbering: 0 to 2 are retail's, so
+ * TitleLoop's handling of them is unchanged, the mod rows follow them and Exit comes last. Exit asks
+ * before closing the game.
  */
 namespace dc::title::menu {
 
 /**
- * Exit's row. It shares TITLE_MENU_ATTRACT's number, which retail only sets on the way to the attract
- * movie; Exit never reaches TitleLoop's fade-out, so the two never meet.
+ * Number of retail rows; the first mod row's number.
  */
-constexpr int kExitRow = 3;
+constexpr int kRetailRowCount = 3;
+
+/**
+ * Number of mod title mode rows.
+ */
+int ModRowCount();
+
+/**
+ * Exit's row, after the mod rows. Without mod rows it shares TITLE_MENU_ATTRACT's number, which retail
+ * only sets on the way to the attract movie; Exit never reaches TitleLoop's fade-out, so the two never meet.
+ */
+int ExitRow();
 
 /**
  * Number of menu rows, Exit included.
  */
-constexpr int kRowCount = 4;
+int RowCount();
+
+/**
+ * The title mode a row stands for, or -1 for a retail row or Exit.
+ */
+int ModeAt(int row);
+
+/**
+ * How far below retail's place the banner under the menu goes to clear the mod rows.
+ */
+int BannerShift();
 
 /**
  * Screen y at which TitleLoop's hand points at a row (CCursol.Set).

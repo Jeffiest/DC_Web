@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 
 namespace dc::save {
@@ -12,6 +14,12 @@ namespace dc::save {
 struct SaveState {
     int  last_save = 0;      /**< Folder of the last save loaded or written; 0 for none. */
     bool game_clear = false; /**< Game clear flag of the last save written. */
+    /**
+     * The identity the next numbered save created gets (SaveSlotEnsureGeneration), and each numbered save's
+     * identity by its file number, so a mod's per-save data follows the save and not the slot.
+     */
+    std::uint64_t                next_slot_generation = 1;
+    std::map<int, std::uint64_t> slot_generations;
 };
 
 /**

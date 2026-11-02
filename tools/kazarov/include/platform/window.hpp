@@ -73,6 +73,7 @@ bool WindowCurrentMode(WindowMode &mode);
 // Whether the window entered or left fullscreen or changed size since the last call, as an SDL
 // change that finished late does.
 bool        WindowTakeModeEvent();
+void        WindowShow();
 void        WindowShutdown();
 SDL_Window *WindowHandle();
 // The window's size in the units mouse motion is measured in; false with no window.

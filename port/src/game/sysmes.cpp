@@ -1,3 +1,4 @@
+#include "mod_atla.hpp"
 #include "sysmes.hpp"
 
 #include <array>
@@ -15,6 +16,7 @@
 #include "mglib.hpp"
 #include "snd.hpp"
 #include "texture.hpp"
+#include "playable_chara.hpp"
 
 namespace dc::game {
 
@@ -233,7 +235,9 @@ void ItemGetMes(int item_no, int value, int frames, int input_key) {
 }
 
 void AtraGetMes(int map_no, int element, int frames) {
-    std::array<int, 4> mes_args = {GetAtraMsgNo(map_no, element), -1, -1, -1};
+    // MoonMod: a mod's sphere is named by its own line (mod_atla.hpp)
+    std::array<int, 4> mes_args = {IsModAtla(element) ? kModAtlaNameLine + (element - kModAtlaBase) : GetAtraMsgNo(map_no, element),
+                                   -1, -1, -1};
     SetSystemMes(40, frames, MES_POS_BOTTOM, 1, mes_args.data(), nullptr);
 }
 
@@ -247,13 +251,14 @@ void MaxUpMes(int value, int frames) {
     SetSystemMes(51, frames, MES_POS_BOTTOM, 1, nullptr, numbers.data());
 }
 
-// An out-of-range member names the first one; NotGetAtraMes clamps to the second instead.
+// An out-of-range member names the first one; NotGetAtraMes clamps to the second instead. (MoonMod: a registered
+// character is in range; his name line is made up, see CharaNameLine.)
 void DeadMes(int member, int frames) {
-    if (member < 0 || member > 5) {
+    if (member < 0 || member >= CharaCount()) {
         member = 0;
     }
 
-    std::array<int, 4> mes_args = {member + 50, -1, -1, -1};
+    std::array<int, 4> mes_args = {CharaNameLine(member), -1, -1, -1};
     SetSystemMes(60, frames, MES_POS_BOTTOM, 1, mes_args.data(), nullptr);
 }
 
@@ -262,11 +267,11 @@ void AllDeadMes(int frames) {
 }
 
 void NotGetAtraMes(int member, int frames) {
-    if (member < 0 || member > 5) {
+    if (member < 0 || member >= CharaCount()) {
         member = 1;
     }
 
-    std::array<int, 4> mes_args = {member + 50, -1, -1, -1};
+    std::array<int, 4> mes_args = {CharaNameLine(member), -1, -1, -1};
     SetSystemMes(70, frames, MES_POS_BOTTOM, 0, mes_args.data(), nullptr);
 }
 

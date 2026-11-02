@@ -48,7 +48,7 @@ SHOT_COLLISION_RESULT checkCollision(float *hit_position, float *position, float
     }
 
     if (target_mode != 1) {
-        for (int monster_no = 0; monster_no < 16; monster_no++) {
+        for (int monster_no = 0; monster_no < MONSTOR_SLOT_MAX; monster_no++) {
             if (NowMonstorUnit->monster[monster_no].state == -1) {
                 continue;
             }

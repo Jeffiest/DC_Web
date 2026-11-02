@@ -159,6 +159,7 @@ struct Entry {
     PortTextureOwner   owner = PortTextureOwner::Other;
     gfx::TextureHandle texture = gfx::kNullTexture;
     bool               owns_texture = false;
+    int                world = 0; // MoonMod (O2 C1): the texture world it was registered in
     // A named render target is looked up by name on every use: gfx recreates it when asked for at
     // another size, and the handle this entry saw would die with the old one.
     std::string                                target;
@@ -174,6 +175,7 @@ struct Entry {
 struct Registry {
     std::vector<Entry> entries = std::vector<Entry>(kKeyCount);
     unsigned           cursor = kFirstKey;
+    int                world = 0;
 };
 
 // Function-local: the manager's constructor runs Initialize during static initialisation, in an
@@ -209,6 +211,7 @@ unsigned AllocateKey(EntryKind kind, PortTextureOwner owner) {
             entry = Entry{};
             entry.kind = kind;
             entry.owner = owner;
+            entry.world = reg.world;
             return key;
         }
     }
@@ -734,10 +737,21 @@ void PortReleaseKey(unsigned key) {
 
 void PortReleaseOwner(PortTextureOwner owner) {
     for (unsigned key = 0; key < kKeyCount; key++) {
-        if (Reg().entries[key].kind != EntryKind::Free && Reg().entries[key].owner == owner) {
+        const Entry &entry = Reg().entries[key];
+        // the manager's entries belong to a world; the others are everyone's
+        if (entry.kind != EntryKind::Free && entry.owner == owner &&
+            (owner != PortTextureOwner::Manager || entry.world == Reg().world)) {
             PortReleaseKey(key);
         }
     }
+}
+
+void PortSetTextureWorld(int world) {
+    Reg().world = world;
+}
+
+int PortTextureWorld() {
+    return Reg().world;
 }
 
 bool PortKeyLive(unsigned key) {

@@ -17,11 +17,21 @@ constexpr int kArenaHeadroom = 4;
 // a pointer the game truncates.
 unsigned char *ArenaBlock(const void *owner, std::size_t bytes, std::size_t lead = 0);
 
-// Zeroes every block, as retail's clear of the whole GlobalDataBuffer does.
+// Zeroes every block of the current world, as retail's clear of the whole GlobalDataBuffer does.
 void ArenaClearAll();
+
+// Worlds keep apart the blocks of places loaded at once (a town and a dungeon side by side): ArenaBlock hands an
+// owner the block of the current world, and ArenaClearAll zeroes only that world's. World 0 is the default, the one
+// everything uses unless a caller sets another.
+void ArenaSetWorld(int world);
+int  ArenaWorld();
 
 // Retired blocks count: the game can still hold a pointer into one.
 bool ArenaContains(const void *pointer);
+
+// Bytes from pointer to the end of the live block holding it (its lead counts), 0 when no live block
+// holds it: what a read into that pointer can write before the guard page.
+std::size_t ArenaRoomAt(const void *pointer);
 
 // Takes the bases rather than reading the blocks, so tests drive the check ArenaBlock runs.
 void ArenaRequireOneAbove4GiB(const void *const *bases, std::size_t count);

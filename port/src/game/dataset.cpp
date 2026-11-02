@@ -7,10 +7,12 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
 #include <print>
 #include <ranges>
 #include <string_view>
+#include <vector>
 
 #include "boxvu0.hpp"
 #include "collisionmdt.hpp"
@@ -24,6 +26,7 @@
 #include "mdt.hpp"
 #include "mglib.hpp"
 #include "platform/arena.hpp"
+#include "texture.hpp"
 #include "visual.hpp"
 
 namespace dc::game {
@@ -61,9 +64,16 @@ constexpr std::size_t kReadBufferLead = 0x180000;
 
 constexpr int kMaxQuads = std::numeric_limits<int>::max() / kArenaHeadroom;
 
+// MoonMod (O2 C1, L3): the arenas each world carved, so a world left for another keeps where they stood
+std::map<int, std::vector<CDataAlloc2<1> *>> g_world_arenas;
+
 void Carve(CDataAlloc2<1> *arena, int quads) {
     if (arena == nullptr || quads <= 0 || quads > kMaxQuads) {
         ArenaOverflow(arena, quads, kMaxQuads);
+    }
+    std::vector<CDataAlloc2<1> *> &carved = g_world_arenas[ArenaWorld()];
+    if (std::ranges::find(carved, arena) == carved.end()) {
+        carved.push_back(arena);
     }
     DataReadForgetPackCapacities(arena);
     arena->base = ArenaBlock(arena, static_cast<std::size_t>(quads) * 16 * kArenaHeadroom);
@@ -94,7 +104,95 @@ void CarveReadBuffer(int quads) {
 
 } // namespace
 
+namespace {
+int g_next_world = 0;
+
+// A world as it was left: its arenas' descriptors and the shared pointers into its blocks.
+struct KeptWorld {
+    struct Arena {
+        CDataAlloc2<1> *arena;
+        CDataAlloc2<1>  state;
+    };
+    std::vector<Arena> arenas;
+    u_int             *read = nullptr;
+    CDataAlloc2<1>    *work = nullptr;
+    CDataAlloc2<1>    *active = nullptr;
+    int                global_used = 0;
+};
+
+std::map<int, KeptWorld> g_kept_worlds;
+
+void KeepWorld(int world) {
+    if (world == 0) {
+        return;
+    }
+    KeptWorld kept;
+    for (CDataAlloc2<1> *arena : g_world_arenas[world]) {
+        kept.arenas.push_back({arena, *arena});
+    }
+    kept.read = read_buffer;
+    kept.work = WorkBuffer;
+    kept.active = ActiveData;
+    kept.global_used = GlobalDataBuffer.used;
+    g_kept_worlds[world] = std::move(kept);
+}
+
+// Leaving one world for another keeps the one left, so it can be gone back to (ResumeDataWorld).
+void SwitchWorld(int to) {
+    const int from = ArenaWorld();
+    if (from != to) {
+        KeepWorld(from);
+    }
+    TextureManagerSwitchWorld(from, to);
+    ArenaSetWorld(to);
+    g_next_world = 0;
+}
+} // namespace
+
+void SetNextDataWorld(int world) {
+    g_next_world = world;
+}
+
+void KeepDataArena(CDataAlloc2<1> *arena) {
+    std::vector<CDataAlloc2<1> *> &kept = g_world_arenas[ArenaWorld()];
+    if (std::ranges::find(kept, arena) == kept.end()) {
+        kept.push_back(arena);
+    }
+}
+
+void DiscardDataWorlds() {
+    g_kept_worlds.clear();
+}
+
+bool DataWorldKept(int world) {
+    return world != 0 && world != ArenaWorld() && g_kept_worlds.contains(world);
+}
+
+bool DataWorldAvailable(int world) {
+    return world != 0 && (world == ArenaWorld() || g_kept_worlds.contains(world));
+}
+
+bool ResumeDataWorld(int world) {
+    if (!DataWorldKept(world)) {
+        return false;
+    }
+    const KeptWorld kept = std::move(g_kept_worlds[world]);
+    g_kept_worlds.erase(world);
+    SwitchWorld(world);
+    for (const KeptWorld::Arena &arena : kept.arenas) {
+        *arena.arena = arena.state;
+    }
+    read_buffer = kept.read;
+    WorkBuffer = kept.work;
+    ActiveData = kept.active;
+    GlobalDataBuffer.used = kept.global_used;
+    return true;
+}
+
 void InitializeDataBuffer() {
+    const int world = g_next_world;
+    SwitchWorld(world);
+    g_kept_worlds.erase(world); // loaded afresh: what it was left as is gone
     ArenaClearAll();
     DataReadClearPackCapacities();
     GlobalDataBuffer.used = 0;
@@ -123,7 +221,7 @@ void BufferAllClear() {
     Carve(&WaterData, 90000);
     Carve(&ActiveData0, 25000);
     Carve(&ActiveData1, 25000);
-    CarveReadBuffer(100000);
+    CarveReadBuffer(200000); // MoonMod: a registered character's packs and menu model are finer meshes than the six's
     CarveWorkBuffer(4096);
     MGInitVif1Packet(CarvePackets(50000, 0), CarvePackets(50000, 1));
 }

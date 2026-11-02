@@ -21,6 +21,7 @@
 #include "menu_manual.hpp"
 #include "menu_misc.hpp"
 #include "menu_save.hpp"
+#include "moonmod/manager_ui.hpp"
 #include "options/menu_option.hpp"
 #include "platform/input.hpp"
 #include "save/save_slots.hpp"
@@ -550,7 +551,7 @@ void ItemMouse(const MenuPointerTake &take) {
             tab = i;
         }
     }
-    if (BtlMenuStatusPt->party_size > 1 && ItemPanelMode(ItemMenuMode.mode)) {
+    if (PartyCount(*BtlMenuStatusPt) > 1 && ItemPanelMode(ItemMenuMode.mode)) {
         if (kItemPartyLeft.Contains(x, y)) {
             arrow = -1;
         } else if (kItemPartyRight.Contains(x, y)) {
@@ -845,8 +846,9 @@ bool WeaponMouse(const MenuPointerTake &take) {
                 if (WepMenu.chara == g_weapon_chara_target) {
                     g_weapon_chara_target = -1;
                 } else {
-                    int forward = (g_weapon_chara_target - WepMenu.chara + 6) % 6;
-                    MenuPointerPress(forward <= 3 ? kInputR1 : kInputL1);
+                    const int places = std::max(1, static_cast<int>(MenuChara.slot_count));
+                    int forward = (g_weapon_chara_target - WepMenu.chara + places) % places;
+                    MenuPointerPress(forward <= places / 2 ? kInputR1 : kInputL1);
                     return true;
                 }
             }
@@ -858,7 +860,7 @@ bool WeaponMouse(const MenuPointerTake &take) {
                 return true;
             }
             if (clicked) {
-                if (y < 120.0f && BtlMenuStatusPt->party_size > 1) {
+                if (y < 120.0f && PartyCount(*BtlMenuStatusPt) > 1) {
                     // The row of faces: the one clicked comes to the front.
                     for (const SYS_CHARA_INFO &member : SysChara) {
                         int left = static_cast<int>(member.x);
@@ -1072,6 +1074,19 @@ void BattleMouse() {
     }
     MenuPointerShow(&g_battle);
     MenuPointerTake take = g_battle.Take(SysCur[0], SysCur[1]);
+
+    if (moonmod::ManagerOpen()) {
+        // The Mods page lies over the ring: a click is the manager's, at the pointer, rather than the ring's Cross on
+        // whichever row the pad left selected.
+        if (take.pointing && (take.clicked != 0 || take.wheel != 0.0f)) {
+            moonmod::HandleManagerInput({.mouse_left = (take.clicked & 1) != 0,
+                                         .mouse_right = (take.clicked & 2) != 0,
+                                         .mouse_x = g_battle.x,
+                                         .mouse_y = g_battle.y,
+                                         .wheel = take.wheel});
+        }
+        return;
+    }
 
     switch (BattleMenuFlag) {
         case BTLMENU_STATE_MAIN:

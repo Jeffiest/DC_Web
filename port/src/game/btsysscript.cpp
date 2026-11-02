@@ -36,6 +36,7 @@
 #include "menu_dungeon.hpp"
 #include "menu_misc.hpp"
 #include "monstorunit.hpp"
+#include "moonmod/game_hooks.hpp"
 #include "nowload.hpp"
 #include "npcharacter.hpp"
 #include "runscript.hpp"
@@ -252,6 +253,26 @@ int BtSystemScriptRun(int event, CDataAlloc2<1> *arena) {
     return EdEventInit(event, arena, g_event_data);
 }
 
+bool BtSystemScriptHasProgram(int no) {
+    if (g_event_data == nullptr) {
+        return false;
+    }
+    // header {unk, main, code, prog, prog_num}, then {no, func} pairs at prog
+    s32 header[5];
+    std::memcpy(header, g_event_data, sizeof(header));
+    if (header[3] <= 0 || header[4] <= 0 || header[4] > 4096) {
+        return false;
+    }
+    for (int i = 0; i < header[4]; i++) {
+        s32 entry[2];
+        std::memcpy(entry, g_event_data + header[3] + 8 * i, sizeof(entry));
+        if (entry[0] == no) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void BtSetMapJumpFloor(int floor) {
     BtMapJumpFloor = floor;
 }
@@ -298,7 +319,8 @@ int _GET_FLOOR_LEVEL(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_FLOOR_LEVEL(RS_STACKDATA *stack, int /*argument_count*/) {
-    static_cast<CDngStatusData *>(UserStatus)->SetNowFloor(GetStackInt(stack));
+    const int floor = moonmod::ChronicleScriptFloorLevel(selectMapNo, GetStackInt(stack)); // MoonMod: registered floors
+    static_cast<CDngStatusData *>(UserStatus)->SetNowFloor(floor);
     return 1;
 }
 
@@ -810,6 +832,12 @@ int _SET_MAIN_CHR2(RS_STACKDATA *stack, int argument_count) {
     if (chara < 0 || chara > 5) {
         return 1;
     }
+    // MoonMod: a character with no weapon to load (one who hasn't joined: a floor reached out of the story's order) is
+    // left out, rather than loading a weapon file with no name.
+    if (UserStatus->chara_weapons[chara][UserStatus->equipped_weapon_slot[chara]].item_no <= 0) {
+        std::println("SET_MAIN_CHR {}: no weapon, kept {}", chara, UserStatus->cur_chara);
+        return 1;
+    }
 
     selectChrUnit(chara, reload);
     BtEventInfo.script_main_chr = chara;
@@ -1027,6 +1055,7 @@ int _SET_IBOX_ANGLE(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_IBOX_FINISH(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    moonmod::ChronicleChestOpened(NowDngMap, BtEventInfo.treasure_box);
     NowDngMap->boxes[BtEventInfo.treasure_box].lid_angle = -30.0f;
     NowDngMap->boxes[BtEventInfo.treasure_box].closed = 0;
     return 1;

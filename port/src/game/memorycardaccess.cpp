@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <print>
 #include <span>
@@ -13,6 +14,7 @@
 #include <system_error>
 #include <vector>
 
+#include "chara_extras_save.hpp"
 #include "dngstatusdata.hpp"
 #include "menu_draw.hpp"
 #include "menu_save.hpp"
@@ -89,9 +91,22 @@ SaveState CurrentState() {
     return state;
 }
 
+int CurrentNativeFileNoInternal() {
+    if (SaveData == nullptr) return -1;
+    const int file_no = ConfigWord(kConfigLastFile);
+    if (file_no < 0 || file_no >= 999999999) return -1;
+    std::error_code error;
+    return fs::is_regular_file(SaveSlotPath(file_no), error) ? file_no : -1;
+}
+
 void BuildImage(char *image, const char *version) {
     auto *save = reinterpret_cast<CSaveData *>(image);
     std::memcpy(save, SaveData, sizeof(CSaveData));
+    // MoonMod: a registered character (playable_chara.hpp) never reaches a save. His status is held outside the save
+    // already; a party that counts him, or him leading it, is written as the six.
+    CDngStatusData &status = *save->GetDngStatus();
+    if (status.party_size > SAVE_CHARA_COUNT) status.party_size = SAVE_CHARA_COUNT;
+    if (status.cur_chara >= SAVE_CHARA_COUNT) status.cur_chara = CHARA_TOAN;
     GameOptionsClear(*save);
     save->ConvertConfig(&sys_config);
     std::span<char, kImageSize> bytes(image, kImageSize);
@@ -340,7 +355,12 @@ int CMemoryCardAccess::LoadSysConfig() {
 }
 
 int CMemoryCardAccess::SaveSysConfig() {
-    return SaveStateWrite(SaveStatePath(), CurrentState()) ? 1 : -1;
+    SaveState state;
+    SaveStateRead(SaveStatePath(), state);
+    const SaveState current = CurrentState();
+    state.last_save = current.last_save;
+    state.game_clear = current.game_clear;
+    return SaveStateWrite(SaveStatePath(), state) ? 1 : -1;
 }
 
 // The card's write test and the copy out of the NTSC 1.0 directory have nothing to work on.
@@ -454,20 +474,39 @@ int CMemoryCardAccess::SaveToMc(int file_no) {
     this->card[this->port].dir_exists = 1;
     // The quests' progress goes beside the save; a failure is reported, and the save stands.
     QuestHostSave(SaveSlotDirectory(file_no));
-    return SaveStateWrite(SaveStatePath(), CurrentState()) ? 1 : -1;
+    // MoonMod: so do the registered characters (chara_extras_save.hpp), whom the save never holds.
+    CharaExtrasSave(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
+    SaveState state;
+    SaveStateRead(SaveStatePath(), state);
+    const SaveState current = CurrentState();
+    state.last_save = current.last_save;
+    state.game_clear = current.game_clear;
+    if (SaveSlotNew || !state.slot_generations.contains(file_no)) {
+        if (state.next_slot_generation == 0 || state.next_slot_generation == std::numeric_limits<std::uint64_t>::max()) return -1;
+        state.slot_generations[file_no] = state.next_slot_generation++;
+    }
+    return SaveStateWrite(SaveStatePath(), state) ? 1 : -1;
 }
 
 int CMemoryCardAccess::LoadFromMc(int file_no) {
+    // Read before the generation write below, which drops what a malformed file held.
+    SaveState session = CurrentState();
+    SaveStateRead(SaveStatePath(), session);
     if (!ReadImage(file_no, this->GetVersion())) {
         return -1;
+    }
+    if (file_no >= 0 && SaveSlotEnsureGeneration(file_no) == 0) {
+        std::fprintf(stderr, "save state: could not persist generation for numbered save %d\n", file_no + 1);
     }
 
     // Remember only the cursor, retaining title state before the older payload replaces it.
     // Missing or malformed state falls back to the current session's values.
-    SaveState state = CurrentState();
+    SaveState state = session;
     SaveStateRead(SaveStatePath(), state);
+    state.game_clear = state.game_clear || session.game_clear;
     std::memcpy(SaveData, g_image, sizeof(CSaveData));
     QuestHostLoad(SaveSlotDirectory(file_no));
+    CharaExtrasLoad(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
 
     // The save screen keeps starting at the last numbered save.
     if (file_no == kSaveSlotAutosave) {
@@ -499,8 +538,13 @@ int CMemoryCardAccess::DeleteFile(int file_no) {
     }
 
     QuestHostDelete(SaveSlotDirectory(file_no));
+    CharaExtrasDelete(SaveSlotDirectory(file_no));
     fs::remove(SaveSlotDirectory(file_no), error);
-    return 1;
+    if (error) return -1;
+    SaveState state;
+    SaveStateRead(SaveStatePath(), state);
+    state.slot_generations.erase(file_no);
+    return SaveStateWrite(SaveStatePath(), state) ? 1 : -1;
 }
 
 int CMemoryCardAccess::McError(int result) {
@@ -564,7 +608,46 @@ bool SaveSlotWriteAutosave() {
         return false;
     }
     QuestHostSave(SaveSlotDirectory(kSaveSlotAutosave));
+    CharaExtrasSave(SaveSlotDirectory(kSaveSlotAutosave), *SaveData->GetDngStatus());
     return true;
 }
 
 } // namespace dc::game
+
+// The numbered saves' identities (save/save_slots.hpp), kept beside the memory card code that numbers them.
+namespace dc::save {
+
+int SaveSlotCurrentNativeFileNo() {
+    return dc::game::CurrentNativeFileNoInternal();
+}
+
+std::uint64_t SaveSlotGeneration(int file_no) {
+    if (file_no < 0 || file_no >= 999999999) {
+        return 0;
+    }
+    SaveState state;
+    SaveStateRead(SaveStatePath(), state);
+    const auto found = state.slot_generations.find(file_no);
+    return found != state.slot_generations.end() ? found->second : 0;
+}
+
+std::uint64_t SaveSlotEnsureGeneration(int file_no, bool new_save) {
+    if (file_no < 0 || file_no >= 999999999) {
+        return 0;
+    }
+    SaveState state;
+    SaveStateRead(SaveStatePath(), state);
+    const auto found = state.slot_generations.find(file_no);
+    if (!new_save && found != state.slot_generations.end()) {
+        return found->second;
+    }
+    if (state.next_slot_generation == 0 ||
+        state.next_slot_generation == std::numeric_limits<std::uint64_t>::max()) {
+        return 0;
+    }
+    const std::uint64_t generation = state.next_slot_generation++;
+    state.slot_generations[file_no] = generation;
+    return SaveStateWrite(SaveStatePath(), state) ? generation : 0;
+}
+
+} // namespace dc::save

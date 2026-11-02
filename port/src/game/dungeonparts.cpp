@@ -24,6 +24,7 @@
 #include "itemdata.hpp"
 #include "mglib.hpp"
 #include "userstatus.hpp"
+#include "monstorunit.hpp"
 
 namespace dc::game {
 
@@ -1528,13 +1529,12 @@ constexpr std::array<const int *, 6> noEntryTbl = {noEntryTbl00, noEntryTbl01, n
 constexpr std::array<int, 6> CenterFloorTbl = {8, 9, 9, 9, 8, 13};
 
 /** The number of floors in each dungeon. */
-constexpr std::array<int, 6> MaxFloorTbl = {15, 17, 18, 18, 15, 25};
 
-/** Most placement boxes SearchiDoPutArea gathers. */
+/** Most placement boxes SearchiDoPutArea gathers (the game's; MoonMod's zoned maps gather them all, DngPutSpotLimit). */
 constexpr int kMaxPutQuads = 196;
 
 /** Width of a dungeon floor's grid, in cells. */
-constexpr int kGridWidth = 20;
+constexpr int kGridWidth = DNG_GRID;
 
 /** Side of one grid cell in world units. */
 constexpr float kCellSize = 160.0f;
@@ -1812,7 +1812,12 @@ int PresetSmallItemNo_Get(int map_no, int floor_no, int special, int small) {
 int SearchiDoPutArea(MAPPARTS *cells, int x, int y, int width, int height, float *pos) {
     using Quad = std::array<std::array<float, 3>, 4>;
 
-    auto                  quads = std::make_unique<Quad[]>(kMaxPutQuads);
+#ifdef PORT
+    const int max_quads = DngPutSpotLimit();
+#else
+    const int max_quads = kMaxPutQuads;
+#endif
+    static std::vector<Quad> quads(kMaxPutQuads); // kept between calls; a zoned map's search grows it
     std::array<float, 4>  px{};
     std::array<float, 4>  py{};
     std::array<float, 4>  pz{};
@@ -1824,7 +1829,7 @@ int SearchiDoPutArea(MAPPARTS *cells, int x, int y, int width, int height, float
             const int parts_no = cells[(row * kGridWidth) + col].parts_no;
             const int direction = cells[(row * kGridWidth) + col].direction;
 
-            for (int area_no = 0; areas[area_no].parts_no != -1 && count < kMaxPutQuads; area_no++) {
+            for (int area_no = 0; areas[area_no].parts_no != -1 && count < max_quads; area_no++) {
                 const ITEM_FREE_AREA &area = areas[area_no];
 
                 if (parts_no != area.parts_no) {
@@ -1854,6 +1859,7 @@ int SearchiDoPutArea(MAPPARTS *cells, int x, int y, int width, int height, float
                     py[2] = py[0];
                     pz[2] = pz[3];
 
+                    if (count >= static_cast<int>(quads.size())) quads.resize(quads.size() * 2);
                     Quad &quad = quads[count];
 
                     for (int corner = 0; corner < 4; corner++) {
@@ -1869,7 +1875,7 @@ int SearchiDoPutArea(MAPPARTS *cells, int x, int y, int width, int height, float
 
                     count++;
 
-                    if (count >= kMaxPutQuads) {
+                    if (count >= max_quads) {
                         break;
                     }
                 }
@@ -1910,7 +1916,7 @@ void BtAtraListMake(int dungeon) {
 
     const ATRA_APPEAR *appear = AtraAppearData[dungeon];
     const int          center = CenterFloorTbl[dungeon];
-    const int          floor_count = MaxFloorTbl[dungeon];
+    const int          floor_count = maxFloorTbl__3[dungeon];
     int                count = 0;
     int                upper = 0;
     int                lower = 0;
@@ -2067,7 +2073,7 @@ int setCollisionData(CDungeonMap *map, CCPoly *poly, float *position, float radi
         x += offset[0];
         z += offset[1];
 
-        if (x < 0 || x > 19 || z < 0 || z > 19) {
+        if (x < 0 || x > DNG_GRID_LAST || z < 0 || z > DNG_GRID_LAST) {
             continue;
         }
 

@@ -17,6 +17,8 @@
 #include "render/gs_state.hpp"
 #include "snd.hpp"
 #include "texture.hpp"
+#include "dungeonmap.hpp"
+#include "moonmod/dungeonmap_layout.hpp"
 
 namespace dc::game {
 
@@ -366,6 +368,107 @@ void CRunEffect::Step() {
             position[i][1] += velocity_y[i];
         }
     }
+}
+
+namespace {
+
+// A smoke gate's cloud: puffs born across the doorway, rising slowly, swelling and thinning.
+struct SmokePuff {
+    float position[4];
+    float drift[2];
+    float size;
+    int   life;
+    int   span;
+};
+constexpr int kSmokePuffs = 40;
+constexpr float kSmokeSeen = 160.0f * 9.0f;
+constexpr float kSmokeFront = 100.0f; // from the gate cell's middle toward the player, in front of its door
+constexpr float kSmokeWide = 100.0f; // across the doorway
+constexpr float kSmokeDeep = 24.0f;  // and through it
+std::array<std::array<SmokePuff, kSmokePuffs>, DNG_ZONE_MAX - 1> smoke_puffs{};
+unsigned smoke_seed = 0x5EEDu;
+
+float SmokeRandom() {
+    smoke_seed = smoke_seed * 1103515245u + 12345u;
+    return static_cast<float>((smoke_seed >> 8) & 0xFFFF) / 65535.0f;
+}
+
+} // namespace
+
+void SmokeGatesDraw(const float *player, int map_seed) {
+    if (player == nullptr || !DngZoneFloorIs(map_seed)) return;
+    // the dungeon's soft white glow (basefx01, bottom row), dimmed to grey and added up into a cloud
+    CTexture *texture = TexManager.GetTexture(const_cast<char *>("basefx01"), -1);
+    if (texture == nullptr) return;
+    static int clock = 0;
+    ++clock;
+
+    sceGsAlpha blend = mgAlpha; // added to what is behind, as the glow cells are drawn on black
+    blend.bits.a = 0;
+    blend.bits.b = 2;
+    blend.bits.c = 0;
+    blend.bits.d = 1;
+    MGSetGsALPHA(&blend);
+    sceGsZbuf zbuffer = mgZBuffer;
+    zbuffer.bits.zmsk = 1;
+    draw2d::Get().set_zbuf(&zbuffer);
+
+    for (int g = 0; g < DngZoneGateCount; ++g) {
+        const DNG_ZONE_GATE &gate = DngZoneGateTable[g];
+        auto &puffs = smoke_puffs[g];
+        const float gx = 160.0f * static_cast<float>(gate.x);
+        const float gz = 160.0f * static_cast<float>(gate.y);
+        const bool  near = gate.key_item < 0 && gate.locked != 0 && std::fabs(player[0] - gx) < kSmokeSeen &&
+                          std::fabs(player[2] - gz) < kSmokeSeen;
+        if (!near) {
+            for (SmokePuff &puff : puffs) puff.life = 0;
+            continue;
+        }
+        // The cloud stands across the gate's doorway on the player's side: a gate is crossed along one axis, the one the
+        // player is further along. A new puff each frame, wherever one has gone.
+        const float dx = player[0] - gx, dz = player[2] - gz;
+        const bool  along_x = std::fabs(dx) >= std::fabs(dz);
+        const float front = kSmokeFront * ((along_x ? dx : dz) < 0.0f ? -1.0f : 1.0f);
+        {
+            for (SmokePuff &puff : puffs) {
+                if (puff.life > 0) continue;
+                const float across = (SmokeRandom() - 0.5f) * kSmokeWide, depth = (SmokeRandom() - 0.5f) * kSmokeDeep;
+                puff.position[0] = gx + (along_x ? front + depth : across);
+                puff.position[1] = player[1] + SmokeRandom() * 40.0f;
+                puff.position[2] = gz + (along_x ? across : front + depth);
+                puff.position[3] = 1.0f;
+                puff.drift[0] = (SmokeRandom() - 0.5f) * 0.25f;
+                puff.drift[1] = 0.05f + SmokeRandom() * 0.1f;
+                puff.size = 26.0f + SmokeRandom() * 12.0f;
+                puff.span = 70 + static_cast<int>(SmokeRandom() * 50.0f);
+                puff.life = puff.span;
+                break;
+            }
+        }
+        for (SmokePuff &puff : puffs) {
+            if (puff.life <= 0) continue;
+            --puff.life;
+            puff.position[0] += puff.drift[0];
+            puff.position[1] += puff.drift[1];
+            const float age = 1.0f - static_cast<float>(puff.life) / static_cast<float>(puff.span); // 0 born, 1 gone
+            const float size = puff.size * (0.7f + 0.6f * age);
+            std::array<int, 4> top_left{};
+            std::array<int, 4> bottom_right{};
+            if (MGRotTransPers3DSprite(top_left.data(), bottom_right.data(), puff.position, size, 0.5f * size, 0) != 1) continue;
+            std::array<int, 4> top_right = {bottom_right[0], top_left[1], top_left[2], top_left[3]};
+            std::array<int, 4> bottom_left = {top_left[0], bottom_right[1], bottom_right[2], bottom_right[3]};
+            spRGBA colour;
+            colour.r = 0x38;
+            colour.g = 0x38;
+            colour.b = 0x38 + 6;
+            colour.a = static_cast<int>(0x60 * std::sin(age * 3.14159265f));
+            set3DSprite(Vif1Packet, texture, CRect_i_(0, 0x60, 0x20, 0x20), top_left.data(), top_right.data(),
+                        bottom_left.data(), bottom_right.data(), &colour);
+        }
+    }
+
+    draw2d::Get().set_zbuf(nullptr);
+    MGSetGsALPHA(&mgAlpha);
 }
 
 CRunEffect::CRunEffect() {

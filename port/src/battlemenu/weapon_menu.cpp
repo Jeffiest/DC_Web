@@ -1,6 +1,12 @@
 #include <array>
 
 #include "battlemenu/internal.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/item_icon_override.hpp"
+#include "moonmod/run_menu.hpp"
+
+#include <format>
+#include <string>
 
 namespace dc::battlemenu {
 
@@ -79,6 +85,15 @@ void WeaponNameDrawPort(int y, int selected_only, int alpha) {
 
     int x = static_cast<int>(22.0f + WeaponPos + static_cast<float>(slot * 0xD6));
     AtoraNameMes.value_signed = true;
+    // MoonMod: a weapon a mod named (weapons.style_set) shows its own name, in its colour, over a blank line.
+    struct StyledName {
+        const char *name = nullptr;
+        unsigned char rgb[3] = {};
+        int center_x = 0, y = 0, level = 0;
+    };
+    std::array<StyledName, 3> styled{};
+    int styled_count = 0;
+    const int menu_chara = static_cast<int>(WepMenu.chara);
 
     for (int i = 0; i < 3; i++) {
         int mes_no = 999;
@@ -99,6 +114,18 @@ void WeaponNameDrawPort(int y, int selected_only, int alpha) {
             if (mes_no > 100) {
                 AtoraNameMes.GetMesWidth_system(mes_no);
                 level = DngWepHavePt[slot].level;
+            }
+
+            StyledName named;
+            if (mes_no != 999 && menu_chara >= 0 && menu_chara < CharaCount() && styled_count < 3 &&
+                moonmod::ChronicleWeaponStyle(menu_chara, slot, DngWepHavePt[slot].item_no, &named.name, named.rgb, nullptr, nullptr) &&
+                named.name != nullptr) {
+                named.center_x = x + 0x42;
+                named.y = y;
+                named.level = DngWepHavePt[slot].level;
+                styled[styled_count++] = named;
+                mes_no = 999;
+                level = 0;
             }
         }
 
@@ -138,6 +165,10 @@ void WeaponNameDrawPort(int y, int selected_only, int alpha) {
 
     AtoraNameMes.edge_alpha = alpha;
     AtoraNameMes.Step();
+    for (int n = 0; n < styled_count; ++n) {
+        const std::string text = styled[n].level > 0 ? std::format("{}  {}", styled[n].name, styled[n].level) : std::string(styled[n].name);
+        MoonModMenuText(text, styled[n].rgb, styled[n].center_x, styled[n].y + 2, 0x80);
+    }
     AtoraNameMes.DrawMesWin();
 
     if (WepMenu.mode == WEP_MENU_LIST && WepMenu.state == WEP_STATE_IDLE) {
@@ -454,11 +485,12 @@ void PortDrawAallWeapon(int x, int y, float depth, CCharacter *model,
             }
         }
 
-        MENU_WEP_POLY_OFFSET *offset = &MenuWepPolyOffset[static_cast<int>(WepMenu.chara)];
+        MENU_WEP_POLY_OFFSET *offset = &MenuWepPolyOffset[CombatChara(WepMenu.chara)];
         position[0] += offset->position[0];
         position[1] += offset->position[1];
         model->SetPosition(position);
-        const float scale = offset->scale;
+        // MoonMod: a registered weapon made bigger than its holder's own (a staff in Opar's hands) is shrunk to fit.
+        const float scale = offset->scale * MoonModWeaponMenuScale(weapon->item_no);
         model->SetScale(scale, scale, scale);
 
         if (selected != 0) {
@@ -608,7 +640,7 @@ void PortBtlWeaponDraw(int x, float depth, int chara, int alpha) {
                 if (is_equipped != 0) {
                     MenuTextureReload(MenuShadowReadBlock);
                     constexpr const char *shadows[6] = {"kagetoan", "kagesyao", "kagegoro", "kageruby", "kageunga", "kageozu"};
-                    DrawMenu2DSprite(TexManager.GetTexture(const_cast<char *>(shadows[static_cast<int>(WepMenu.chara)]), -1),
+                    DrawMenu2DSprite(TexManager.GetTexture(const_cast<char *>(shadows[CombatChara(WepMenu.chara)]), -1),
                                      CRect_i_(x + 0x24, 0x96, 0x64, 0x63),
                                      CRect_i_(0, 0, 0x64, 0x64), draw_alpha * 9 / 40);
                     MenuTextureReload(MenuExtendReadBlock);
@@ -680,6 +712,55 @@ void PortBtlWeaponDraw(int x, float depth, int chara, int alpha) {
     }
 }
 
+namespace {
+bool g_card_shown = false;
+
+// MoonMod: a styled weapon's card (weapons.style_set badge/details) under the cursor, across the powder box and the
+// description: its badge on the left (the rarity), its name and detail lines on the right.
+bool DrawWeaponCard(int alpha) {
+    const int chara = static_cast<int>(WepMenu.chara);
+    const int slot = WepMenu.weapon_slot;
+    if (chara < 0 || chara >= CharaCount() || slot < 0 || slot >= 10 || DngWepHavePt == nullptr) return false;
+    const int     item_no = DngWepHavePt[slot].item_no;
+    const char   *text = nullptr;
+    unsigned char rgb[3] = {};
+    float         scale = 1.0f;
+    const bool    badge = moonmod::ChronicleWeaponCardLine(chara, slot, item_no, 0, 0, &text, rgb, &scale);
+    const bool    details = moonmod::ChronicleWeaponCardLine(chara, slot, item_no, 1, 0, &text, rgb, &scale);
+    if (!badge && !details) return false;
+
+    constexpr int x = 0x52, y = 0x15C, w = 0x1E0, h = 0x66, split = 0x8C;
+    MenuHelpWinDraw(x, y, static_cast<float>(w - 48) / 16.0f, static_cast<float>(h - 44) / 22.0f, alpha);
+    const int badge_lines = [&] {
+        int n = 0;
+        while (n < 3 && moonmod::ChronicleWeaponCardLine(chara, slot, item_no, 0, n, &text, rgb, &scale)) ++n;
+        return n;
+    }();
+    int row = y + h / 2 - badge_lines * 0x0B;
+    for (int n = 0; n < badge_lines; ++n) {
+        moonmod::ChronicleWeaponCardLine(chara, slot, item_no, 0, n, &text, rgb, &scale);
+        MoonModMenuLabel(text, rgb, x + split / 2 + 6, row, alpha, scale, true);
+        row += static_cast<int>(0x14 * std::max(0.8f, scale));
+    }
+
+    const char   *name = nullptr;
+    unsigned char name_rgb[3] = {255, 255, 255};
+    row = y + 0x11;
+    if (moonmod::ChronicleWeaponStyle(chara, slot, item_no, &name, name_rgb, nullptr, nullptr) && name != nullptr) {
+        MoonModMenuLabel(name, name_rgb, x + split + 0x0E, row, alpha, 1.0f, false);
+        row += 0x17;
+    }
+    for (int n = 0; n < 5; ++n) {
+        if (!moonmod::ChronicleWeaponCardLine(chara, slot, item_no, 1, n, &text, rgb, &scale)) break;
+        MoonModMenuLabel(text, rgb, x + split + 0x0E, row, alpha, 0.72f * scale, false);
+        row += static_cast<int>(0x10 * scale);
+    }
+    return true;
+}
+} // namespace
+
+bool WeaponCardShown() { return g_card_shown; }
+
 void PortWeaponMenuDraw() {
     RefreshBtlMenuTextures();
     int alpha = 0x80;
@@ -706,7 +787,7 @@ void PortWeaponMenuDraw() {
         case WEP_MENU_BUILDUP_SELECT:
         case WEP_MENU_BUILDUP_CONFIRM:
         case WEP_MENU_BUILDUP_PREVIEW:
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < MenuChara.slot_count; i++) {
                 const int target = (SysChara[i].chara - WepMenu.chara) * 0x6E + 0x10E;
                 SysChara[i].x += (static_cast<float>(target) - SysChara[i].x) / 4.0f;
 
@@ -714,20 +795,31 @@ void PortWeaponMenuDraw() {
                     CTexture *face = MenuCharaFace;
                     int       face_u = 0;
                     const int face_char = SysChara[i].chara;
-                    int       face_v = face_char * 0x6A;
+                    const int face_cell = CombatChara(face_char); // MoonMod: the atlas has the game's six
+                    int       face_v = face_cell * 0x6A;
 
-                    if (face_char > 2) {
+                    int face_size = 0x6A;
+                    if (face_cell > 2) {
                         face_u = 0x6A;
-                        face_v = (face_char - 3) * 0x6A;
+                        face_v = (face_cell - 3) * 0x6A;
                     }
-                    if (BtlMenuStatusPt->party_size <= i) {
+                    // MoonMod: a registered character's face is a picture of its own.
+                    {
+                        if (CTexture *portrait = CharaPortraitTexture(face_char)) {
+                            face = portrait;
+                            face_u = 0;
+                            face_v = 0;
+                            face_size = 0x80;
+                        }
+                    }
+                    if (!InParty(*BtlMenuStatusPt, i)) {
                         face = BtStatus;
                         face_v = 0x8C;
                         face_u = 0x8C;
                     }
 
                     DrawMenu2DSprite(face, CRect_i_(SysChara[i].x, 0xE, 0x64, 0x64),
-                                     CRect_i_(face_u, face_v, 0x6A, 0x6A), alpha, alpha, alpha, alpha);
+                                     CRect_i_(face_u, face_v, face_size, face_size), alpha, alpha, alpha, alpha);
                 }
             }
 
@@ -778,7 +870,12 @@ void PortWeaponMenuDraw() {
 
     BtlWeaponDraw(static_cast<int>(WeaponPos), WepPolyPos, WepMenu.chara, weapon_alpha);
 
-    if (attach_mode == 0) {
+    // The card stands in for the description wherever the description is the weapon's own (the list, and the
+    // level-up, status break and build-up screens), so a styled weapon never shows its native name there.
+    const bool own_description = WepMenu.mode == WEP_MENU_LIST ||
+                                 (WepMenu.mode >= WEP_MENU_LEVELUP_CONFIRM && WepMenu.mode <= WEP_MENU_BUILDUP_CONFIRM);
+    g_card_shown = attach_mode == 0 && own_description && DrawWeaponCard(alpha);
+    if (attach_mode == 0 && !g_card_shown) {
         constexpr u8 repair_x[7] = {78, 78, 78, 26, 64, 64, 66};
         RepairAndLevelUpDraw(repair_x[BtlMenuNowLang], 0x164, alpha);
     }
@@ -818,7 +915,7 @@ void PortWeaponMenuDraw() {
             }
             break;
         case WEP_MENU_LIST:
-            if (BtlMenuStatusPt->party_size > 1) {
+            if (PartyCount(*BtlMenuStatusPt) > 1) {
                 MenuTextureReload(BtlMenuReadBlock);
                 DrawBtlMenuLRCursor(0xE6, 0x12, 0x96, alpha);
             }
@@ -1046,3 +1143,11 @@ void PortWeaponMenuDraw() {
 }
 
 } // namespace dc::battlemenu
+
+namespace dc::game {
+bool MoonModWeaponCardShown() { return dc::battlemenu::WeaponCardShown(); }
+} // namespace dc::game
+
+namespace dc::game {
+std::string MoonModWeaponNativeName(int item_no) { return dc::battlemenu::detail::DecodeItemNamePort(item_no); }
+} // namespace dc::game

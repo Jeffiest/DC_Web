@@ -24,6 +24,7 @@
 #include "snd.hpp"
 #include "userstatus.hpp"
 #include "weaponeffect.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -44,6 +45,7 @@ void basic_damage(int kind, int owner) {
     hit.flags = GetWeaponElementAttr(NowWeaponHave->best_elem);
     hit.owner = owner;
     hit.attack_no = kind;
+    moonmod::ChroniclePlayerSwingBlow(); // MoonMod: an evade may cancel the swing's recovery after this
 }
 
 } // namespace
@@ -425,6 +427,11 @@ void ToanKey_Play() {
             setUnitAmbientAnime(15.0f, 1.0f, 0.0f, 122.0f, 208.0f);
         }
 
+        // MoonMod player.moves_set: a charge let go at a mod move's charge plays that move instead.
+        if (BtActStatus.action_step == 1 && moonmod::ChroniclePlayerMoveOnChargeRelease(BtActStatus.charge_time - 1.0f)) {
+            return;
+        }
+
         if (BtActStatus.action_step == 1) {
             if (BtActStatus.charge_time >= 1.5f) {
                 int charged = 0;
@@ -633,6 +640,14 @@ void UngagaKey_Play() {
     getFramePos(static_cast<CFrameVu1 *>(NowWeapon->frame), "dcol0", hit_left);
     getFramePos(static_cast<CFrameVu1 *>(NowWeapon->frame), "dcol1", hit_right);
     sceVu0CopyVector(chara_pos, CharaMain.pos);
+    // MoonMod player.tuning_set reach_scale: the spear's hit points sit further out from Ungaga.
+    const float reach = moonmod::ChroniclePlayerReachScale();
+    if (reach != 1.0f) {
+        for (float *point : {hit_left, hit_right}) {
+            point[0] = chara_pos[0] + (point[0] - chara_pos[0]) * reach;
+            point[2] = chara_pos[2] + (point[2] - chara_pos[2]) * reach;
+        }
+    }
 
     int damage = NowWeaponHave->attack;
 

@@ -19,6 +19,8 @@
 #include "shot_freefuncs.hpp"
 #include "snd.hpp"
 #include "userstatus.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -27,6 +29,41 @@ namespace dc::game {
 // opcode takes a monster index of its own.
 
 namespace {
+
+// MoonMod: a boss placed off its arena (characters.spawn arena_origin) reads and writes positions in its arena's
+// coordinates. ToFloor moves a point the script gave onto the floor; ToArena moves a floor point back.
+void ToFloor(float *point) {
+    float origin[3];
+    bool  grounded = false;
+    if (!moonmod::ChronicleMonsterScriptOrigin(NowMonstorUnit, NowMonstorUnit->current_monster, origin, &grounded)) return;
+    point[0] += origin[0];
+    point[1] = grounded ? origin[1] : point[1] + origin[1];
+    point[2] += origin[2];
+}
+
+// A grounded boss: the height its script gives for its own place is kept for it to read back.
+void NoteHeight(float y) {
+    if (float *height = moonmod::ChronicleMonsterScriptHeight(NowMonstorUnit, NowMonstorUnit->current_monster)) *height = y;
+}
+
+bool OffArena() {
+    float origin[3];
+    return moonmod::ChronicleMonsterScriptOrigin(NowMonstorUnit, NowMonstorUnit->current_monster, origin);
+}
+
+// MoonMod: a boss's cast a mod placed (characters.spawn arena_slot) names its members by the slots they hold in their
+// own arena. The slot that member holds here, or -1 when the cast has no such member.
+int CastSlot(int native) {
+    return moonmod::ChronicleMonsterCastSlot(NowMonstorUnit, NowMonstorUnit->current_monster, native);
+}
+
+void ToArena(float *point) {
+    float origin[3];
+    if (!moonmod::ChronicleMonsterScriptOrigin(NowMonstorUnit, NowMonstorUnit->current_monster, origin)) return;
+    point[0] -= origin[0];
+    point[1] -= origin[1];
+    point[2] -= origin[2];
+}
 
 using ScriptOpcode = int (*)(RS_STACKDATA *, int);
 
@@ -41,12 +78,21 @@ struct BT_EVENT_EXTERNAL_FUNCTION {
 /**
  * Integers each monster's script pushes and pops, eight per monster.
  */
-std::array<std::array<int, 8>, 16> PUSH_INT_DATA;
+std::array<std::array<int, 8>, MONSTOR_SLOT_MAX> PUSH_INT_DATA;
 
 /**
  * Integers the monster scripts share, set and read by index.
  */
-std::array<int, 10> GL_INT;
+// MoonMod: the floor's shared integers, one per actor slot (scripts number them by their own slot, past retail's 10),
+// and one bank of them for each boss cast (game_hooks ChronicleMonsterGlobalBank).
+std::array<int, MONSTOR_SLOT_MAX> GL_INT;
+std::array<std::array<int, MONSTOR_SLOT_MAX>, MONSTOR_SLOT_MAX> CAST_GL_INT;
+
+int *GlobalInt(int index) {
+    if (index < 0 || index >= MONSTOR_SLOT_MAX) return nullptr;
+    const int bank = moonmod::ChronicleMonsterGlobalBank(NowMonstorUnit, NowMonstorUnit->current_monster);
+    return bank >= 0 && bank < MONSTOR_SLOT_MAX ? &CAST_GL_INT[bank][index] : &GL_INT[index];
+}
 
 /**
  * Opcode table the monster scripts dispatch through, indexed by operation number.
@@ -236,6 +282,7 @@ int _GET_DISTANCE(RS_STACKDATA *stack, int argc) {
         target_position[0] = GetStackFloat(stack++);
         target_position[1] = GetStackFloat(stack++);
         target_position[2] = GetStackFloat(stack++);
+        ToFloor(target_position);
     }
 
     SetStack(stack, DistVector(monster_position, target_position));
@@ -258,6 +305,10 @@ int _GET_POSITION(RS_STACKDATA *stack, int /*argc*/) {
         sceVu0CopyVector(position, CharaMain.pos);
     }
 
+    ToArena(position);
+    if (target == -1) {
+        if (const float *height = moonmod::ChronicleMonsterScriptHeight(NowMonstorUnit, monster_no)) position[1] = *height;
+    }
     SetStack(stack++, position[0]);
     SetStack(stack++, position[1]);
     SetStack(stack, position[2]);
@@ -274,6 +325,7 @@ int _SET_ROTATION(RS_STACKDATA *stack, int /*argc*/) {
     NowMonstorUnit->monster[monster_no].turn_target[1] = GetStackFloat(stack++);
     NowMonstorUnit->monster[monster_no].turn_target[2] = GetStackFloat(stack++);
     NowMonstorUnit->monster[monster_no].turn_speed = GetStackFloat(stack);
+    ToFloor(NowMonstorUnit->monster[monster_no].turn_target);
 
     if (NowMonstorUnit->monster[monster_no].turn_speed < 0.0f) {
         float position[4];
@@ -387,6 +439,7 @@ int _GET_VECTOR(RS_STACKDATA *stack, int argc) {
     direction[1] = GetStackFloat(stack++);
     direction[2] = GetStackFloat(stack++);
     direction[3] = 1.0f;
+    ToFloor(direction);
 
     if (argc == 7) {
         angle = GetStackFloat(stack++);
@@ -471,6 +524,8 @@ int _SET_MOVE(RS_STACKDATA *stack, int /*argc*/) {
     direction[0] = GetStackFloat(stack++);
     direction[1] = GetStackFloat(stack++);
     direction[2] = GetStackFloat(stack++);
+    NoteHeight(direction[1]);
+    ToFloor(direction);
     direction[0] -= position[0];
     direction[1] -= position[1];
     direction[2] -= position[2];
@@ -500,6 +555,7 @@ int _CHK_MOVE_INFO(RS_STACKDATA *stack, int /*argc*/) {
     to[0] = GetStackFloat(stack++);
     to[1] = GetStackFloat(stack++);
     to[2] = GetStackFloat(stack++);
+    ToFloor(to);
     from[1] += 5.0f;
     to[1] += 5.0f;
 
@@ -535,8 +591,11 @@ int _SET_POSITION(RS_STACKDATA *stack, int /*argc*/) {
     float x = GetStackFloat(stack++);
     float y = GetStackFloat(stack++);
     float z = GetStackFloat(stack);
+    float point[3] = {x, y, z};
 
-    NowMonstorUnit->chara[monster_no][0].SetPosition(x, y, z);
+    NoteHeight(y);
+    ToFloor(point);
+    NowMonstorUnit->chara[monster_no][0].SetPosition(point[0], point[1], point[2]);
     return 1;
 }
 
@@ -621,6 +680,12 @@ int _STATUS_SET_DEAD(RS_STACKDATA * /*stack*/, int /*argc*/) {
  * Chooses the script the monster runs next.
  */
 int _STATUS_SET_EVENT(RS_STACKDATA *stack, int /*argc*/) {
+    // MoonMod: a boss a mod placed (a Gauntlet Warden) is out of its arena; its story scene doesn't run. The one it
+    // asks for once its life is gone is its defeat: it fades out and dies like any monster.
+    if (OffArena()) {
+        moonmod::ChronicleMonsterDefeatScene(NowMonstorUnit, NowMonstorUnit->current_monster);
+        return 1;
+    }
     NowMonstorUnit->requested_event = GetStackInt(stack);
     return 1;
 }
@@ -629,6 +694,10 @@ int _STATUS_SET_EVENT(RS_STACKDATA *stack, int /*argc*/) {
  * Chooses the script the monster runs next and reports the change.
  */
 int _RUN_SCRIPT(RS_STACKDATA *stack, int /*argc*/) {
+    if (OffArena()) { // MoonMod: as _STATUS_SET_EVENT
+        moonmod::ChronicleMonsterDefeatScene(NowMonstorUnit, NowMonstorUnit->current_monster);
+        return 1;
+    }
     NowMonstorUnit->requested_event = GetStackInt(stack);
     std::println("run script !!");
     return 1;
@@ -1184,7 +1253,7 @@ int _GET_COL_HIT_ID(RS_STACKDATA *stack, int /*argc*/) {
  * Gives the index of the monster the script is running for.
  */
 int _GET_SCRIPT_ID(RS_STACKDATA *stack, int /*argc*/) {
-    SetStack(stack, NowMonstorUnit->current_monster);
+    SetStack(stack, moonmod::ChronicleMonsterCastNumber(NowMonstorUnit, NowMonstorUnit->current_monster)); // MoonMod
     return 1;
 }
 
@@ -1193,8 +1262,14 @@ int _GET_SCRIPT_ID(RS_STACKDATA *stack, int /*argc*/) {
  */
 int _GET_MONSTOR_POS(RS_STACKDATA *stack, int /*argc*/) {
     float position[4];
+    const int monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
 
-    NowMonstorUnit->chara[GetStackInt(stack++)][0].GetPosition(position);
+    if (monster_no < 0) {
+        return 1;
+    }
+
+    NowMonstorUnit->chara[monster_no][0].GetPosition(position);
+    ToArena(position);
     SetStack(stack++, position[0]);
     SetStack(stack++, position[1]);
     SetStack(stack, position[2]);
@@ -1205,7 +1280,11 @@ int _GET_MONSTOR_POS(RS_STACKDATA *stack, int /*argc*/) {
  * Reads the motion frame another monster stands on.
  */
 int _GET_MONSTOR_FRM(RS_STACKDATA *stack, int /*argc*/) {
-    int monster_no = GetStackInt(stack++);
+    int monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
+
+    if (monster_no < 0) {
+        return 1;
+    }
 
     float frame = NowMonstorUnit->chara[monster_no][0].motion_type.state.time;
 
@@ -1217,12 +1296,17 @@ int _GET_MONSTOR_FRM(RS_STACKDATA *stack, int /*argc*/) {
  * Puts another monster at a world position.
  */
 int _SET_MONSTOR_POS(RS_STACKDATA *stack, int /*argc*/) {
-    int   monster_no = GetStackInt(stack++);
+    int   monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
     float position[4];
+
+    if (monster_no < 0) {
+        return 1;
+    }
 
     position[0] = GetStackFloat(stack++);
     position[1] = GetStackFloat(stack++);
     position[2] = GetStackFloat(stack);
+    ToFloor(position);
     NowMonstorUnit->chara[monster_no][0].SetPosition(position);
     return 1;
 }
@@ -1231,14 +1315,19 @@ int _SET_MONSTOR_POS(RS_STACKDATA *stack, int /*argc*/) {
  * Sends another monster towards a point at a given speed.
  */
 int _SET_MONSTOR_MOVE(RS_STACKDATA *stack, int /*argc*/) {
-    int   monster_no = GetStackInt(stack++);
+    int   monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
     float direction[4];
     float position[4];
+
+    if (monster_no < 0) {
+        return 1;
+    }
 
     NowMonstorUnit->chara[monster_no][0].GetPosition(position);
     direction[0] = GetStackFloat(stack++);
     direction[1] = GetStackFloat(stack++);
     direction[2] = GetStackFloat(stack++);
+    ToFloor(direction);
     direction[0] -= position[0];
     direction[1] -= position[1];
     direction[2] -= position[2];
@@ -1252,8 +1341,12 @@ int _SET_MONSTOR_MOVE(RS_STACKDATA *stack, int /*argc*/) {
  * Gives one monster the heading and speed of another.
  */
 int _SET_MONSTOR_LINK_MOVE(RS_STACKDATA *stack, int /*argc*/) {
-    int monster_no = GetStackInt(stack++);
-    int leader_no = GetStackInt(stack);
+    int monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
+    int leader_no = CastSlot(GetStackInt(stack));
+
+    if (monster_no < 0 || leader_no < 0) {
+        return 1;
+    }
 
     sceVu0CopyVector(NowMonstorUnit->monster[monster_no].movement, NowMonstorUnit->monster[leader_no].movement);
     NowMonstorUnit->monster[monster_no].movement_speed = NowMonstorUnit->monster[leader_no].movement_speed;
@@ -1264,7 +1357,11 @@ int _SET_MONSTOR_LINK_MOVE(RS_STACKDATA *stack, int /*argc*/) {
  * Stops another monster where it stands.
  */
 int _SET_MONSTOR_MOVE_CANSEL(RS_STACKDATA *stack, int /*argc*/) {
-    int monster_no = GetStackInt(stack);
+    int monster_no = CastSlot(GetStackInt(stack)); // MoonMod
+
+    if (monster_no < 0) {
+        return 1;
+    }
 
     NowMonstorUnit->monster[monster_no].movement_speed = 0.0f;
     return 1;
@@ -1294,8 +1391,12 @@ int _SET_LOCKON_SW(RS_STACKDATA *stack, int /*argc*/) {
  * Starts a motion on another monster and every part linked to it.
  */
 int _SET_MONSTOR_MOTION(RS_STACKDATA *stack, int argc) {
-    int monster_no = GetStackInt(stack++);
+    int monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
     int motion_id = GetStackInt(stack++);
+
+    if (monster_no < 0) {
+        return 1;
+    }
 
     NowMonstorUnit->monster[monster_no].last_hit_damage = -1;
     NowMonstorUnit->monster[monster_no].requested_motion_speed = -1.0f;
@@ -1350,7 +1451,7 @@ int _SET_MONSTOR_MOTION(RS_STACKDATA *stack, int argc) {
 int _SET_GLOBAL_INT(RS_STACKDATA *stack, int /*argc*/) {
     int slot = GetStackInt(stack++);
 
-    GL_INT[slot] = GetStackInt(stack);
+    if (int *value = GlobalInt(slot)) *value = GetStackInt(stack);
     return 1;
 }
 
@@ -1359,8 +1460,9 @@ int _SET_GLOBAL_INT(RS_STACKDATA *stack, int /*argc*/) {
  */
 int _GET_GLOBAL_INT(RS_STACKDATA *stack, int /*argc*/) {
     int slot = GetStackInt(stack++);
+    const int *value = GlobalInt(slot);
 
-    SetStack(stack++, GL_INT[slot]);
+    SetStack(stack++, value != nullptr ? *value : 0);
     return 1;
 }
 
@@ -1375,6 +1477,7 @@ int _GET_OBJ_POS(RS_STACKDATA *stack, int /*argc*/) {
 
     sceVu0CopyVector(local, frame->position);
     frame->GetWorldPosition(world, local);
+    ToArena(world);
     SetStack(stack++, world[0]);
     SetStack(stack++, world[1]);
     SetStack(stack, world[2]);
@@ -1393,6 +1496,7 @@ int _SET_ROTATION_X(RS_STACKDATA *stack, int /*argc*/) {
     NowMonstorUnit->monster[monster_no].turn_target[0] = GetStackFloat(stack++);
     NowMonstorUnit->monster[monster_no].turn_target[1] = GetStackFloat(stack++);
     NowMonstorUnit->monster[monster_no].turn_target[2] = GetStackFloat(stack);
+    ToFloor(NowMonstorUnit->monster[monster_no].turn_target);
     NowMonstorUnit->chara[monster_no][0].GetPosition(position);
     NowMonstorUnit->chara[monster_no][0].GetRotation(rotation);
     sceVu0SubVector(direction, NowMonstorUnit->monster[monster_no].turn_target, position);
@@ -1418,6 +1522,7 @@ int _LOOKAT(RS_STACKDATA *stack, int /*argc*/) {
     NowMonstorUnit->monster[monster_no].turn_target[1] = GetStackFloat(stack++);
     NowMonstorUnit->monster[monster_no].turn_target[2] = GetStackFloat(stack++);
     int axis = GetStackInt(stack);
+    ToFloor(NowMonstorUnit->monster[monster_no].turn_target);
     sceVu0UnitMatrix(matrix);
     NowMonstorUnit->chara[monster_no][0].GetPosition(position);
     NowMonstorUnit->chara[monster_no][0].GetRotation(rotation);
@@ -1477,18 +1582,23 @@ int _SET_MOTION_CHANGE_STEP(RS_STACKDATA *stack, int /*argc*/) {
  * Gives the unit vector from another monster to a point, optionally turned about the vertical axis.
  */
 int _GET_MONSTOR_VECTOR(RS_STACKDATA *stack, int argc) {
-    int   monster_no = GetStackInt(stack++);
+    int   monster_no = CastSlot(GetStackInt(stack++)); // MoonMod
     float angle = 0.0f;
     float direction[4];
     float position[4];
     float turn_matrix[4][4];
     float identity[4][4];
 
+    if (monster_no < 0) {
+        monster_no = NowMonstorUnit->current_monster;
+    }
+
     NowMonstorUnit->chara[monster_no][0].GetPosition(position);
     direction[0] = GetStackFloat(stack++);
     direction[1] = GetStackFloat(stack++);
     direction[2] = GetStackFloat(stack++);
     direction[3] = 1.0f;
+    ToFloor(direction);
 
     if (argc == 8) {
         angle = GetStackFloat(stack++);
@@ -1552,9 +1662,9 @@ int _SET_BIN2(RS_STACKDATA *stack, int /*argc*/) {
 int _SET_STATUS_CHANGE(RS_STACKDATA *stack, int /*argc*/) {
     int kind = GetStackInt(stack++);
     int weight = GetStackInt(stack++);
-    int monster_no = GetStackInt(stack);
+    int monster_no = CastSlot(GetStackInt(stack)); // MoonMod
 
-    if (monster_no < 0 || monster_no > 15) {
+    if (monster_no < 0 || monster_no >= MONSTOR_SLOT_MAX) {
         return 1;
     }
 
@@ -1572,9 +1682,9 @@ int _SET_STATUS_CHANGE(RS_STACKDATA *stack, int /*argc*/) {
 int _SET_TEX_ANIME_SW(RS_STACKDATA *stack, int /*argc*/) {
     int anime_no = GetStackInt(stack++);
     int enable = GetStackInt(stack++);
-    int monster_no = GetStackInt(stack);
+    int monster_no = CastSlot(GetStackInt(stack)); // MoonMod
 
-    if (monster_no < 0 || monster_no > 15) {
+    if (monster_no < 0 || monster_no >= MONSTOR_SLOT_MAX) {
         return 2;
     }
 
@@ -1624,7 +1734,7 @@ int _GET_NEAR_MONSTER(RS_STACKDATA *stack, int /*argc*/) {
 
     NowMonstorUnit->chara[monster_no][0].GetPosition(position);
 
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (i != monster_no && NowMonstorUnit->monster[i].state == 2) {
             NowMonstorUnit->chara[i][0].GetPosition(other_position);
             float distance = DistVector(position, other_position);
@@ -1637,10 +1747,11 @@ int _GET_NEAR_MONSTER(RS_STACKDATA *stack, int /*argc*/) {
         }
     }
 
+    if (found != -1) ToArena(found_position);
     SetStack(stack++, found_position[0]);
     SetStack(stack++, found_position[1]);
     SetStack(stack++, found_position[2]);
-    SetStack(stack, found);
+    SetStack(stack, found != -1 ? moonmod::ChronicleMonsterCastNumber(NowMonstorUnit, found) : found); // MoonMod
     return 1;
 }
 
@@ -1648,6 +1759,8 @@ int _GET_NEAR_MONSTER(RS_STACKDATA *stack, int /*argc*/) {
  * Starts the fade to black that ends a boss fight.
  */
 int _BOSS_FADE_OUT(RS_STACKDATA * /*stack*/, int /*argc*/) {
+    // MoonMod: a mod's boss dies like any monster; play goes on.
+    if (OffArena()) return 1;
     EdFadeInit();
     EdFadeOut(120, 0.0f, 0.0f, 0.0f);
     BtActStatus.can_act = 0;
@@ -1659,7 +1772,7 @@ int _BOSS_FADE_OUT(RS_STACKDATA * /*stack*/, int /*argc*/) {
  * Reports whether the boss fade has finished.
  */
 int _CHEKC_FADE_OUT(RS_STACKDATA *stack, int /*argc*/) {
-    int done = EdFadeOutCheck();
+    int done = OffArena() ? 1 : EdFadeOutCheck();
 
     SetStack(stack, done);
     return 1;
@@ -1790,10 +1903,10 @@ int _GET_USER_STATUS(RS_STACKDATA *stack, int /*argc*/) {
  */
 int _SET_REFERENCE(RS_STACKDATA *stack, int /*argc*/) {
     int   monster_no = NowMonstorUnit->current_monster;
-    int   target_no = GetStackInt(stack++);
+    int   target_no = CastSlot(GetStackInt(stack++)); // MoonMod
     char *name = GetStackString(stack);
 
-    if (name == nullptr) {
+    if (name == nullptr || target_no < 0) {
         return 1;
     }
 
@@ -1812,7 +1925,12 @@ int _SET_REFERENCE(RS_STACKDATA *stack, int /*argc*/) {
  * Detaches another monster's model from whatever it was attached to.
  */
 int _DEL_REFERENCE(RS_STACKDATA *stack, int /*argc*/) {
-    int     monster_no = GetStackInt(stack);
+    int monster_no = CastSlot(GetStackInt(stack)); // MoonMod
+
+    if (monster_no < 0) {
+        return 1;
+    }
+
     CFrame *frame = NowMonstorUnit->chara[monster_no][0].frame;
 
     if (frame == nullptr) {
@@ -1932,6 +2050,19 @@ constexpr BT_EVENT_EXTERNAL_FUNCTION ext_func_info[] = {
 };
 
 } // namespace
+
+void ResetMonsterScriptGlobals(int bank) {
+    if (bank >= 0 && bank < MONSTOR_SLOT_MAX) CAST_GL_INT[bank].fill(0);
+}
+
+int *MonsterScriptGlobal(int bank, int index) {
+    if (bank < 0 || bank >= MONSTOR_SLOT_MAX || index < 0 || index >= MONSTOR_SLOT_MAX) return nullptr;
+    return &CAST_GL_INT[bank][index];
+}
+
+int (*MonsterScriptExtension(int operation))(RS_STACKDATA *, int) {
+    return operation >= 0 && operation < std::ssize(ext_func) ? ext_func[operation] : nullptr;
+}
 
 int BtSetEventScript(CRunScript *script, char *program, CDataAlloc2<1> *arena) {
     auto *stack = reinterpret_cast<RS_STACKDATA *>(arena->Alloc(64));

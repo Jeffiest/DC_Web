@@ -74,6 +74,8 @@ struct Config : HostSettings {
     bool              enhanced_cloth = false;     /**< video.cloth: false runs the PS2's cloth, true also keeps it out of the body. */
     float             mouse_camera_return = 0.2f; /**< Third-person vertical return after mouse input: 0 holds height, 1 is retail's rate. */
     ConfigGameOptions options;
+    bool              fit_dungeon_map = true;    /**< game.fit_dungeon_map: fit the dungeon map to the screen. */
+    bool              dungeon_aerial_map = true; /**< game.dungeon_aerial_map: show the aerial dungeon map. */
     bool              discord_rich_presence = true;
     /**
      * game.language: 0 asks at start-up, as retail does; 2 to 6 is the language to start in

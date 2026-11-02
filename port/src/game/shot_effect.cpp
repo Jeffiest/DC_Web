@@ -22,6 +22,7 @@
 #include "shot_utils.hpp"
 #include "snd.hpp"
 #include "texture.hpp"
+#include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
 
@@ -33,9 +34,12 @@ void CSHOT::draw() {
 
             texture_cell = std::max(texture_cell, 0);
 
+            float drawn = size[shot];
+            moonmod::ChroniclePlayerShotLook(shot, texture_cell, drawn); // MoonMod: a mod move's own look
+
             int x = (texture_cell % 4) << 5;
             int y = (texture_cell / 4) << 5;
-            set3DCellModel(pos[shot], "basefx01", size[shot], x, y, 32, 32, 128);
+            set3DCellModel(pos[shot], "basefx01", drawn, x, y, 32, 32, 128);
         }
     }
 }
@@ -63,6 +67,7 @@ void CSHOT::step() {
                 attr_col->hit[attr_col->now_hit].flags = GetWeaponElementAttr(weapon_element);
                 NowColData->hit[NowColData->now_hit].weapon_flags = NowWeaponHave->flags;
                 NowColData->hit[NowColData->now_hit].vs_monster = NowWeaponHave->vs_monster;
+                moonmod::ChroniclePlayerShotLanded(shot, hit_position); // MoonMod: a mod move's splash
                 used[shot] = 0;
             }
         }
@@ -156,6 +161,10 @@ void CSHOT_EFFECT::Step() {
 
         if (phase[slot] < 2) {
             result = checkCollision(hit_position, position, velocity[slot], effect_data->target, effect_data->radius[phase[slot]]);
+            // MoonMod player.tuning_set shots_pierce: the player's orbs pass through monsters.
+            if (result == SHOT_COLLISION_MONSTER && user_id[slot] == CHARA_RUBY && moonmod::ChroniclePlayerShotsPierce()) {
+                result = SHOT_COLLISION_NONE;
+            }
         }
 
         if (life_time[slot] > 0) {
@@ -311,6 +320,7 @@ int CSHOT_EFFECT::Entry(BT_SHOT_EFFECT *description, unsigned int *pack, int tex
 
     template_chara.Initialize();
     template_chara.LoadPackData3(pack, cfg_name.data(), allocator, texture_block, allocator, 1, 0x10);
+    if (template_chara.frame == nullptr) return 0; // MoonMod: no model, no effect (a shot of it would crash)
 
     slot_count = slots;
 
@@ -334,6 +344,7 @@ int CSHOT_EFFECT::Entry2(BT_SHOT_EFFECT *description, unsigned int *pack, int te
     texture_block = tex_block;
     template_chara.Initialize();
     template_chara.LoadPackData3(pack, cfg_name.data(), allocator, tex_block, allocator, 1, 0x10);
+    if (template_chara.frame == nullptr) return 0; // MoonMod: no model, no effect (a shot of it would crash)
 
     slot_count = slots;
 
@@ -373,7 +384,7 @@ int CSHOT_EFFECT::Set(float *position, float *target, int owner, int sub_id, int
 
     if (effect_data == nullptr) {
         printf("******** shot err ***********\n");
-        return;
+        return -1;
     }
 
     for (int i = 0; i < slot_count; i++) {

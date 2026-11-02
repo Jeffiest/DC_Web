@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <numbers>
 #include <print>
@@ -26,6 +27,7 @@
 #include "dungeoneventman.hpp"
 #include "dungeonmap.hpp"
 #include "frame.hpp"
+#include "gfx/gfx.hpp"
 #include "healeffect.hpp"
 #include "hitvalue.hpp"
 #include "itemdata.hpp"
@@ -40,6 +42,14 @@
 #include "snd.hpp"
 #include "texture.hpp"
 #include "userstatus.hpp"
+#include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/dungeonmap_layout.hpp"
+#include "moonmod/game_hooks.hpp"
+#include "moonmod/item_icon_override.hpp"
+#include "moonmod/manager_ui.hpp"
+#include "text/gametext.hpp"
+#include "ui/framework.hpp"
+#include "monstorunit.hpp"
 
 namespace dc::game {
 
@@ -52,7 +62,6 @@ namespace {
 /**
  * Number of floors in each dungeon.
  */
-constexpr std::array<int, 7> maxFloorTbl = {15, 17, 18, 18, 15, 25, 100};
 
 /**
  * Number of ripple slots on the water.
@@ -135,9 +144,9 @@ int CheckHealingWater() {
 
     sceVu0CopyVector(position, CharaMain.pos);
 
-    for (int row = 0; row < 16; row++) {
-        for (int column = 0; column < 16; column++) {
-            const int parts_no = NowDngMap->cells[(row * 20) + column].parts_no;
+    for (int row = 0; row < DNG_ROOM_AREA; row++) {
+        for (int column = 0; column < DNG_ROOM_AREA; column++) {
+            const int parts_no = NowDngMap->cells[(row * DNG_GRID) + column].parts_no;
 
             if (parts_no != -1) {
                 CDungeonParts *part = &NowDngMap->parts[parts_no];
@@ -197,7 +206,7 @@ int CheckHealZone() {
 
     const int column = static_cast<int>((80.0f + position[0]) / 160.0f);
     const int row = static_cast<int>((80.0f + position[2]) / 160.0f);
-    const int parts_no = NowDngMap->cells[(row * 20) + column].parts_no;
+    const int parts_no = NowDngMap->cells[(row * DNG_GRID) + column].parts_no;
 
     if (parts_no == MAP_PARTS_NONE) {
         return 0;
@@ -240,18 +249,25 @@ void WaterSplash_Init() {
     WaterWaveLingWait = 0;
 }
 
+bool ShrineWaterDry() {
+    return DngZoneShrineHeal == 0 && NowDngMap == &MainDungeonMap && DngZoneFloorIs(NowDngMap->map_seed);
+}
+
 void HealingWater() {
     if (CheckHealZone() || CheckHealingWater()) {
+        // MoonMod (set_zones shrine_heal = false): a shrine's water quenches thirst; the mod's rest heals.
+        const bool dry = ShrineWaterDry();
         if (healingSpeed <= 0) {
             const int chara = UserStatus->cur_chara;
             UserStatus->AddDrink(chara, 0xFF, 255.0f);
-            UserStatus->AddNowLife(chara, 0xFF, 255.0f);
+            if (!dry) UserStatus->AddNowLife(chara, 0xFF, 255.0f);
             healingSpeed = 10;
         } else {
             healingSpeed--;
         }
 
-        if (HealEffect.active == 0) {
+        if (dry) {
+        } else if (HealEffect.active == 0) {
             const int max_hp = UserStatus->max_hp[UserStatus->cur_chara];
             const int now_hp = UserStatus->hp[UserStatus->cur_chara];
 
@@ -367,7 +383,7 @@ float SetBattleStyle(int map_no, int preserve_bgm) {
 
     sceVu0CopyVector(player, CharaMain.pos);
 
-    for (int monster_no = 0; monster_no < 16; monster_no++) {
+    for (int monster_no = 0; monster_no < MONSTOR_SLOT_MAX; monster_no++) {
         if (NowMonstorUnit->monster[monster_no].state == -1) {
             continue;
         }
@@ -381,7 +397,7 @@ float SetBattleStyle(int map_no, int preserve_bgm) {
     }
 
     if (map_no != 5) {
-        const int floors = maxFloorTbl[map_no];
+        const int floors = maxFloorTbl__3[map_no];
 
         if (UserStatus->cur_floor < floors - 1) {
             BtBattleMusic_Excg(nearest, &bgm_volume, &ambient_volume);
@@ -485,7 +501,7 @@ void StatusBarFill(int frame_y, int cells, float value, float max, spRGBA *left,
 
 void topStatusInfo(int y, int selected_item, int floor) {
     const int chara = UserStatus->cur_chara;
-    if (chara < 0 || chara >= 6) {
+    if (chara < 0 || chara >= CharaCount()) { // MoonMod: a registered character's gauges too
         return;
     }
 
@@ -624,6 +640,37 @@ void topStatusInfo(int y, int selected_item, int floor) {
         set2DSprite(Vif1Packet, icons, CRect_i_(full_drops * 0x12 + 0x33, y + 0x22, 0x10, 0x14), CRect_i_((3 - static_cast<int>(static_cast<float>(leftover) / 2.5f)) * 16, 0x48, 0x10, 0x14), 0x50);
     }
 
+    // Mod HUD bars (MoonMod render.bar_register, e.g. Ascension XP) under the water drops, as wide as the
+    // drop row.
+    const int bar_width = std::max(0x36, (static_cast<int>(water_max) / 10) * 0x12);
+    int       bar_y = y + 0x38;
+    spRGBA    trough = {0x10, 0x10, 0x18, 0x60};
+    spRGBA    fill_left = {0x60, 0x30, 0xC0, 0x80};
+    spRGBA    fill_right = {0xE0, 0xB0, 0x30, 0x80};
+    for (const auto &bar : moonmod::ChronicleHudBars()) {
+        const double ratio = bar.maximum > 0.0 ? std::clamp(bar.current / bar.maximum, 0.0, 1.0) : 0.0;
+        set2DSpriteC4(Vif1Packet, CRect_i_(0x32, bar_y, bar_width + 2, 7), &trough, &trough, &trough, &trough);
+        const int filled = static_cast<int>(bar_width * ratio);
+        if (filled > 0) {
+            set2DSpriteC4(Vif1Packet, CRect_i_(0x33, bar_y + 1, filled, 5), &fill_left, &fill_right, &fill_left,
+                          &fill_right);
+        }
+        if (bar.number >= 0) {
+            ValuePrint(0x22, bar_y - 3, bar.number, 0, alpha);
+        }
+        bar_y += 12;
+    }
+
+    // Mod HUD text (render.layer_register) under the bars, in the game's own lettering; the presenter leaves it out
+    // while a dungeon draws it here. Mod notices have the message window (DrawModNotice).
+    constexpr float kModTextScale = ui::metrics::kScaleSmall;
+    constexpr int   kModTextRow = 18;
+    int             text_y = bar_y + 2;
+    for (const std::string &line : moonmod::ChronicleOverlayLines()) {
+        ui::Label(line, ui::ColorWhite, ui::Alignment::Left, true, kModTextScale).Draw(0x30, text_y);
+        text_y += kModTextRow;
+    }
+
     static float popupYRate = -PI;
     popupYRate += 0.20943952f;
 
@@ -682,7 +729,28 @@ void topStatusInfo(int y, int selected_item, int floor) {
 
     int last_floor = maxFloorTbl__3[georama];
 
-    if (floor + 1 == last_floor) {
+    // A mod's label (render.floor_label_set) takes the number's place, lettered like it and shrunk to fit.
+    if (const std::string label = moonmod::ChronicleFloorLabel(); !label.empty()) {
+        ui::TextStyle style;
+        style.align = ui::Alignment::Center;
+        style.drop_shadow = false;
+        style.use_custom_rgb = true;
+        style.fill_r = 250;
+        style.fill_g = 244;
+        style.fill_b = 226;
+        style.outline_width = 1.5f;
+        style.outline_r = 72;
+        style.outline_g = 40;
+        style.outline_b = 18;
+        style.scale = 0.86f;
+        ui::Label plate_label(label, ui::ColorWhite, ui::Alignment::Center, false, style.scale);
+        plate_label.SetStyle(style);
+        constexpr int kPlateNumberWidth = 0x24;
+        if (const int width = plate_label.GetWidth(); width > kPlateNumberWidth) {
+            plate_label.SetScale(style.scale * static_cast<float>(kPlateNumberWidth) / static_cast<float>(width));
+        }
+        plate_label.DrawCenteredInRect(0x23C, y + 0x11, 0x26, 0x13);
+    } else if (floor + 1 == last_floor) {
         set2DSprite(Vif1Packet, frame, CRect_i_(0x23C, y + 0x12, 0x26, 0x11), CRect_i_(0x78, 0x9E, 0x26, 0x12));
     } else {
         const int x = floor + 1 >= 10 ? 0x245 : 0x23F;
@@ -695,6 +763,33 @@ void topStatusInfo(int y, int selected_item, int floor) {
 
         set2DSprite(Vif1Packet, frame, CRect_i_(x + 9, number_y, 0xE, 0x11), CRect_i_((floor + 1) % 10 * 12, 0x9E, 0xC, 0x12));
     }
+
+    // Mod HUD icons (render.hud_icon_set) in a row left of the key: native status badges at half size, or a
+    // mod's own 32x32 png at 22x22. A blinking one pulses. The row keeps to the floor plate's side on a wide window
+    // (by its own centre it would stay mid-screen, over the game's ailment badge).
+    static int hud_icon_pulse = 0;
+    hud_icon_pulse = (hud_icon_pulse + 1) % 64;
+    const int           pulse_alpha = 0x30 + std::abs(32 - hud_icon_pulse) * 3;
+    int                 icon_right = 0x1FA;
+    const gfx::UiAnchor status_anchor = gfx::CurrentUiAnchor();
+    gfx::SetUiAnchor(gfx::UiAnchor::Side(1, -1));
+    for (const moonmod::ChronicleHudIcon &icon : moonmod::ChronicleHudIcons()) {
+        const int icon_alpha = icon.blink ? pulse_alpha : 0x80;
+        if (icon.native >= 0 && icon.native < 5) {
+            constexpr std::array<std::array<int, 2>, 5> badge_cells = {{{1, 0}, {0, 1}, {1, 1}, {1, 2}, {0, 2}}};
+            const auto &cell = badge_cells[icon.native];
+            icon_right -= 31;
+            set2DSprite(Vif1Packet, icons, CRect_i_(icon_right, y + 0x0C, 31, 18),
+                        CRect_i_(cell[0] * 62 + 132, cell[1] * 36 + 84, 62, 36), icon_alpha);
+        } else if (CTexture *image = HudImageTexture(icon.image.c_str())) {
+            icon_right -= 22;
+            set2DSprite(Vif1Packet, image, CRect_i_(icon_right, y + 0x0A, 22, 22), CRect_i_(0, 0, 32, 32), icon_alpha);
+        } else {
+            continue;
+        }
+        icon_right -= 3;
+    }
+    gfx::SetUiAnchor(status_anchor);
 
     selected_item *= 40;
     set2DSprite(Vif1Packet, frame, CRect_i_(selected_item + 0xFC, y, 0x10, 0x10), CRect_i_(0x4A, 0x48, 0x10, 0x10));
@@ -710,11 +805,11 @@ void topStatusInfo(int y, int selected_item, int floor) {
     int v = 0;
     int item = UserStatus->chara_weapons[chara][weapon_slot].item_no;
 
-    if (item == defWeapon__2[chara] + 1) {
+    if (item == defWeapon__2[CombatChara(chara)] + 1) {
         v = 0x20;
     }
 
-    if (item == defWeapon__2[chara]) {
+    if (item == defWeapon__2[CombatChara(chara)]) {
         u = 0x20;
         v = 0x20;
     }
@@ -788,19 +883,23 @@ void BtStatusErrStep() {
 
 void BtSetStatusErr(int status) {
     const int chara = UserStatus->cur_chara;
+    // MoonMod player.tuning_set: status_immune refuses the ailment; status_duration scales Freeze and Stamina.
+    if (moonmod::ChroniclePlayerStatusImmune() & status) return;
+    const float duration = moonmod::ChroniclePlayerStatusDuration();
+    const auto frames = [duration](int retail) { return std::max(1, static_cast<int>(std::lround(retail * duration))); };
 
     switch (status) {
         case AILMENT_FREEZE:
             UserStatus->ailments[chara] |= status;
             UserStatus->ailments[chara] &= ~(AILMENT_STAMINA | AILMENT_POISON | AILMENT_GOO);
-            UserStatus->ailment_frames[chara] = 300;
+            UserStatus->ailment_frames[chara] = frames(300);
             SndSePlay(SE_STATUS_AILMENT, -1, 0);
             break;
 
         case AILMENT_STAMINA:
             if (!(UserStatus->ailments[chara] & AILMENT_FREEZE)) {
                 UserStatus->ailments[chara] |= status;
-                UserStatus->ailment_frames[chara] = 1800;
+                UserStatus->ailment_frames[chara] = frames(1800);
             }
 
             break;
@@ -829,6 +928,85 @@ void BtSetStatusErr(int status) {
 
         default:
             break;
+    }
+}
+
+namespace {
+
+// Up to three lines of at most `columns` characters, broken between words; a longer notice ends in "...".
+std::string WrapNotice(std::string_view text, std::size_t columns, std::string_view indent) {
+    std::vector<std::string> lines(1);
+    std::size_t              at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find(' ', at);
+        if (end == std::string_view::npos) end = text.size();
+        const std::string_view word = text.substr(at, end - at);
+        at = end + 1;
+        if (word.empty()) continue;
+        if (!lines.back().empty() && lines.back().size() + 1 + word.size() > columns) lines.emplace_back();
+        if (!lines.back().empty()) lines.back() += ' ';
+        lines.back() += word;
+    }
+    constexpr std::size_t kRows = 3;
+    if (lines.size() > kRows) {
+        lines.resize(kRows);
+        lines.back() = lines.back().substr(0, columns - 3) + "...";
+    }
+    std::string out;
+    for (const std::string &line : lines) {
+        if (!out.empty()) out += '\n';
+        out += indent;
+        out += line;
+    }
+    return out;
+}
+
+} // namespace
+
+void DrawModNotice(bool native_busy) {
+    std::string text;
+    std::string icon;
+    if (!moonmod::CurrentGameNotice(text, icon)) return;
+    if (native_busy) return; // the game's own message has the window's place; this one waits its turn
+    moonmod::MarkGameNoticeShown();
+    // The game's dungeon message window (DngMes1's settings), holding a mod's notice for its frames.
+    static dc::text::GameText notice;
+    static std::string        shown;
+    static bool               configured = false;
+    if (!configured) {
+        configured = true;
+        notice.KeepGameRandom(true);
+        game::ClsMes &mes = notice.Mes();
+        mes.page_arrow = false;
+        mes.stay_frame = true;
+        mes.char_height = 22;
+        mes.style = MES_EDGE_NONE;
+    }
+    constexpr std::array<std::string_view, 5> kBadges = {"freeze", "stamina", "poison", "curse", "goo"};
+    const auto badge = std::ranges::find(kBadges, icon);
+    CTexture  *image = badge == kBadges.end() && !icon.empty() ? HudImageTexture(icon.c_str()) : nullptr;
+    const bool has_icon = badge != kBadges.end() || image != nullptr;
+    const std::string wrapped = WrapNotice(text, has_icon ? 21 : 24, has_icon ? "    " : "");
+    if (wrapped != shown) {
+        shown = wrapped;
+        notice.Set(wrapped);
+    }
+    game::ClsMes &mes = notice.Mes();
+    mes.text_x = 0x136;
+    mes.text_y = 0x154;
+    mes.auto_pos = MES_POS_BOTTOM_RIGHT;
+    mes.DrawMesWin();
+    // The icon sits in the text's indent, centred on its lines (win_x and win_y follow the window's grow animation).
+    const int icon_x = mes.text_x + 2;
+    const int icon_mid = mes.text_y + mes.text_height / 2;
+    if (badge != kBadges.end()) {
+        constexpr std::array<std::array<int, 2>, 5> badge_cells = {{{1, 0}, {0, 1}, {1, 1}, {1, 2}, {0, 2}}};
+        const auto &cell = badge_cells[badge - kBadges.begin()];
+        CTexture   *icons = TexManager.GetTexture(const_cast<char *>("itempack"), -1);
+        set2DSprite(Vif1Packet, icons, CRect_i_(icon_x, icon_mid - 11, 38, 22),
+                    CRect_i_(cell[0] * 62 + 132, cell[1] * 36 + 84, 62, 36));
+    } else if (image != nullptr) {
+        set2DSprite(Vif1Packet, image, CRect_i_(icon_x + 4, icon_mid - 15, 30, 30), CRect_i_(0, 0, 32, 32));
     }
 }
 
@@ -872,6 +1050,12 @@ void BtMapJumpCashClear() {
 }
 
 int BtMapJumpLoad(char *map_name) {
+    // A floor added by game.dungeons.register with its own map reads that floor pack instead.
+    if (const char *mod_map = ChronicleModFloorMap(UserStatus->cur_georama, UserStatus->cur_floor)) {
+        std::println(stderr, "moonmod: floor {} of dungeon {} reads floor pack {} (script asked for {})",
+                     UserStatus->cur_floor + 1, UserStatus->cur_georama, mod_map, map_name);
+        map_name = const_cast<char *>(mod_map);
+    }
     int mes_size = 0;
 
     CUserStatus *status = UserStatus;
@@ -992,10 +1176,31 @@ int BtMapJumpLoad(char *map_name) {
     itemOpenSmall.LoadPack(read_buffer, "dun/etc/itemget_s/d01i02m", &MapModelBuffer, &MapModelBuffer, &itemOpenSmall_info, 0);
     itemOpenBig.LoadPack(read_buffer, "dun/etc/itemget_b/d01i01m", &MapModelBuffer, &MapModelBuffer, &itemOpenBig_info, 0);
 
+#ifdef PORT
+    // MoonMod (dungeons.set_npc_models): characters a mod stands on this dungeon's floors, in NPC slots its parts left free
+    for (int m = 0; m < DngNpcModelCount; m++) {
+        DngNpcModel &model = DngNpcModels[m];
+        if (model.dungeon != selectMapNo || MainDungeonMap.npc[model.npc].used != 0) continue;
+        int pack_size = 0;
+        LoadFile(model.pack, read_buffer, &pack_size);
+        if (pack_size <= 0) continue;
+        sceVu0FVECTOR origin = {0.0f, 0.0f, 0.0f, 1.0f};
+        sceVu0FVECTOR turn = {0.0f, 0.0f, 0.0f, 0.0f};
+        MainDungeonMap.SetNPC(model.npc, read_buffer, 9999, origin, turn, 1, model.motion, &MapModelBuffer, model.cfg);
+    }
+#endif
+
     // The monsters get whatever the map left of its buffer.
     const int map_used = MapModelBuffer.used;
     MonstorModelBuffer.base = &MapModelBuffer.base[static_cast<std::ptrdiff_t>(map_used) * 16];
+#ifdef PORT
+    // MoonMod: what the arena really holds (the port carves it with headroom), not retail's 0xA7F80: a map of several
+    // floors' zones (dungeons.set_zones source_floor) loads all their monsters. A system script borrows the pool and
+    // 0x88B8 quadwords past it (movechara.cpp), which must stay inside the arena too.
+    MonstorModelBuffer.limit = MapModelBuffer.limit - map_used - 0x88B8;
+#else
     MonstorModelBuffer.limit = 0xA7F80 - map_used;
+#endif
     MonstorModelBuffer.used = 0;
     read_buffer = pack;
 
@@ -1029,3 +1234,4 @@ void BtSet3DCellModel(float *world, CTexture *texture, float size, int x, int y,
 }
 
 } // namespace dc::game
+

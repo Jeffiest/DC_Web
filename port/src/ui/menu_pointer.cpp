@@ -112,8 +112,16 @@ MenuPointerTake MenuPointer::Take(float start_x, float start_y) {
         float across = 1.0f;
         float down = 1.0f;
         UnitsPerCount(across, down);
-        x = std::clamp(x + mouse.dx * across, 0.0f, 639.0f);
-        y = std::clamp(y + mouse.dy * down, 0.0f, 479.0f);
+        gfx::LogicalRect bounds = {0.0f, 0.0f, 640.0f, 480.0f};
+        if (wide) {
+            const gfx::LogicalRect visible = gfx::VisibleLogicalRect(gfx::kMainTarget);
+            bounds.x = std::min(0.0f, visible.x);
+            bounds.y = std::min(0.0f, visible.y);
+            bounds.w = std::max(640.0f, visible.x + visible.w) - bounds.x;
+            bounds.h = std::max(480.0f, visible.y + visible.h) - bounds.y;
+        }
+        x = std::clamp(x + mouse.dx * across, bounds.x, bounds.x + bounds.w - 1.0f);
+        y = std::clamp(y + mouse.dy * down, bounds.y, bounds.y + bounds.h - 1.0f);
     }
     take.pointing = pointing;
     return take;

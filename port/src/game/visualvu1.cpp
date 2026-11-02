@@ -13,6 +13,7 @@
 #include "dataset.hpp"
 #include "mathutil.hpp"
 #include "mdt.hpp"
+#include "moonmod/mod_model.hpp"
 #include "mglib.hpp"
 #include "platform/load_work_profile.hpp"
 #include "render/draw3d.hpp"
@@ -750,6 +751,15 @@ int CVisualVu1::CreateVUdataFromMDT(u_int *block, u_int *data, int /*unknown0*/,
             strip.ground_uv_flip_v = true;
         }
     }
+    const char *model_texture = nullptr;
+    for (const Draw3DStrip &strip : visual.strips) {
+        if (!strip.texture_name.empty()) {
+            model_texture = strip.texture_name.c_str();
+            break;
+        }
+    }
+    ModsModelHook(visual, model_texture, reinterpret_cast<const float (*)[4]>(view.vertex),
+                  view.header->vertex_num, block);
     visual.cache_strip_runs_on_finish = true;
     Draw3DFinishVisual(visual);
     return vu_size;
@@ -784,15 +794,20 @@ int CVisualVu1::CreateVUdataFromMDTRemake(u_int *block, u_int *data, int /*unkno
             }
         }
         strip_number++;
-        for (uint32_t i = 0; i < count && vertex < visual->vertices.size(); i++, index += view.stride, vertex++) {
-            gfx::Vertex3D &out = visual->vertices[vertex];
-            std::memcpy(out.position, view.vertex[index[0]], sizeof(out.position));
-            if (view.colour) {
-                for (int c = 0; c < 4; c++) {
-                    out.color[c] = ColourByte(view.colour[index[3]][c]);
+        for (uint32_t i = 0; i < count; i++, index += view.stride, vertex++) {
+            if (!visual->replaced && vertex < visual->vertices.size()) {
+                gfx::Vertex3D &out = visual->vertices[vertex];
+                std::memcpy(out.position, view.vertex[index[0]], sizeof(out.position));
+                if (view.colour) {
+                    for (int c = 0; c < 4; c++) {
+                        out.color[c] = ColourByte(view.colour[index[3]][c]);
+                    }
                 }
             }
         }
+    }
+    if (visual->replaced) {
+        ModsModelSkin(*visual, reinterpret_cast<const float (*)[4]>(view.vertex), block);
     }
     // Record stationary poses too: a display frame needs both ends when animation starts or stops.
     Draw3DInvalidateStripRuns(*visual);

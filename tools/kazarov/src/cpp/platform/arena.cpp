@@ -12,7 +12,10 @@ namespace {
 struct Block {
     const void *owner;
     ArenaMemory memory;
+    int         world = 0;
 };
+
+int g_world = 0;
 
 std::vector<Block> g_blocks;
 // Blocks an owner outgrew stay mapped: retail's memory never went away, and a
@@ -20,7 +23,7 @@ std::vector<Block> g_blocks;
 std::vector<Block> g_retired;
 
 Block MapBlock(const void *owner, std::size_t bytes, std::size_t lead) {
-    return {owner, ArenaMemoryMap(bytes, lead)};
+    return {owner, ArenaMemoryMap(bytes, lead), g_world};
 }
 
 bool MapHolds(const std::vector<Block> &blocks, std::uintptr_t address) {
@@ -50,7 +53,7 @@ void CheckSomeBlockHigh() {
 
 unsigned char *ArenaBlock(const void *owner, std::size_t bytes, std::size_t lead) {
     for (Block &block : g_blocks) {
-        if (block.owner != owner) {
+        if (block.owner != owner || block.world != g_world) {
             continue;
         }
         if (block.memory.capacity >= bytes && block.memory.lead >= lead) {
@@ -69,13 +72,36 @@ unsigned char *ArenaBlock(const void *owner, std::size_t bytes, std::size_t lead
 
 void ArenaClearAll() {
     for (const Block &block : g_blocks) {
-        ArenaMemoryZero(block.memory);
+        if (block.world == g_world) {
+            ArenaMemoryZero(block.memory);
+        }
     }
+}
+
+void ArenaSetWorld(int world) {
+    g_world = world;
+}
+
+int ArenaWorld() {
+    return g_world;
 }
 
 bool ArenaContains(const void *pointer) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     return MapHolds(g_blocks, address) || MapHolds(g_retired, address);
+}
+
+std::size_t ArenaRoomAt(const void *pointer) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    for (const Block &block : g_blocks) {
+        const auto base = reinterpret_cast<std::uintptr_t>(block.memory.base);
+        const std::uintptr_t start = base - block.memory.lead;
+        const std::uintptr_t end = base + block.memory.capacity;
+        if (address >= start && address < end) {
+            return end - address;
+        }
+    }
+    return 0;
 }
 
 void ArenaRequireOneAbove4GiB(const void *const *bases, std::size_t count) {

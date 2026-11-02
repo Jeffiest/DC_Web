@@ -11,6 +11,7 @@
 
 #include "editatra.hpp"
 #include "object.hpp"
+#include "playable_chara.hpp"
 
 namespace dc::game {
 
@@ -38,6 +39,13 @@ CMenuCursor *CSaveData::GetMenuCursor() {
 }
 
 s16 *CSaveData::GetCharaName(int chara_no) {
+    // MoonMod: a registered character's name is no save's; it is his PlayableChara's, in the name entry's letter codes.
+    if (const PlayableChara *extra = ExtraChara(chara_no)) {
+        static s16 names[CHARA_MAX][32];
+        std::ranges::copy(extra->name_codes, names[chara_no]);
+        return names[chara_no];
+    }
+
     if (chara_no < 0 || chara_no >= 6) {
         return nullptr;
     }

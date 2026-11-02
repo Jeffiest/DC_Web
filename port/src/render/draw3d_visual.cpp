@@ -11,6 +11,7 @@
 #include "render/draw3d.hpp"
 #include "renderinfo.hpp"
 #include "texture.hpp"
+#include "moonmod/mod_model.hpp"
 
 namespace dc::render {
 
@@ -25,6 +26,7 @@ std::unordered_map<const void *, std::unique_ptr<Draw3DVisual>> g_transient;
 unsigned                                                        g_visual_sweep_frame = 0;
 
 void Release(Draw3DVisual &visual) {
+    ModsModelVisualReleased(visual);
     if (visual.mesh != gfx::kNullMesh) {
         gfx::DestroyMesh(visual.mesh);
         visual.mesh = gfx::kNullMesh;

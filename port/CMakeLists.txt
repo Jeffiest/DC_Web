@@ -9,6 +9,32 @@ if(NOT CMAKE_CXX_COMPILER)
     set(CMAKE_CXX_COMPILER clang++)
 endif()
 enable_language(CXX)
+if(NOT CMAKE_C_COMPILER AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    get_filename_component(moonmod_cxx_dir ${CMAKE_CXX_COMPILER} DIRECTORY)
+    get_filename_component(moonmod_cxx_name ${CMAKE_CXX_COMPILER} NAME)
+    string(REGEX REPLACE "clang\\+\\+([.]exe)?$" "clang\\1" moonmod_c_name ${moonmod_cxx_name})
+    if(NOT moonmod_c_name STREQUAL moonmod_cxx_name)
+        set(moonmod_sibling_c "${moonmod_cxx_dir}/${moonmod_c_name}")
+        if(EXISTS ${moonmod_sibling_c})
+            set(CMAKE_C_COMPILER ${moonmod_sibling_c} CACHE FILEPATH "C compiler paired with clang++")
+        endif()
+    endif()
+endif()
+enable_language(C)
+
+# MoonMod's files are made for one Chronicle commit; pasted over another they may not build.
+set(MOONMOD_CHRONICLE_COMMIT 9418a5506e2a08e7739aa68d70841df6bc516201)
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE moonmod_chronicle_head OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
+        RESULT_VARIABLE moonmod_git_result)
+    if(moonmod_git_result EQUAL 0 AND NOT moonmod_chronicle_head STREQUAL MOONMOD_CHRONICLE_COMMIT)
+        message(WARNING "MoonMod is made for Chronicle ${MOONMOD_CHRONICLE_COMMIT}, but this checkout is at "
+            "${moonmod_chronicle_head}. Run 'git checkout ${MOONMOD_CHRONICLE_COMMIT}' and paste the MoonMod files "
+            "again, or use the MoonMod release made for this commit.")
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +44,8 @@ if(NINTENDO_SWITCH)
 else()
     set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # darkcloud is position-independent (DC_LINK_OPTIONS below).
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -47,6 +75,17 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 if(EMSCRIPTEN)
     include(${CMAKE_CURRENT_SOURCE_DIR}/web/web.cmake)
 endif()
+# MoonMod's small embedded Lua runtime keeps the PC build self-contained and offline-capable.
+set(MOONMOD_LUA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua-5.5.1)
+file(GLOB MOONMOD_LUA_SOURCES CONFIGURE_DEPENDS ${MOONMOD_LUA_DIR}/*.c)
+list(FILTER MOONMOD_LUA_SOURCES EXCLUDE REGEX "/(lua|luac|ltests)\.c$")
+add_library(moonmod_lua STATIC ${MOONMOD_LUA_SOURCES})
+target_include_directories(moonmod_lua PUBLIC ${MOONMOD_LUA_DIR})
+set_target_properties(moonmod_lua PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(moonmod_lua PUBLIC m)
+endif()
+
 # Flatpak builds have no network: their single-file libraries are staged in audio_decoders/ and stb_truetype/; others fetch them.
 set(KZ_PORT_VENDOR_DIRS ${CMAKE_SOURCE_DIR}/audio_decoders ${CMAKE_SOURCE_DIR}/stb_truetype)
 # The Flatpak also stages each library Kazarov's FetchContent_Declare downloads, in flatpak-deps/<name>
@@ -180,6 +219,7 @@ elseif(EMSCRIPTEN)
     dc_web_port(dc_port)
 endif()
 target_link_libraries(dc_port PRIVATE dc_options SDL3::SDL3 Vulkan::Vulkan nlohmann_json::nlohmann_json fastgltf::fastgltf kz_port_headers)
+target_link_libraries(dc_port PRIVATE moonmod_lua ${CMAKE_DL_LIBS})
 # port/src, the generated headers, dcdata's header-only core and the stb directories: captionfont.cpp
 # rasterizes with stb_truetype and platform/png_image.cpp decodes with stb_image, which Kazarov stages
 # (or fetches) for dc_host.
@@ -194,6 +234,7 @@ function(dc_port_includes target)
 endfunction()
 dc_port_includes(dc_port)
 dc_port_includes(dc_ps2)
+target_include_directories(dc_port PRIVATE ${MOONMOD_LUA_DIR})
 # The game's headers trip a few warnings that only describe how MWCC's source
 # was written, not a problem in the port.
 target_compile_options(dc_port PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-label
@@ -226,7 +267,8 @@ endif()
 
 function(dc_link_game target)
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:dc_port> $<TARGET_OBJECTS:dc_ps2>)
-    target_link_libraries(${target} PRIVATE dc_options dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan fastgltf::fastgltf)
+    target_link_libraries(${target} PRIVATE dc_options dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan fastgltf::fastgltf
+        nlohmann_json::nlohmann_json moonmod_lua ${CMAKE_DL_LIBS})
     target_include_directories(${target} PRIVATE ${PORT_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
     target_compile_options(${target} PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-label
         -Wno-overloaded-virtual -Wno-unused-function)

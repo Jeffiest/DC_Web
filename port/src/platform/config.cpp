@@ -613,6 +613,8 @@ bool Apply(Config &config, std::string_view name, const Json &value) {
         config.shadow_distance = distance;
         return true;
     }
+    if (name == "game.dungeon_aerial_map") return ReadBool(value, config.dungeon_aerial_map);
+    if (name == "game.fit_dungeon_map") return ReadBool(value, config.fit_dungeon_map);
     if (name == "discord.rich_presence") {
         return ReadBool(value, config.discord_rich_presence);
     }
@@ -821,6 +823,8 @@ std::string ConfigSerialize(const Config &config) {
     root["input"]["mouse_release"] = config.mouse_release_keys;
     root["input"]["vibration"] = options.vibration;
     root["input"]["bindings"] = std::move(bindings);
+    root["game"]["dungeon_aerial_map"] = config.dungeon_aerial_map;
+    root["game"]["fit_dungeon_map"] = config.fit_dungeon_map;
     root["discord"]["rich_presence"] = config.discord_rich_presence;
     return root.dump(4) + "\n";
 }
