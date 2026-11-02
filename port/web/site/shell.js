@@ -250,6 +250,7 @@ async function storeMods(files) {
         throw new Error('no mod.json in it, at the top or in a folder at the top');
     }
     const copies = [];
+    const ids = [];
     for (const root of roots) {
         const inside = files.filter(([parts]) => root === '' || (parts.length > 1 && parts[0] === root))
             .map(([parts, blob]) => [root === '' ? parts : parts.slice(1), blob]);
@@ -265,8 +266,37 @@ async function storeMods(files) {
         }
         await (await modsDirectory()).removeEntry(id, {recursive: true}).catch(() => {});
         copies.push(...inside.map(([parts, blob]) => [['save', 'mods', id, ...parts].join('/'), blob]));
+        ids.push(id);
     }
     await copyFiles(copies, $('mod-progress'));
+    await enableMods(ids, true);
+}
+
+// Turns mods on or off for the next start in MoonMod's profile (save/moonmod/profile.json, which the game's Mods
+// menu also writes): a mod added here is on, one removed is forgotten.
+async function enableMods(ids, on) {
+    const save = await (await gameDirectory()).getDirectoryHandle('save', {create: true});
+    const folder = await save.getDirectoryHandle('moonmod', {create: true});
+    let profile = null;
+    try {
+        profile = JSON.parse(await readText(folder, 'profile.json') ?? 'null');
+    } catch {
+        profile = null;
+    }
+    if (!profile || typeof profile !== 'object' || profile.format_version !== 1) {
+        profile = {format_version: 1, enabled: {}, settings: {}, native_trusted: {}};
+    }
+    profile.enabled = profile.enabled && typeof profile.enabled === 'object' ? profile.enabled : {};
+    for (const id of ids) {
+        if (on) {
+            profile.enabled[id] = true;
+        } else {
+            delete profile.enabled[id];
+        }
+    }
+    const writable = await (await folder.getFileHandle('profile.json', {create: true})).createWritable();
+    await writable.write(JSON.stringify(profile, null, 2));
+    await writable.close();
 }
 
 async function modsFromFolder(list) {
@@ -301,6 +331,7 @@ async function refreshMods() {
         remove.style.padding = '2px 8px';
         remove.addEventListener('click', async () => {
             await (await modsDirectory()).removeEntry(mod.id, {recursive: true}).catch(() => {});
+            await enableMods([mod.id], false);
             await refreshMods();
         });
         item.append(remove);

@@ -288,10 +288,20 @@ function convertPack(path, bytes) {
     const done = ({ data }) => {
       if (data.id !== id) return;
       converter.removeEventListener("message", done);
+      converter.removeEventListener("error", failed);
       if (data.error) reject(new Error(data.error));
       else resolve(data.files);
     };
+    // the worker itself failed (its script missing, say): the next conversion starts a new one
+    const failed = (event) => {
+      converter.removeEventListener("message", done);
+      converter.removeEventListener("error", failed);
+      converter.terminate();
+      converter = null;
+      reject(new Error("the model converter did not start: " + (event.message || "convert-worker.js failed")));
+    };
     converter.addEventListener("message", done);
+    converter.addEventListener("error", failed);
     converter.postMessage({ id, path, bytes }, [bytes.buffer]);
   });
 }
