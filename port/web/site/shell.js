@@ -904,7 +904,12 @@ function setupPad() {
     const track = (element, update) => {
         element.addEventListener('pointerdown', (event) => {
             event.preventDefault();
-            element.setPointerCapture(event.pointerId);
+            try {
+                element.setPointerCapture(event.pointerId);
+            } catch {
+                // The pointer already lifted (Android hands a quick tap's pointerdown late); its move and up still
+                // reach this element.
+            }
             touches.set(event.pointerId, update(event));
             sendPad();
         });

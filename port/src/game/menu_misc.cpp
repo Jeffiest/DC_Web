@@ -596,7 +596,9 @@ int StartReadWepMDS(u_long128 *buffer, int chara) {
     WeaponRead_Buf = MenuCalcBufAlignment(buffer);
     StartReadBG();
 
+    // A file that can't be read leaves its slot empty, and EnterWeaponModel then shows no weapon models: say which.
     if (LoadFileBG(path.data(), buffer, &size) == 0) {
+        std::println("weapon menu: can't read {}", path);
         return 0;
     }
 
@@ -607,6 +609,7 @@ int StartReadWepMDS(u_long128 *buffer, int chara) {
     std::string image = std::format("{}{}2.img", lang_dir.data(), names[CombatChara(chara)]);
 
     if (LoadFileBG(image.data(), buffer, &size) == 0) {
+        std::println("weapon menu: can't read {}", image);
         return 0;
     }
 
@@ -744,6 +747,15 @@ int EnterWeaponModel(int holder, int texture_block, [[maybe_unused]] int weapon_
     BG_READ_INFO                             *pack = GetReadBGFile(0);
     BG_READ_INFO                             *shadow = GetReadBGFile(1);
     BG_READ_INFO                             *effect = GetReadBGFile(2);
+    // StartReadWepMDS read these; a file it couldn't read leaves its slot empty. Without the weapon pack there are
+    // no models to build, and the menu draws the weapons without them. Retail went on regardless: a crash on the
+    // PC, and on the web, where reading through a null pointer doesn't trap, a build into a junk address.
+    if (pack == nullptr) {
+        std::println("weapon menu: the weapon models weren't read; showing the weapons without them");
+        InitMenuWeaponModelReference();
+        MenuWeaponModelBuildBuffer = nullptr;
+        return 1;
+    }
     const int                                 weapon_max = std::clamp<int>(MenuCharaWeaponMax[chara], 0, static_cast<int>(std::size(weapon_model_files)));
     constexpr std::array<std::string_view, 6> names = {"c01", "c04", "c06", "c05", "c10", "c18"};
     std::vector<int>                          order(static_cast<std::size_t>(weapon_max));
@@ -758,7 +770,8 @@ int EnterWeaponModel(int holder, int texture_block, [[maybe_unused]] int weapon_
             texture[2] = {.name = nullptr, .block_no = 0, .mipmap = 0};
             texture[0].block_no = MenuShadowReadBlock;
             texture[1].block_no = MenuShadowReadBlock;
-            texture[1].name = reinterpret_cast<char *>(shadow->buffer);
+            // Without the shadow image the list ends at the frame.
+            texture[1].name = shadow != nullptr ? reinterpret_cast<char *>(shadow->buffer) : nullptr;
             TexManager.DeleteTextureBlock(MenuShadowReadBlock);
             TexManager.CleanUpTextureList();
             TexManager.LoadTextureBlockEX(-1, texture.get());
@@ -797,8 +810,10 @@ int EnterWeaponModel(int holder, int texture_block, [[maybe_unused]] int weapon_
             if (effect != nullptr) {
                 SetWepEffectMenuReadBuf(effect->buffer);
                 build = effect->buffer + 0x2D01;
-            } else {
+            } else if (shadow != nullptr) {
                 build = shadow->buffer + (shadow->size >> 4) + 1;
+            } else {
+                build = MenuCalcBufAlignment(pack->buffer + (pack->size >> 4) + 1);
             }
 
             MenuWeaponModelBuildBuffer = build;
@@ -826,6 +841,10 @@ void WeaponModelBuildFunc(int chara, int texture_block) {
     TexManager.CleanUpTextureList();
     TexManager.LoadTextureBlockEX(-1, textures.data());
     printf("modelbuildbuffer = %p\n", MenuWeaponModelBuildBuffer);
+    if (MenuWeaponModelBuildBuffer == nullptr) {
+        // EnterWeaponModel had no models to build (the weapon pack wasn't read).
+        return;
+    }
     MenuExCashBuffer.base = reinterpret_cast<u_char *>(MenuWeaponModelBuildBuffer);
     MenuExCashBuffer.limit = 0xEC00;
     MenuExCashBuffer.used = 0;
