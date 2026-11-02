@@ -1,9 +1,10 @@
-# Keeps each of main's PC builds as the GitHub release build-<commit>: the Windows zip, the Linux Flatpak and the
-# macOS archive that pc.yml and macos.yml make, which GitHub's artifacts would otherwise drop after 90 days. The
+# Keeps each of main's PC builds as the GitHub release build-<commit>: the Windows zip, the macOS archive and the
+# Linux Flatpak that pc.yml and macos.yml make, which GitHub's artifacts would otherwise drop after 90 days. The
 # page's PC downloads (site/mods/catalog.json) link a mod to the build it was confirmed with by that release.
 #
-# It runs when either workflow finishes a push to main. Once both have succeeded for the commit, whichever finished
-# second publishes; a commit where one failed gets no release.
+# It runs when either workflow finishes a push to main. Once the Windows and macOS jobs have both passed for the
+# commit, whichever workflow finished second publishes. The Flatpak goes in when its job passed too: it fetches
+# FFmpeg from ffmpeg.org itself, and an outage there shouldn't hold back the other two.
 name: builds
 
 on:
@@ -17,45 +18,55 @@ permissions:
 
 jobs:
   release:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      - name: Find both runs for the commit
+      - name: Find the passed jobs for the commit
         id: runs
         run: |
-          runs=$(gh api "repos/$GH_REPO/actions/runs?head_sha=$SHA&event=push&per_page=50")
-          for workflow in 'PC builds' 'macOS build'; do
-            id=$(jq -r --arg name "$workflow" \
-              '[.workflow_runs[] | select(.name == $name and .conclusion == "success")][0].id // empty' <<< "$runs")
-            if [ -z "$id" ]; then
-              echo "$workflow has not succeeded for $SHA yet; the release waits for it."
-              echo "ready=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            key=$( [ "$workflow" = 'PC builds' ] && echo pc || echo macos )
-            echo "$key=$id" >> "$GITHUB_OUTPUT"
-          done
-          echo "ready=true" >> "$GITHUB_OUTPUT"
+          # The newest completed run of a workflow for the commit, so a re-run counts.
+          run_of() {
+            gh api "repos/$GH_REPO/actions/runs?head_sha=$SHA&event=push&per_page=50" \
+              --jq "[.workflow_runs[] | select(.name == \"$1\" and .status == \"completed\")]
+                | sort_by(.run_attempt, .updated_at) | last | .id // empty"
+          }
+          # Whether the run's job of that name passed (an answer that isn't a count, such as an error, is a no).
+          passed() {
+            count=$(gh api "repos/$GH_REPO/actions/runs/$1/jobs?per_page=50" \
+              --jq "[.jobs[] | select(.name == \"$2\" and .conclusion == \"success\")] | length" 2> /dev/null)
+            [ "$count" -gt 0 ] 2> /dev/null
+          }
+          pc=$(run_of 'PC builds')
+          macos=$(run_of 'macOS build')
+          if [ -z "$pc" ] || [ -z "$macos" ] || ! passed "$pc" 'Build and test (Windows x64)' ||
+             ! passed "$macos" 'Build and test (macOS arm64)'; then
+            echo "The Windows and macOS builds haven't both passed for $SHA; no release yet."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          flatpak=false
+          if passed "$pc" 'Build the Flatpak (Linux x86_64)'; then flatpak=true; fi
+          { echo "ready=true"; echo "pc=$pc"; echo "macos=$macos"; echo "flatpak=$flatpak"; } >> "$GITHUB_OUTPUT"
 
       - name: Download the builds
         if: steps.runs.outputs.ready == 'true'
         run: |
           mkdir -p got out
           gh run download "${{ steps.runs.outputs.pc }}" -n chronicle-windows-x64 -D got/windows
-          gh run download "${{ steps.runs.outputs.pc }}" -n chronicle-x86_64.flatpak -D got/flatpak
           gh run download "${{ steps.runs.outputs.macos }}" -n chronicle-macos-arm64 -D got/macos
           mv got/windows/*.zip out/darkcloud-windows-x64.zip
-          mv got/flatpak/*.flatpak out/darkcloud-linux-x86_64.flatpak
           mv got/macos/*.tar.gz out/darkcloud-macos-arm64.tar.gz
+          if [ "${{ steps.runs.outputs.flatpak }}" = true ]; then
+            gh run download "${{ steps.runs.outputs.pc }}" -n chronicle-x86_64.flatpak -D got/flatpak
+            mv got/flatpak/*.flatpak out/darkcloud-linux-x86_64.flatpak
+          fi
           ls -l out
 
-      - name: Publish build-${{ github.event.workflow_run.head_sha }}
+      - name: Publish the release
         if: steps.runs.outputs.ready == 'true'
         run: |
           tag="build-${SHA:0:8}"
@@ -63,8 +74,8 @@ jobs:
           Dark Cloud (Chronicle with MoonMod) built from $SHA on main.
 
           - **Windows:** \`darkcloud-windows-x64.zip\`. Unzip it and run \`darkcloud.exe\`.
-          - **Linux:** \`darkcloud-linux-x86_64.flatpak\`. \`flatpak install --user darkcloud-linux-x86_64.flatpak\`.
           - **macOS (Apple silicon):** \`darkcloud-macos-arm64.tar.gz\`.
+          - **Linux:** \`darkcloud-linux-x86_64.flatpak\`, when its build passed: \`flatpak install --user darkcloud-linux-x86_64.flatpak\`.
 
           The game data comes from your own disc (docs/PC.md). Mods go in \`save/mods/\`, one folder per mod.
           EOF
