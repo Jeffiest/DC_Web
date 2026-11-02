@@ -197,7 +197,8 @@ jobs:
         run: |
           mkdir -p site
           cd port/build/web
-          cp index.html shell.js sw.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
+          cp -r anim ../../../site/
+          cp index.html shell.js sw.js zip.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
             darkcloud_gl.js darkcloud_gl.wasm darkcloud_gl.data webgpu_probe.js webgpu_probe.wasm ../../../site/
           # The renderer tests too, for running on a device whose GPU draws wrong (gfx_tests.html).
           cp gfx_tests.html kazarov_gfx_tests.js kazarov_gfx_tests.wasm kazarov_gfx_tests_gl.js \
@@ -225,6 +226,8 @@ jobs:
             port/build/web/index.html
             port/build/web/shell.js
             port/build/web/sw.js
+            port/build/web/zip.js
+            port/build/web/anim
             port/build/web/lang
             port/build/web/glyphs
 

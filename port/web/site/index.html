@@ -88,6 +88,18 @@
       <button id="forget" class="secondary">Remove the game data</button>
     </div>
   </div>
+  <div id="mods" class="card" hidden>
+    <h2>Mods</h2>
+    <p>MoonMod mods load when the game starts. Add a mod's folder (the one holding <code>mod.json</code>), a folder
+      of mods, or a <code>.zip</code> of either. They are kept in this browser's storage with your saves.</p>
+    <ul id="mod-list" style="margin: 0; padding-left: 20px"></ul>
+    <div class="row">
+      <label class="button secondary">Add a mod folder<input id="mod-folder" type="file" webkitdirectory></label>
+      <label class="button secondary">Add a .zip<input id="mod-zip" type="file" accept=".zip"></label>
+      <a class="button secondary" href="anim/" style="text-decoration: none">Animation editor</a>
+    </div>
+    <progress id="mod-progress" hidden></progress>
+  </div>
 </main>
 
 <div id="game" hidden>
@@ -125,6 +137,7 @@
     <img id="captured-image" alt="The captured frames">
   </div>
 </div>
+<script src="zip.js"></script>
 <script src="shell.js"></script>
 </body>
 </html>

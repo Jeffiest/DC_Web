@@ -106,10 +106,10 @@ function(dc_web_port target)
         ${DC_WEB_DIR}/src/storage.cpp ${DC_WEB_DIR}/src/exit.cpp ${DC_WEB_DIR}/src/touch.cpp)
 endfunction()
 
-# The page around the game (site/): copied beside darkcloud.js, so the build directory serves as is.
-file(GLOB DC_WEB_SITE CONFIGURE_DEPENDS ${DC_WEB_DIR}/site/*)
+# The page around the game (site/, with the animation editor in site/anim/): copied beside darkcloud.js, so the
+# build directory serves as is.
 add_custom_target(dc_web_site
-    COMMAND ${CMAKE_COMMAND} -E copy ${DC_WEB_SITE} ${CMAKE_BINARY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${DC_WEB_DIR}/site ${CMAKE_BINARY_DIR}
     COMMENT "Copying the web page")
 
 # What the page loads. The game runs on a pthread; the main thread keeps the page responsive, and the canvas

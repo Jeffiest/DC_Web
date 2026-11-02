@@ -141,9 +141,8 @@ async function removeAll() {
 
 // Copies files into the game's directory, each a [relative path, File] pair, with the progress bar showing bytes.
 // createWritable writes to a swap file and commits on close, so a file cut short is never left in place.
-async function copyFiles(files) {
+async function copyFiles(files, progress = $('progress')) {
     const home = await gameDirectory();
-    const progress = $('progress');
     progress.hidden = false;
     progress.max = files.reduce((total, [, file]) => total + file.size, 0) || 1;
     progress.value = 0;
@@ -204,6 +203,111 @@ async function storeFolder(list) {
     await copyFiles(chosen.map(([parts, file]) => [['data', ...parts].join('/'), file]));
 }
 
+// MoonMod's mods: save/mods/<id>/, where the game looks for them (moonmod/runtime.cpp), each a folder holding
+// mod.json. Chosen files come in as [path parts, Blob] pairs from a folder or a zip.
+async function modsDirectory() {
+    const save = await (await gameDirectory()).getDirectoryHandle('save', {create: true});
+    return save.getDirectoryHandle('mods', {create: true});
+}
+
+async function readText(directory, name) {
+    try {
+        return await (await (await directory.getFileHandle(name)).getFile()).text();
+    } catch {
+        return null;
+    }
+}
+
+// The stored mods, as [{id, name, version}].
+async function storedMods() {
+    const mods = [];
+    for await (const [id, handle] of (await modsDirectory()).entries()) {
+        if (handle.kind !== 'directory') {
+            continue;
+        }
+        let manifest = {};
+        try {
+            manifest = JSON.parse(await readText(handle, 'mod.json') ?? '{}');
+        } catch {
+            manifest = {};
+        }
+        mods.push({id, name: manifest.name ?? id, version: manifest.version ?? ''});
+    }
+    return mods.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Splits chosen files into mods: the files themselves when mod.json is at the top, else each top folder that
+// holds one. Each mod is stored under its manifest's id (its folder's name when it has none).
+async function storeMods(files) {
+    const isManifest = (parts) => parts.at(-1).toLowerCase() === 'mod.json';
+    const roots = new Set();
+    for (const [parts] of files) {
+        if (isManifest(parts) && parts.length <= 2) {
+            roots.add(parts.length === 1 ? '' : parts[0]);
+        }
+    }
+    if (roots.size === 0) {
+        throw new Error('no mod.json in it, at the top or in a folder at the top');
+    }
+    const copies = [];
+    for (const root of roots) {
+        const inside = files.filter(([parts]) => root === '' || (parts.length > 1 && parts[0] === root))
+            .map(([parts, blob]) => [root === '' ? parts : parts.slice(1), blob]);
+        const manifest = inside.find(([parts]) => parts.length === 1 && isManifest(parts));
+        let id = root;
+        try {
+            id = JSON.parse(await manifest[1].text()).id || root;
+        } catch {
+            id = root;
+        }
+        if (!id || /[\\/]|^\.\.?$/.test(id)) {
+            throw new Error(`a mod has no usable id (${id || 'none'})`);
+        }
+        await (await modsDirectory()).removeEntry(id, {recursive: true}).catch(() => {});
+        copies.push(...inside.map(([parts, blob]) => [['save', 'mods', id, ...parts].join('/'), blob]));
+    }
+    await copyFiles(copies, $('mod-progress'));
+}
+
+async function modsFromFolder(list) {
+    return [...list].map((file) => [file.webkitRelativePath.split('/').slice(1), file]);
+}
+
+// A zip's own top folder is kept, so a zip of one mod's folder and a zip of its contents both work.
+async function modsFromZip(file) {
+    const files = [];
+    for (const [path, entry] of await dcZip.open(file)) {
+        files.push([path.split('/').filter(Boolean), await entry.read()]);
+    }
+    return files;
+}
+
+async function refreshMods() {
+    const list = $('mod-list');
+    list.replaceChildren();
+    const mods = await storedMods();
+    if (mods.length === 0) {
+        const none = document.createElement('li');
+        none.textContent = 'None yet.';
+        none.style.color = 'var(--dim)';
+        list.append(none);
+    }
+    for (const mod of mods) {
+        const item = document.createElement('li');
+        item.textContent = `${mod.name} ${mod.version} `;
+        const remove = document.createElement('button');
+        remove.className = 'secondary';
+        remove.textContent = 'Remove';
+        remove.style.padding = '2px 8px';
+        remove.addEventListener('click', async () => {
+            await (await modsDirectory()).removeEntry(mod.id, {recursive: true}).catch(() => {});
+            await refreshMods();
+        });
+        item.append(remove);
+        list.append(item);
+    }
+}
+
 function describe(what) {
     switch (what.kind) {
         case 'data.zip':
@@ -221,8 +325,10 @@ async function refresh() {
     const what = await stored();
     $('pick').hidden = what !== null;
     $('ready').hidden = what === null;
+    $('mods').hidden = what === null;
     if (what) {
         $('stored').textContent = describe(what);
+        await refreshMods();
         setStatus('Ready.');
     } else {
         setStatus('No game data in this browser yet.');
@@ -561,6 +667,24 @@ async function main() {
     };
     $('file').addEventListener('change', choose((files) => storeFile(files[0])));
     $('folder').addEventListener('change', choose(storeFolder));
+    const addMods = (gather) => async (event) => {
+        const chosen = event.target.files;
+        if (!chosen || chosen.length === 0) {
+            return;
+        }
+        setStatus('Adding the mod…');
+        try {
+            await storeMods(await gather(chosen));
+            setStatus('Ready.');
+        } catch (error) {
+            setStatus(`Could not add it: ${error.message ?? error}`);
+            $('mod-progress').hidden = true;
+        }
+        event.target.value = '';
+        await refreshMods();
+    };
+    $('mod-folder').addEventListener('change', addMods(modsFromFolder));
+    $('mod-zip').addEventListener('change', addMods((files) => modsFromZip(files[0])));
     $('start').addEventListener('click', start);
     $('forget').addEventListener('click', async () => {
         await removeAll();
