@@ -40,7 +40,9 @@ window.dcZip = (() => {
             const nameLength = u16(directory, at + 28);
             const skip = u16(directory, at + 30) + u16(directory, at + 32);
             const local = u32(directory, at + 42);
-            const name = decoder.decode(new Uint8Array(directory.buffer, directory.byteOffset + at + 46, nameLength));
+            // Windows' own zips write backslashes.
+            const name = decoder.decode(new Uint8Array(directory.buffer, directory.byteOffset + at + 46, nameLength))
+                .replace(/\\/g, '/');
             at += 46 + nameLength + skip;
             if (name.endsWith('/')) {
                 continue;
@@ -48,7 +50,7 @@ window.dcZip = (() => {
             if (method !== 0 && method !== 8) {
                 throw new Error(`${name} is packed a way this page cannot read (method ${method})`);
             }
-            entries.set(name.replace(/\\/g, '/'), {
+            entries.set(name, {
                 size,
                 async read() {
                     const header = await view(blob, local, local + 30);
