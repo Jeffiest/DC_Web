@@ -1,5 +1,6 @@
 #include <chrono>
 #include "moonmod/runtime.hpp"
+#include "moonmod/symlinks.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -55,19 +56,6 @@ bool NativeJsonApiCallable(std::string_view path) {
 Json DefaultProfile() {
     return {{"format_version", 1}, {"enabled", Json::object()}, {"settings", Json::object()},
             {"native_trusted", Json::object()}};
-}
-
-bool ContainsSymlink(const std::filesystem::path &path) {
-    std::filesystem::path current = path.root_path();
-    for (const auto &part : path.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        current /= part;
-        std::error_code ec;
-        const auto status = std::filesystem::symlink_status(current, ec);
-        if (ec && ec != std::errc::no_such_file_or_directory) return true;
-        if (!ec && std::filesystem::is_symlink(status)) return true;
-    }
-    return false;
 }
 
 
@@ -239,7 +227,7 @@ struct Runtime::Impl {
         error.clear();
         profile_file = config.save_root / "moonmod" / "profile.json";
         profile = DefaultProfile();
-        if (ContainsSymlink(profile_file)) {
+        if (moonmod::ContainsSymlinkBelow(profile_file, config.save_root)) {
             error = "MoonFactory profile path contains a symbolic link; defaults are active";
             return false;
         }
@@ -274,7 +262,7 @@ struct Runtime::Impl {
 
     bool SaveProfile(std::string &error) const {
         error.clear();
-        if (ContainsSymlink(profile_file)) {
+        if (moonmod::ContainsSymlinkBelow(profile_file, config.save_root)) {
             error = "MoonFactory profile path contains a symbolic link";
             return false;
         }
@@ -286,7 +274,8 @@ struct Runtime::Impl {
         }
         auto temp = profile_file;
         temp += ".tmp";
-        if (ContainsSymlink(profile_file) || ContainsSymlink(temp)) {
+        if (moonmod::ContainsSymlinkBelow(profile_file, config.save_root) ||
+            moonmod::ContainsSymlinkBelow(temp, config.save_root)) {
             error = "MoonFactory profile path contains a symbolic link";
             return false;
         }
@@ -1129,7 +1118,7 @@ ApiCallResult Runtime::Quests(std::string_view mod_id) const {
     if (module != impl_->modules.end()) return module->second->GetQuests();
 
     const std::filesystem::path storage_file = impl_->config.save_root / "moonmod" / "data" / record->id / "storage.json";
-    if (ContainsSymlink(storage_file)) {
+    if (moonmod::ContainsSymlinkBelow(storage_file, impl_->config.save_root)) {
         return {ApiCallStatus::Failed, nullptr, "saved quest data path contains a symbolic link"};
     }
     std::error_code ec;
@@ -1219,7 +1208,7 @@ ApiCallResult Runtime::Skills(std::string_view mod_id) const {
     if (module != impl_->modules.end()) return module->second->GetSkills();
 
     const std::filesystem::path storage_file = impl_->config.save_root / "moonmod" / "data" / record->id / "storage.json";
-    if (ContainsSymlink(storage_file)) {
+    if (moonmod::ContainsSymlinkBelow(storage_file, impl_->config.save_root)) {
         return {ApiCallStatus::Failed, nullptr, "saved skill data path contains a symbolic link"};
     }
     std::error_code ec;

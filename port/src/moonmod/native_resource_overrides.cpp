@@ -1,4 +1,5 @@
 #include "moonmod/native_resource_overrides.hpp"
+#include "moonmod/symlinks.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -102,19 +103,6 @@ bool ValidResourcePath(std::string_view input, std::filesystem::path &relative) 
            });
 }
 
-bool ContainsSymlink(const std::filesystem::path &path) {
-    std::filesystem::path current = path.root_path();
-    for (const auto &part : path.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        current /= part;
-        std::error_code error;
-        const auto status = std::filesystem::symlink_status(current, error);
-        if (error && error != std::errc::no_such_file_or_directory) return true;
-        if (!error && std::filesystem::is_symlink(status)) return true;
-    }
-    return false;
-}
-
 } // namespace
 
 ApiCallResult RegisterNativeResourceOverride(std::string_view owner, const std::filesystem::path &package_root,
@@ -147,11 +135,11 @@ ApiCallResult RegisterNativeResourceOverride(std::string_view owner, const std::
 
     std::error_code error;
     const std::filesystem::path canonical_root = std::filesystem::canonical(package_root, error);
-    if (error || ContainsSymlink(package_root)) {
+    if (error || moonmod::ContainsSymlinkBelow(package_root, package_root.parent_path())) {
         return {ApiCallStatus::Failed, nullptr, "mod package path is missing or contains a symbolic link"};
     }
     const std::filesystem::path candidate = package_root / relative_path;
-    if (ContainsSymlink(candidate)) {
+    if (moonmod::ContainsSymlinkBelow(candidate, package_root)) {
         return {ApiCallStatus::Failed, nullptr, "resource path contains a symbolic link"};
     }
     const std::filesystem::path resolved = std::filesystem::canonical(candidate, error);

@@ -1,5 +1,6 @@
 #include "doorway_view.hpp"
 #include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/symlinks.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/choice_panel.hpp"
 #include "moonmod/map_screen.hpp"
@@ -5469,19 +5470,6 @@ bool ReadMonsterHandle(std::string_view handle, int &slot, std::uint32_t &genera
     return true;
 }
 
-bool ContainsSymlink(const std::filesystem::path &path) {
-    std::filesystem::path current = path.root_path();
-    for (const auto &part : path.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        current /= part;
-        std::error_code ec;
-        const auto status = std::filesystem::symlink_status(current, ec);
-        if (ec && ec != std::errc::no_such_file_or_directory) return true;
-        if (!ec && std::filesystem::is_symlink(status)) return true;
-    }
-    return false;
-}
-
 std::filesystem::path ItemSlotRegistryPath(const std::filesystem::path &save_root) {
     return save_root / "moonmod" / "game-content" / "chronicle-item-slots.json";
 }
@@ -5494,7 +5482,7 @@ bool LoadItemSlotRegistry(const std::filesystem::path &save_root, Json &assignme
         return false;
     }
     std::filesystem::path path = ItemSlotRegistryPath(save_root);
-    if (ContainsSymlink(path)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root)) {
         error = "Chronicle item slot registry path contains a symbolic link";
         return false;
     }
@@ -5503,7 +5491,7 @@ bool LoadItemSlotRegistry(const std::filesystem::path &save_root, Json &assignme
         if (ec) error = "Chronicle item slot registry could not be inspected: " + ec.message();
         if (ec) return false;
         path += ".bak";
-        if (ContainsSymlink(path)) {
+        if (moonmod::ContainsSymlinkBelow(path, save_root)) {
             error = "Chronicle item slot registry backup path contains a symbolic link";
             return false;
         }
@@ -5551,11 +5539,11 @@ bool LoadItemSlotRegistry(const std::filesystem::path &save_root, Json &assignme
 bool SaveItemSlotRegistry(const std::filesystem::path &save_root, const Json &assignments, std::string &error) {
     const std::filesystem::path path = ItemSlotRegistryPath(save_root);
     const std::filesystem::path backup = path.string() + ".bak";
-    if (ContainsSymlink(path)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root)) {
         error = "Chronicle item slot registry path contains a symbolic link";
         return false;
     }
-    if (ContainsSymlink(backup)) {
+    if (moonmod::ContainsSymlinkBelow(backup, save_root)) {
         error = "Chronicle item slot registry backup path contains a symbolic link";
         return false;
     }
@@ -5566,7 +5554,7 @@ bool SaveItemSlotRegistry(const std::filesystem::path &save_root, const Json &as
         return false;
     }
     const std::filesystem::path temporary = path.string() + ".tmp";
-    if (ContainsSymlink(temporary)) {
+    if (moonmod::ContainsSymlinkBelow(temporary, save_root)) {
         error = "Chronicle item slot registry temporary path contains a symbolic link";
         return false;
     }
@@ -5663,7 +5651,7 @@ bool LoadWeaponSlotRegistry(const std::filesystem::path &save_root, Json &assign
         return false;
     }
     std::filesystem::path path = WeaponSlotRegistryPath(save_root);
-    if (ContainsSymlink(path)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root)) {
         error = "Chronicle weapon slot registry path contains a symbolic link";
         return false;
     }
@@ -5674,7 +5662,7 @@ bool LoadWeaponSlotRegistry(const std::filesystem::path &save_root, Json &assign
             return false;
         }
         path += ".bak";
-        if (ContainsSymlink(path)) {
+        if (moonmod::ContainsSymlinkBelow(path, save_root)) {
             error = "Chronicle weapon slot registry backup path contains a symbolic link";
             return false;
         }
@@ -5723,7 +5711,8 @@ bool SaveWeaponSlotRegistry(const std::filesystem::path &save_root, const Json &
     const std::filesystem::path path = WeaponSlotRegistryPath(save_root);
     const std::filesystem::path backup = path.string() + ".bak";
     const std::filesystem::path temporary = path.string() + ".tmp";
-    if (ContainsSymlink(path) || ContainsSymlink(backup) || ContainsSymlink(temporary)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root) || moonmod::ContainsSymlinkBelow(backup, save_root) ||
+        moonmod::ContainsSymlinkBelow(temporary, save_root)) {
         error = "Chronicle weapon slot registry path contains a symbolic link";
         return false;
     }
@@ -5801,7 +5790,7 @@ bool LoadGeoramaPieceSlotRegistry(const std::filesystem::path &save_root, Json &
         return false;
     }
     const std::filesystem::path path = GeoramaPieceSlotRegistryPath(save_root);
-    if (ContainsSymlink(path)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root)) {
         error = "Chronicle Georama slot registry path contains a symbolic link";
         return false;
     }
@@ -5858,7 +5847,8 @@ bool SaveGeoramaPieceSlotRegistry(const std::filesystem::path &save_root, const 
     const std::filesystem::path path = GeoramaPieceSlotRegistryPath(save_root);
     const std::filesystem::path backup = path.string() + ".bak";
     const std::filesystem::path temporary = path.string() + ".tmp";
-    if (ContainsSymlink(path) || ContainsSymlink(backup) || ContainsSymlink(temporary)) {
+    if (moonmod::ContainsSymlinkBelow(path, save_root) || moonmod::ContainsSymlinkBelow(backup, save_root) ||
+        moonmod::ContainsSymlinkBelow(temporary, save_root)) {
         error = "Chronicle Georama slot registry path contains a symbolic link";
         return false;
     }

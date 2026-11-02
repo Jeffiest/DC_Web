@@ -1,4 +1,5 @@
 #include "moonmod/audio_api.hpp"
+#include "moonmod/symlinks.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -85,19 +86,6 @@ std::string QualifiedId(std::string_view owner, std::string_view local_id) {
     return std::string(owner) + ":" + std::string(local_id);
 }
 
-bool ContainsSymlink(const std::filesystem::path &path) {
-    std::filesystem::path current = path.root_path();
-    for (const auto &part : path.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        current /= part;
-        std::error_code error;
-        const auto status = std::filesystem::symlink_status(current, error);
-        if (error && error != std::errc::no_such_file_or_directory) return true;
-        if (!error && std::filesystem::is_symlink(status)) return true;
-    }
-    return false;
-}
-
 bool ResolveAudioPath(const std::filesystem::path &package_root, std::string_view relative,
                       std::filesystem::path &resolved, std::size_t &file_size, std::string &error) {
     if (relative.empty() || relative.size() > 240 || relative.find('\\') != std::string_view::npos ||
@@ -131,7 +119,7 @@ bool ResolveAudioPath(const std::filesystem::path &package_root, std::string_vie
         error = "audio path must use a .wav, .flac, or .ogg file";
         return false;
     }
-    if (ContainsSymlink(package_root)) {
+    if (moonmod::ContainsSymlinkBelow(package_root, package_root.parent_path())) {
         error = "mod package path contains a symbolic link";
         return false;
     }
@@ -142,7 +130,7 @@ bool ResolveAudioPath(const std::filesystem::path &package_root, std::string_vie
         return false;
     }
     const std::filesystem::path candidate = package_root / relative_path;
-    if (ContainsSymlink(candidate)) {
+    if (moonmod::ContainsSymlinkBelow(candidate, package_root)) {
         error = "audio path contains a symbolic link";
         return false;
     }

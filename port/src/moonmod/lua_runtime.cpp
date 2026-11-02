@@ -1,4 +1,5 @@
 #include "lua_runtime.hpp"
+#include "moonmod/symlinks.hpp"
 #include "moonmod/manager_ui.hpp"
 #include "moonmod/runtime.hpp"
 #include "moonmod/native_resource_overrides.hpp"
@@ -110,19 +111,6 @@ bool ValidLocalizationKey(std::string_view key) {
            std::ranges::all_of(key, [](char value) {
                return AsciiAlnum(value) || value == '.' || value == '_' || value == '-';
            });
-}
-
-bool ContainsSymlink(const std::filesystem::path &path) {
-    std::filesystem::path current = path.root_path();
-    for (const auto &part : path.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        current /= part;
-        std::error_code ec;
-        const auto status = std::filesystem::symlink_status(current, ec);
-        if (ec && ec != std::errc::no_such_file_or_directory) return true;
-        if (!ec && std::filesystem::is_symlink(status)) return true;
-    }
-    return false;
 }
 
 // Storage tables: a 1..n sequence is saved as a JSON array; any other table as an
@@ -1022,11 +1010,11 @@ struct LuaMod::Impl {
 
         std::error_code error;
         const std::filesystem::path package_root = std::filesystem::canonical(manifest.package_root, error);
-        if (error || ContainsSymlink(manifest.package_root)) {
+        if (error || moonmod::ContainsSymlinkBelow(manifest.package_root, manifest.package_root.parent_path())) {
             return {ApiCallStatus::Failed, nullptr, "mod package path is missing or contains a symbolic link"};
         }
         const std::filesystem::path candidate = manifest.package_root / relative_path;
-        if (ContainsSymlink(candidate)) {
+        if (moonmod::ContainsSymlinkBelow(candidate, manifest.package_root)) {
             return {ApiCallStatus::Failed, nullptr, "resource path contains a symbolic link"};
         }
         const std::filesystem::path resolved = std::filesystem::canonical(candidate, error);
@@ -3171,7 +3159,7 @@ struct LuaMod::Impl {
     bool FlushStorage(std::string &error) {
         if (!storage_dirty) return true;
         std::error_code ec;
-        if (ContainsSymlink(storage_file)) {
+        if (moonmod::ContainsSymlinkBelow(storage_file, config.save_root)) {
             error = "mod storage path contains a symbolic link";
             return false;
         }
@@ -3182,7 +3170,8 @@ struct LuaMod::Impl {
         }
         auto temp = storage_file;
         temp += ".tmp";
-        if (ContainsSymlink(storage_file) || ContainsSymlink(temp)) {
+        if (moonmod::ContainsSymlinkBelow(storage_file, config.save_root) ||
+            moonmod::ContainsSymlinkBelow(temp, config.save_root)) {
             error = "mod storage path contains a symbolic link";
             return false;
         }
@@ -3356,7 +3345,7 @@ struct LuaMod::Impl {
 
     bool LoadStorage(std::string &error) {
         std::error_code ec;
-        if (ContainsSymlink(storage_file)) {
+        if (moonmod::ContainsSymlinkBelow(storage_file, config.save_root)) {
             error = "mod storage path contains a symbolic link";
             return false;
         }
