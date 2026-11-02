@@ -15,6 +15,11 @@ include(FetchContent)
 add_compile_options(-pthread -fexceptions)
 add_link_options(-pthread -fexceptions)
 
+# A game link runs Asyncify and wasm-opt over the whole game in several GiB; darkcloud and darkcloud_gl linking at
+# once ran a CI runner out of memory, so links take turns.
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS dc_web_link=1)
+set(CMAKE_JOB_POOL_LINK dc_web_link)
+
 # SDL3, static.
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
