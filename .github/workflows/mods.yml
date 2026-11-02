@@ -1,0 +1,30 @@
+# Publishes each mod version in the page's list (port/web/site/mods/catalog.json) as the release
+# mod-<id>-<version>, its folder zipped from the MoonMod commit the list names (port/web/mods/catalog.py). A version
+# already released is left alone.
+name: mods
+
+on:
+  push:
+    branches: [main]
+    paths: ['port/web/site/mods/catalog.json', 'port/web/mods/**']
+  pull_request:
+    paths: ['port/web/site/mods/catalog.json', 'port/web/mods/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the list
+        run: python3 port/web/mods/catalog.py check
+      - name: Make the zips (pull requests stop here)
+        run: python3 port/web/mods/catalog.py publish --dry-run
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        run: python3 port/web/mods/catalog.py publish

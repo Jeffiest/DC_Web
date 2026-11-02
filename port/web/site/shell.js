@@ -562,6 +562,126 @@ async function refreshMods() {
     }
 }
 
+// The mods for the PC (mods/catalog.json, port/web/mods/catalog.py): each mod version with the build it was
+// confirmed with, both GitHub releases of the repository the list names. The newest version of each mod comes
+// first, the older ones folded under it.
+const PC_BUILDS = {
+    windows: 'darkcloud-windows-x64.zip',
+    linux: 'darkcloud-linux-x86_64.flatpak',
+    macos: 'darkcloud-macos-arm64.tar.gz',
+};
+
+function pcSystem() {
+    const platform = (navigator.userAgentData?.platform ?? navigator.platform ?? '').toLowerCase();
+    if (platform.includes('mac')) {
+        return 'macos';
+    }
+    return platform.includes('linux') && !/android/i.test(navigator.userAgent) ? 'linux' : 'windows';
+}
+
+function versionParts(version) {
+    return version.split(/[+-]/)[0].split('.').map(Number);
+}
+
+function newerFirst(a, b) {
+    const [x, y] = [versionParts(a.version), versionParts(b.version)];
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+}
+
+// The repository's release tags, or null when GitHub can't be asked (then every link is offered).
+async function releaseTags(repository) {
+    try {
+        const tags = new Set();
+        for (let page = 1; page <= 10; page++) {
+            const response = await fetch(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`);
+            if (!response.ok) {
+                return null;
+            }
+            const releases = await response.json();
+            releases.forEach((release) => tags.add(release.tag_name));
+            if (releases.length < 100) {
+                return tags;
+            }
+        }
+        return tags;
+    } catch {
+        return null;
+    }
+}
+
+async function showPcMods() {
+    let catalog;
+    try {
+        catalog = await (await fetch('mods/catalog.json', {cache: 'no-cache'})).json();
+    } catch {
+        return;
+    }
+    const entries = Array.isArray(catalog?.mods) ? catalog.mods : [];
+    $('pc-mods').hidden = entries.length === 0;
+    if (entries.length === 0) {
+        return;
+    }
+    const released = await releaseTags(catalog.repository);
+    const download = (tag, file) => `https://github.com/${catalog.repository}/releases/download/${tag}/${file}`;
+    const link = (text, tag, file, secondary) => {
+        const ready = released === null || released.has(tag);
+        return element('a', {
+            className: `button${secondary ? ' secondary' : ''}${ready ? '' : ' unpublished'}`,
+            href: download(tag, file),
+            textContent: ready ? text : `${text} (not published yet)`,
+        });
+    };
+    const versions = new Map();
+    for (const entry of entries) {
+        versions.set(entry.id, [...(versions.get(entry.id) ?? []), entry]);
+    }
+    const draw = () => {
+        const system = $('pc-system').value;
+        const systemName = $('pc-system').selectedOptions[0].textContent;
+        const list = $('pc-mod-list');
+        list.replaceChildren();
+        const sorted = [...versions.values()].map((all) => all.sort(newerFirst))
+            .sort((a, b) => a[0].name.localeCompare(b[0].name));
+        for (const [latest, ...older] of sorted) {
+            const buttons = (entry) => {
+                const build = `build-${entry.build.slice(0, 8)}`;
+                return element('div', {className: 'row'},
+                    link(`Game build ${entry.build.slice(0, 8)} for ${systemName}`, build, PC_BUILDS[system]),
+                    link(`${entry.name} ${entry.version}`, `mod-${entry.id}-${entry.version}`,
+                        `${entry.id}-${entry.version}.zip`, true));
+            };
+            const confirmed = (entry) =>
+                `Confirmed with build ${entry.build.slice(0, 8)}${entry.confirmed ? ` on ${entry.confirmed}` : ''}.`;
+            const item = element('li', {},
+                element('div', {}, element('strong', {textContent: latest.name}), ' ',
+                    element('small', {style: 'color: var(--dim)', textContent: [latest.version,
+                        latest.author && `by ${latest.author}`].filter(Boolean).join(' · ')})));
+            const note = (text) => item.append(element('div', {className: 'mod-note', style: 'margin-left: 0',
+                textContent: text}));
+            if (latest.description) {
+                note(latest.description);
+            }
+            if (latest.note) {
+                note(latest.note);
+            }
+            note(confirmed(latest));
+            item.append(buttons(latest));
+            if (older.length > 0) {
+                const panel = element('details', {}, element('summary', {textContent: `Older versions (${older.length})`}));
+                for (const entry of older) {
+                    panel.append(element('div', {style: 'margin-top: 8px'},
+                        element('div', {textContent: `${entry.version}: ${confirmed(entry)}`}), buttons(entry)));
+                }
+                item.append(panel);
+            }
+            list.append(item);
+        }
+    };
+    $('pc-system').value = pcSystem();
+    $('pc-system').addEventListener('change', draw);
+    draw();
+}
+
 function describe(what) {
     switch (what.kind) {
         case 'data.zip':
@@ -945,6 +1065,7 @@ async function main() {
     };
     $('mod-folder').addEventListener('change', addMods(modsFromFolder));
     $('mod-zip').addEventListener('change', addMods((files) => modsFromZip(files[0])));
+    showPcMods();
     $('mods-on').checked = modsOn();
     $('mods-on').addEventListener('change', async () => {
         setModsOn($('mods-on').checked);

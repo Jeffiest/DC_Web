@@ -45,6 +45,15 @@
   .settings select, .settings input[type=text], .settings input[type=number] { background: #24242d; color: var(--fg);
     border: 1px solid #33333d; border-radius: 4px; padding: 3px 6px; font: inherit; max-width: 40vw; }
   input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+  #pc-mod-list { list-style: none; margin: 12px 0 0; padding: 0; }
+  #pc-mod-list > li { border-top: 1px solid #262630; padding: 10px 0; }
+  #pc-mod-list .row { margin-top: 8px; }
+  #pc-mod-list .row a.button { text-decoration: none; }
+  #pc-mod-list a.button.unpublished { opacity: 0.45; pointer-events: none; }
+  #pc-mod-list details { margin-top: 6px; font-size: 14px; }
+  #pc-mod-list summary { cursor: pointer; color: var(--accent); }
+  #pc-system { background: #24242d; color: var(--fg); border: 1px solid #33333d; border-radius: 4px; padding: 3px 6px;
+    font: inherit; }
 
   /* The game: the whole window, the canvas scaled to fit. */
   #game { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; }
@@ -125,6 +134,18 @@
       <a class="button secondary" href="anim/" style="text-decoration: none">Animation editor</a>
     </div>
     <progress id="mod-progress" hidden></progress>
+  </div>
+  <div id="pc-mods" class="card" hidden>
+    <h2>Mods for your PC</h2>
+    <p>Playing on your own computer? Each mod here was confirmed with one build of the game: download that build and
+      the mod, and unzip the mod into the game's <code>save/mods/</code> folder (beside the game, or the folder
+      <code>--save</code> names). The game data still comes from your own disc.</p>
+    <label>Your system <select id="pc-system">
+      <option value="windows">Windows (x64)</option>
+      <option value="linux">Linux (Flatpak, x86_64)</option>
+      <option value="macos">macOS (Apple silicon)</option>
+    </select></label>
+    <ul id="pc-mod-list"></ul>
   </div>
 </main>
 
