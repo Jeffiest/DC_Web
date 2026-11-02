@@ -296,7 +296,7 @@ if(EMSCRIPTEN)
     set_target_properties(darkcloud_gl PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     dc_link_game(darkcloud_gl)
     dc_web_link_vulkan(darkcloud_gl gl)
-    add_dependencies(darkcloud dc_web_site)
+    add_dependencies(darkcloud dc_web_site dc_web_builtin_mods)
     # After darkcloud, which has lang/ and glyphs/ copied for both to preload.
     add_dependencies(darkcloud_gl darkcloud)
     dc_web_gfx_tests()

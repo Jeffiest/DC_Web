@@ -281,6 +281,8 @@ async function storeMods(files) {
     }
     await copyFiles(copies, $('mod-progress'));
     await enableMods(ids, true);
+    // A built-in mod the player adds themselves is their own copy from now on.
+    await markBuiltin(ids, () => ({own: true}));
 }
 
 // MoonMod's profile, save/moonmod/profile.json, which the game's Mods menu also writes: which mods are on for the
@@ -341,6 +343,126 @@ async function enableMods(ids, on, forget = false) {
             }
         }
     });
+}
+
+// The mods built into the page: MoonMod's, zipped into mods/builtin/ at the commit the build pins
+// (port/web/mods/builtin.py), with index.json listing them. Each is installed into save/mods/ as if the player had
+// added it, but off, as the game leaves a new mod; save/moonmod/builtin.json remembers, per mod, the version
+// installed, whether the player removed it (it stays removed until restored) and whether the folder is the
+// player's own copy (added on this page, or there before), which is left alone. A newer built-in version is
+// copied over the old one's folder, so files the player saved into it (the animation editor's motions) stay.
+const BUILTIN_STATE = 'builtin.json';
+let builtinIndex;
+let builtinInstalling = null;
+
+async function builtinMods() {
+    if (builtinIndex === undefined) {
+        try {
+            const response = await fetch('mods/builtin/index.json', {cache: 'no-cache'});
+            builtinIndex = response.ok ? await response.json() : null;
+        } catch {
+            builtinIndex = null;
+        }
+        if (!Array.isArray(builtinIndex?.mods)) {
+            builtinIndex = {mods: []};
+        }
+    }
+    return builtinIndex.mods;
+}
+
+async function readBuiltinState() {
+    try {
+        const state = JSON.parse(await readText(await profileFolder(), BUILTIN_STATE) ?? '{}');
+        return state && typeof state === 'object' && !Array.isArray(state) ? state : {};
+    } catch {
+        return {};
+    }
+}
+
+async function writeBuiltinState(state) {
+    const writable = await (await (await profileFolder()).getFileHandle(BUILTIN_STATE, {create: true}))
+        .createWritable();
+    await writable.write(JSON.stringify(state, null, 2));
+    await writable.close();
+}
+
+// Changes one mod's record in builtin.json, for a mod the player adds or removes on the page.
+async function markBuiltin(ids, record) {
+    const listed = new Set((await builtinMods()).map((mod) => mod.id));
+    const state = await readBuiltinState();
+    let changed = false;
+    for (const id of ids) {
+        if (listed.has(id)) {
+            state[id] = record(state[id] ?? {});
+            changed = true;
+        }
+    }
+    if (changed) {
+        await writeBuiltinState(state);
+    }
+}
+
+// Installs the built-in mods that are missing or older, one install at a time. restore brings back the ones the
+// player removed. Resolves to false, with the status saying why, if one could not be installed.
+function installBuiltinMods(restore = false) {
+    const run = (builtinInstalling ?? Promise.resolve()).then(async () => {
+        const mods = await builtinMods();
+        if (mods.length === 0) {
+            return true;
+        }
+        const state = await readBuiltinState();
+        const folder = await modsDirectory();
+        const due = [];
+        for (const mod of mods) {
+            const record = state[mod.id] ?? {};
+            if (record.own || (record.removed && !restore)) {
+                continue;
+            }
+            const present = await entry(folder, mod.id);
+            if (present !== null && record.version === undefined && !record.removed) {
+                // There before the page had built-in mods: the player's own.
+                state[mod.id] = {own: true};
+                continue;
+            }
+            if (present === null || record.version !== mod.version || record.removed) {
+                due.push(mod);
+            }
+        }
+        if (due.length === 0) {
+            await writeBuiltinState(state);
+            return true;
+        }
+        const start = $('start');
+        start.disabled = true;
+        try {
+            setStatus(`Installing the built-in mods (${due.map((mod) => mod.name).join(', ')})…`);
+            for (const mod of due) {
+                const response = await fetch(`mods/builtin/${mod.file}`);
+                if (!response.ok) {
+                    throw new Error(`${mod.file}: ${response.status}`);
+                }
+                const files = [];
+                for (const [path, inside] of await dcZip.open(await response.blob())) {
+                    const parts = path.split('/').filter(Boolean);
+                    if (parts.length > 1 && parts[0] === mod.id && !parts.includes('..')) {
+                        files.push([['save', 'mods', ...parts].join('/'), await inside.read()]);
+                    }
+                }
+                await copyFiles(files, $('mod-progress'));
+                state[mod.id] = {version: mod.version};
+                await writeBuiltinState(state);
+            }
+            return true;
+        } catch (error) {
+            setStatus(`Could not install the built-in mods: ${error.message ?? error}`);
+            $('mod-progress').hidden = true;
+            return false;
+        } finally {
+            start.disabled = false;
+        }
+    });
+    builtinInstalling = run.catch(() => {});
+    return run;
 }
 
 // Whether the game starts with mods: off starts it with MOONMOD_NO_MODS=1, every mod off for that run while the
@@ -505,6 +627,11 @@ async function refreshMods() {
     list.classList.toggle('off', !modsOn());
     const mods = await storedMods();
     const profile = await readProfile();
+    const builtin = new Map((await builtinMods()).map((mod) => [mod.id, mod]));
+    const builtinState = await readBuiltinState();
+    const removedBuiltin = [...builtin.keys()].filter((id) => builtinState[id]?.removed);
+    $('mod-restore').hidden = removedBuiltin.length === 0;
+    $('mod-restore').textContent = `Restore the built-in mods (${removedBuiltin.length})`;
     const byId = new Map(mods.map((mod) => [mod.id, mod]));
     const open = new Set([...list.querySelectorAll('details[open]')].map((panel) => panel.dataset.mod));
     list.replaceChildren();
@@ -520,16 +647,19 @@ async function refreshMods() {
             await refreshMods();
         });
         const manifest = mod.manifest;
+        const isBuiltin = builtin.has(mod.id) && builtinState[mod.id]?.version !== undefined;
         const title = element('span', {}, element('strong', {textContent: manifest.name ?? mod.id}),
-            ' ', element('small', {textContent: [manifest.version, manifest.author && `by ${manifest.author}`]
-                .filter(Boolean).join(' · ')}));
+            ' ', element('small', {textContent: [manifest.version, manifest.author && `by ${manifest.author}`,
+                isBuiltin && 'built in'].filter(Boolean).join(' · ')}));
         const remove = element('button', {className: 'secondary', textContent: 'Remove'});
         remove.addEventListener('click', async () => {
-            if (!confirm(`Remove ${manifest.name ?? mod.id} and its settings from this browser?`)) {
+            const again = builtin.has(mod.id) ? ' It is built in: "Restore the built-in mods" brings it back.' : '';
+            if (!confirm(`Remove ${manifest.name ?? mod.id} and its settings from this browser?${again}`)) {
                 return;
             }
             await (await modsDirectory()).removeEntry(mod.id, {recursive: true}).catch(() => {});
             await enableMods([mod.id], false, true);
+            await markBuiltin([mod.id], () => ({removed: true}));
             await refreshMods();
         });
         const item = element('li', {},
@@ -702,8 +832,11 @@ async function refresh() {
     $('mods').hidden = what === null;
     if (what) {
         $('stored').textContent = describe(what);
+        const installed = await installBuiltinMods();
         await refreshMods();
-        setStatus('Ready.');
+        if (installed) {
+            setStatus('Ready.');
+        }
     } else {
         setStatus('No game data in this browser yet.');
     }
@@ -1066,6 +1199,12 @@ async function main() {
     $('mod-folder').addEventListener('change', addMods(modsFromFolder));
     $('mod-zip').addEventListener('change', addMods((files) => modsFromZip(files[0])));
     showPcMods();
+    $('mod-restore').addEventListener('click', async () => {
+        if (await installBuiltinMods(true)) {
+            setStatus('Ready.');
+        }
+        await refreshMods();
+    });
     $('mods-on').checked = modsOn();
     $('mods-on').addEventListener('change', async () => {
         setModsOn($('mods-on').checked);

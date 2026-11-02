@@ -117,6 +117,21 @@ add_custom_target(dc_web_site
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${DC_WEB_DIR}/site ${CMAKE_BINARY_DIR}
     COMMENT "Copying the web page")
 
+# The mods built into the page (mods/builtin.py): every Chronicle mod in MoonMod at the commit mods/builtin.json
+# pins, zipped into mods/builtin/ beside the page, which installs them into the browser's save/mods/. MoonMod is
+# cloned into the build directory once; DC_MOONMOD_DIR names a checkout to read the commit from instead.
+set(DC_MOONMOD_DIR "" CACHE PATH "A MoonMod checkout holding the commit port/web/mods/builtin.json pins")
+set(DC_BUILTIN_MODS_ARGS --out ${CMAKE_BINARY_DIR}/mods/builtin --cache ${CMAKE_BINARY_DIR}/moonmod-src)
+if(DC_MOONMOD_DIR)
+    list(APPEND DC_BUILTIN_MODS_ARGS --moonmod ${DC_MOONMOD_DIR})
+endif()
+add_custom_target(dc_web_builtin_mods
+    COMMAND ${Python3_EXECUTABLE} ${DC_WEB_DIR}/mods/builtin.py ${DC_BUILTIN_MODS_ARGS}
+    DEPENDS ${DC_WEB_DIR}/mods/builtin.py ${DC_WEB_DIR}/mods/builtin.json
+    COMMENT "Zipping the built-in mods"
+    VERBATIM)
+add_dependencies(dc_web_builtin_mods dc_web_site)
+
 # What the page loads. The game runs on a pthread; the main thread keeps the page responsive, and the canvas
 # is handed to the game's thread, where WebGPU or WebGL2 draws to it. WasmFS mounts the browser's storage
 # (src/storage.cpp). lang/ and glyphs/, which the game reads beside its executable, are preloaded into the

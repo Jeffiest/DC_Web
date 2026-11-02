@@ -81,6 +81,15 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   time), and removes them. Before the game starts it turns each mod on or off and changes its settings, all in
   MoonMod's profile (`save/moonmod/profile.json`, which the game's Mods menu also writes); "Start the game with
   mods" off starts it with `MOONMOD_NO_MODS=1`. Native extensions (DLLs) do not load on the web.
+- **Built-in mods.** Every Chronicle mod in MoonMod's `mods/`, at the commit `port/web/mods/builtin.json` pins,
+  comes with the page: `mods/builtin.py` (the `dc_web_builtin_mods` target) zips each into the build's
+  `mods/builtin/<id>.zip` with `index.json` listing them. MoonMod is cloned into the build directory once;
+  `-DDC_MOONMOD_DIR=<checkout>` reads the commit from a local checkout instead. The page installs them into
+  `save/mods/` when it finds the game data, off until the player turns them on, as the game leaves a new mod, and
+  marks them "built in" on the Mods card. `save/moonmod/builtin.json` records each one's installed version, so a
+  newer pin is copied over the old folder (files the player saved into it, such as the animation editor's motions,
+  stay); a built-in mod the player removes stays removed until "Restore the built-in mods", and one they add
+  themselves is theirs and left alone. To ship newer mods, set the pin to a pushed MoonMod commit.
 - **Mods for the PC.** The page lists mods for players running the game on their own computer
   (`site/mods/catalog.json`), each version with the build it was confirmed with, and offers both for the
   player's system. Both are this repository's releases:

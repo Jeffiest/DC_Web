@@ -121,9 +121,10 @@
   </div>
   <div id="mods" class="card" hidden>
     <h2>Mods</h2>
-    <p>MoonMod mods load when the game starts. Add a mod's folder (the one holding <code>mod.json</code>), a folder
-      of mods, or a <code>.zip</code> of either. They are kept in this browser's storage with your saves. Turn each on
-      or off and change its settings here before you start; the game's own Mods menu changes them too.</p>
+    <p>MoonMod mods load when the game starts. MoonMod's own mods are built in: they are installed here for you, off
+      until you turn them on. Add others as a mod's folder (the one holding <code>mod.json</code>), a folder of mods,
+      or a <code>.zip</code> of either. They are kept in this browser's storage with your saves. Turn each on or off
+      and change its settings here before you start; the game's own Mods menu changes them too.</p>
     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
       <input id="mods-on" type="checkbox" checked> Start the game with mods
     </label>
@@ -131,6 +132,7 @@
     <div class="row">
       <label class="button secondary">Add a mod folder<input id="mod-folder" type="file" webkitdirectory></label>
       <label class="button secondary">Add a .zip<input id="mod-zip" type="file" accept=".zip"></label>
+      <button id="mod-restore" class="secondary" hidden>Restore the built-in mods</button>
       <a class="button secondary" href="anim/" style="text-decoration: none">Animation editor</a>
     </div>
     <progress id="mod-progress" hidden></progress>
