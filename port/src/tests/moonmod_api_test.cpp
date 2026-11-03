@@ -1873,6 +1873,12 @@ TEST(MoonModApi, ChronicleTuningForStatusMapSwapAndTheFatalGuard) {
     EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerSwapDelay(), 0.0f);
     EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"swap_delay", 0.5}}})).value["tuning"]["swap_delay"], 0.5);
     EXPECT_FALSE(tuning.map_hidden); // test.a replaced its set
+    // The Gauntlet's square map.
+    ASSERT_EQ(call("player.tuning_set", "test.d", Json::array({Json{{"map_window", true}}})).status, ApiCallStatus::Ok);
+    EXPECT_TRUE(moonmod::ChroniclePlayerMapWindow());
+    EXPECT_EQ(call("player.tuning_set", "test.d", Json::array({Json{{"map_window", 1}}})).status, ApiCallStatus::InvalidArgument);
+    ASSERT_EQ(call("player.tuning_set", "test.d", Json::array({Json::object()})).status, ApiCallStatus::Ok);
+    EXPECT_FALSE(moonmod::ChroniclePlayerMapWindow());
     for (const Json &bad : {Json{{"status_immune", {"sleep"}}}, Json{{"status_immune", "freeze"}}, Json{{"swap_delay", -1}},
                             Json{{"swap_delay", 5}}, Json{{"status_duration", 0}}, Json{{"map_hidden", "yes"}}}) {
         EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({bad})).status, ApiCallStatus::InvalidArgument) << bad.dump();

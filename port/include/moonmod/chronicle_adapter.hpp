@@ -86,6 +86,7 @@ struct ChroniclePlayerTuning {
     bool  map_reveal = false;           // the floor map acts as if the Map item were held
     bool  monster_reveal = false;       // monsters show on the map as if the Magical Crystal were held
     bool  map_hidden = false;           // no floor map at all (wins over map_reveal)
+    bool  map_window = false;           // the corner map is always the square that scrolls around the player
     float status_duration = 1.0f;       // scales the frames Freeze and Stamina last
     int   status_immune = 0;            // AILMENT_* bits the active player never takes
     float swap_delay = 1.0f;            // scales the battle menu's character-change waits (0 = none)

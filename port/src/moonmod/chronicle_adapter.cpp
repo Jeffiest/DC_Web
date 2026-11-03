@@ -130,6 +130,7 @@ void RefreshPlayerTuning() {
         combined.map_reveal = combined.map_reveal || tuning.map_reveal;
         combined.monster_reveal = combined.monster_reveal || tuning.monster_reveal;
         combined.map_hidden = combined.map_hidden || tuning.map_hidden;
+        combined.map_window = combined.map_window || tuning.map_window;
         combined.status_duration *= tuning.status_duration;
         combined.status_immune |= tuning.status_immune;
         combined.swap_delay *= tuning.swap_delay;
@@ -7978,6 +7979,7 @@ Json PlayerTuningJson(const ChroniclePlayerTuning &tuning) {
             {"map_reveal", tuning.map_reveal},
             {"monster_reveal", tuning.monster_reveal},
             {"map_hidden", tuning.map_hidden},
+            {"map_window", tuning.map_window},
             {"status_duration", tuning.status_duration},
             {"status_immune", StatusImmuneJson(tuning.status_immune)},
             {"swap_delay", tuning.swap_delay},
@@ -7995,7 +7997,7 @@ ApiCallResult SetPlayerTuning(std::string_view owner, const Json &args) {
     if (owner.empty() || !args.is_array() || args.size() != 1 || !args[0].is_object()) {
         return Invalid("expected a tuning object: run_speed, attack_anim_speed, recoil_scale, gauge_refill, thirst_drain, "
                        "durability_wear, status_duration (0.25 to 4), swap_delay (0 to 4), invincible_bonus_frames (0 to 120), "
-                       "map_reveal, monster_reveal, map_hidden, dodge_hop (booleans), status_immune (a list of ailment names), "
+                       "map_reveal, monster_reveal, map_hidden, map_window, dodge_hop (booleans), status_immune (a list of ailment names), "
                        "dodge_power (0 or 0.25 to 4), dodge_invincible_frames (0 to 60), extra_shots (0 to 2), shots_pierce (boolean), "
                        "reach_scale (0.25 to 4), first_person (boolean: false turns off R2's first-person view)");
     }
@@ -8029,9 +8031,12 @@ ApiCallResult SetPlayerTuning(std::string_view owner, const Json &args) {
             tuning.invincible_bonus_frames = static_cast<int>(frames);
             continue;
         }
-        if (key == "map_reveal" || key == "monster_reveal" || key == "map_hidden") {
+        if (key == "map_reveal" || key == "monster_reveal" || key == "map_hidden" || key == "map_window") {
             if (!value.is_boolean()) return Invalid(key + " must be a boolean");
-            (key == "map_reveal" ? tuning.map_reveal : (key == "monster_reveal" ? tuning.monster_reveal : tuning.map_hidden)) = value.get<bool>();
+            bool &flag = key == "map_reveal" ? tuning.map_reveal
+                       : key == "monster_reveal" ? tuning.monster_reveal
+                       : key == "map_hidden" ? tuning.map_hidden : tuning.map_window;
+            flag = value.get<bool>();
             continue;
         }
         if (key == "dodge_power") {
@@ -13221,6 +13226,7 @@ float ChroniclePlayerAttackAnimSpeed() { return g_player_tuning.attack_anim_spee
 bool ChroniclePlayerMapReveal() { return g_player_tuning.map_reveal; }
 bool ChroniclePlayerMonsterReveal() { return g_player_tuning.monster_reveal; }
 bool ChroniclePlayerMapHidden() { return g_player_tuning.map_hidden; }
+bool ChroniclePlayerMapWindow() { return g_player_tuning.map_window; }
 
 // A charged move, by character: Toan's held charge, Xiao's full-gauge shot, Goro's swing held into a second spin,
 // Ruby's full charge, Osmond's charged shot. Ungaga's attack is a combo with no charge.

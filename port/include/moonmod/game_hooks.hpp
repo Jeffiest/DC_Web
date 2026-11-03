@@ -25,6 +25,7 @@ float ChroniclePlayerDurabilityWearScale();
 bool  ChroniclePlayerMonsterReveal();
 bool  ChroniclePlayerMapReveal();
 bool  ChroniclePlayerMapHidden();
+bool  ChroniclePlayerMapWindow();
 void  ChronicleChargedActionTick();
 void  ChronicleShortcutDoorsTick();
 void  ChronicleZoneGatesTick();

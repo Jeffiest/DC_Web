@@ -719,9 +719,10 @@ void CDungeonMap::DrawMiniMap(float *pos, float angle) {
         DngMiniMapOriginX=380; DngMiniMapOriginY=64;
     }
     // MoonMod: a map that would shrink below 8-pixel tiles (several floors on one map) shows the part around the
-    // player instead, at 12-pixel tiles, scrolling as they walk.
+    // player instead, at 12-pixel tiles, scrolling as they walk; player.tuning_set's map_window asks for that square
+    // on every floor.
     DngMiniMapClipX1 = DngMiniMapClipY1 = -1;
-    if (!aerial && !platform::ConfigGet().fit_dungeon_map && DngMiniMapTile < 8) {
+    if (!aerial && !platform::ConfigGet().fit_dungeon_map && (DngMiniMapTile < 8 || moonmod::ChroniclePlayerMapWindow())) {
         constexpr int kTile = 12, kWide = 21, kHigh = 15;
         DngMiniMapTile = kTile;
         const int box_x = 380 + 256 - kWide * kTile, box_y = 64;
