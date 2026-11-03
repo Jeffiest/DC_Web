@@ -109,6 +109,7 @@ float ChroniclePlayerAttackAnimSpeed();
 bool ChroniclePlayerMapReveal();
 bool ChroniclePlayerMonsterReveal();
 bool ChroniclePlayerMapHidden();
+bool ChroniclePlayerMapWindow();
 // Charged hits: the dungeon loop reports each frame; a hit within a second of a charged move counts.
 void ChronicleChargedActionTick();
 // Shortcut doors: each frame, a locked door the player stands at opens with its key (dungeons.set_shortcuts).
