@@ -59,8 +59,6 @@ int MenuWeaponModelInfo[10][2];
 
 namespace {
 
-// Defined straight after MenuWeaponModelInfo: InitMenuWeaponModelReference clears twelve entries
-// of that ten-entry table, and the two extra land here.
 float MenuCharaOldAmbient[4];
 
 constexpr std::array<int, 6> defWeapon = {ITEM_WEAPON_DAGGER_BROKEN, ITEM_WEAPON_WOODENSLINGSHOT_BROKEN, ITEM_WEAPON_MALLET_BROKEN, ITEM_WEAPON_GOLD_RING_BROKEN, ITEM_WEAPON_FIGHTING_STICK_BROKEN, ITEM_WEAPON_MACHINE_GUN_BROKEN};
@@ -720,7 +718,10 @@ std::pair<std::string, std::string> WeaponNames(int chara, int weapon_index) {
 } // namespace
 
 void InitMenuWeaponModelReference() {
-    for (int i = 0; i < 12; i++) {
+    // Retail cleared twelve entries of this ten-entry table, and the two extra landed on whatever the linker put
+    // after it. On the web that was MenuWeaponModelBuildBuffer, which became 0xffffffff, and the weapon menu built
+    // its models there: "memory access out of bounds" as it opened. Every reader stops at ten.
+    for (int i = 0; i < static_cast<int>(std::size(MenuWeaponModelInfo)); i++) {
         int *entry = GetMenuWeaponModelInfo(i);
         entry[0] = -1;
         entry[1] = -1;
