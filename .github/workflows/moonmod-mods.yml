@@ -1,0 +1,77 @@
+# Keeps the page's built-in mods (port/web/mods/builtin.json) at MoonMod's main: every hour, if MoonMod's mods/
+# folder has changed since the pinned commit, the pin moves to main's commit, builtin.py checks it zips (every
+# manifest valid), and the change is committed to main. A push made with this workflow's token starts no workflow, so
+# it starts the web build itself, which publishes the page with the new mods; browsers then update the mods they
+# installed from the page (a mod whose version changed). Changes outside mods/ (MoonMod's engine patches) don't
+# move the pin: those come into DC_Web by hand, with the engine code they change.
+name: moonmod-mods
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: moonmod-mods
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Compare MoonMod's mods with the pin
+        id: compare
+        run: |
+          repo=$(python3 -c "import json; print(json.load(open('port/web/mods/builtin.json'))['repository'])")
+          path=$(python3 -c "import json; print(json.load(open('port/web/mods/builtin.json'))['path'])")
+          pinned=$(python3 -c "import json; print(json.load(open('port/web/mods/builtin.json'))['commit'])")
+          mkdir -p "$RUNNER_TEMP/moonmod" && cd "$RUNNER_TEMP/moonmod"
+          git init -q && git remote add origin "https://github.com/$repo.git"
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          git fetch -q --depth 1 --filter=blob:none origin "$pinned" "$latest"
+          before=$(git rev-parse "$pinned:$path")
+          after=$(git rev-parse "$latest:$path")
+          echo "pinned $pinned ($before), main $latest ($after)"
+          if [ "$before" = "$after" ]; then
+            echo "MoonMod's $path is as pinned."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Move the pin and check the mods zip
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          python3 - "${{ steps.compare.outputs.latest }}" <<'PY'
+          import json, sys
+          path = 'port/web/mods/builtin.json'
+          pin = json.load(open(path))
+          pin['commit'] = sys.argv[1]
+          open(path, 'w', newline='\n').write(json.dumps(pin, indent=2) + '\n')
+          PY
+          python3 port/web/mods/builtin.py --out "$RUNNER_TEMP/builtin" | tee "$RUNNER_TEMP/mods.txt"
+
+      - name: Commit, push and build the page
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          latest="${{ steps.compare.outputs.latest }}"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add port/web/mods/builtin.json
+          git commit -q -m "Built-in mods: MoonMod ${latest:0:8}" -m "$(tail -1 "$RUNNER_TEMP/mods.txt")"
+          for attempt in 1 2 3; do
+            git pull -q --rebase origin main && git push -q origin HEAD:main && break
+            sleep $((attempt * 5))
+          done
+          gh workflow run web.yml --ref main
