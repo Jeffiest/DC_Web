@@ -49,6 +49,8 @@
   #pc-mod-list > li { border-top: 1px solid #262630; padding: 10px 0; }
   #pc-mod-list .row { margin-top: 8px; }
   #pc-mod-list .row a.button { text-decoration: none; }
+  #pc a:not(.button) { color: var(--accent); }
+  #pc-builtin-list { padding-left: 20px; }
   #pc-mod-list a.button.unpublished { opacity: 0.45; pointer-events: none; }
   #pc-mod-list details { margin-top: 6px; font-size: 14px; }
   #pc-mod-list summary { cursor: pointer; color: var(--accent); }
@@ -137,16 +139,31 @@
     </div>
     <progress id="mod-progress" hidden></progress>
   </div>
-  <div id="pc-mods" class="card" hidden>
-    <h2>Mods for your PC</h2>
-    <p>Playing on your own computer? Each mod here was confirmed with one build of the game: download that build and
-      the mod, and unzip the mod into the game's <code>save/mods/</code> folder (beside the game, or the folder
-      <code>--save</code> names). The game data still comes from your own disc.</p>
+  <div id="pc" class="card">
+    <h2>Play on your PC</h2>
+    <p>The same game, built for your own computer from this page's code, with MoonMod's mods. The game data still
+      comes from your own disc (<a href="https://github.com/Jeffiest/DC_Web/blob/main/docs/PC.md">how to set it
+      up</a>).</p>
     <label>Your system <select id="pc-system">
       <option value="windows">Windows (x64)</option>
       <option value="linux">Linux (Flatpak, x86_64)</option>
       <option value="macos">macOS (Apple silicon)</option>
     </select></label>
+    <div class="row" style="margin-top: 12px">
+      <a id="pc-build" class="button" style="text-decoration: none">The game</a>
+      <a id="pc-mods-all" class="button secondary" style="text-decoration: none" hidden>All the mods (.zip)</a>
+    </div>
+    <p id="pc-build-note" class="mod-note" style="margin-left: 0"></p>
+    <p id="pc-install" class="mod-note" style="margin-left: 0"></p>
+    <details id="pc-builtin" hidden>
+      <summary>Each mod on its own</summary>
+      <ul id="pc-builtin-list"></ul>
+    </details>
+  </div>
+  <div id="pc-mods" class="card" hidden>
+    <h2>More mods for your PC</h2>
+    <p>Each mod here was confirmed with one build of the game: download that build and the mod, and unzip the mod
+      into the game's mods folder, as above.</p>
     <ul id="pc-mod-list"></ul>
   </div>
 </main>

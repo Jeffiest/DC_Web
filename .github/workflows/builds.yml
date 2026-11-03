@@ -1,6 +1,8 @@
 # Keeps each of main's PC builds as the GitHub release build-<commit>: the Windows zip, the macOS archive and the
-# Linux Flatpak that pc.yml and macos.yml make, which GitHub's artifacts would otherwise drop after 90 days. The
-# page's PC downloads (site/mods/catalog.json) link a mod to the build it was confirmed with by that release.
+# Linux Flatpak that pc.yml and macos.yml make, which GitHub's artifacts would otherwise drop after 90 days, with
+# darkcloud-mods.zip, MoonMod's mods that the commit builds into the web page (port/web/mods/builtin.py). The
+# page's "Play on your PC" card offers the newest of these releases; a release for main's newest commit is marked
+# GitHub's Latest. The page's mod list (site/mods/catalog.json) links a mod to the build it was confirmed with.
 #
 # It runs when either workflow finishes a push to main. Once the Windows and macOS jobs have both passed for the
 # commit, whichever workflow finished second publishes. The Flatpak goes in when its job passed too: it fetches
@@ -52,6 +54,11 @@ jobs:
           if passed "$pc" 'Build the Flatpak (Linux x86_64)'; then flatpak=true; fi
           { echo "ready=true"; echo "pc=$pc"; echo "macos=$macos"; echo "flatpak=$flatpak"; } >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@v4
+        if: steps.runs.outputs.ready == 'true'
+        with:
+          ref: ${{ env.SHA }}
+
       - name: Download the builds
         if: steps.runs.outputs.ready == 'true'
         run: |
@@ -64,6 +71,8 @@ jobs:
             gh run download "${{ steps.runs.outputs.pc }}" -n chronicle-x86_64.flatpak -D got/flatpak
             mv got/flatpak/*.flatpak out/darkcloud-linux-x86_64.flatpak
           fi
+          python3 port/web/mods/builtin.py --out got/mods
+          mv got/mods/darkcloud-mods.zip out/
           ls -l out
 
       - name: Publish the release
@@ -77,11 +86,22 @@ jobs:
           - **macOS (Apple silicon):** \`darkcloud-macos-arm64.tar.gz\`.
           - **Linux:** \`darkcloud-linux-x86_64.flatpak\`, when its build passed: \`flatpak install --user darkcloud-linux-x86_64.flatpak\`.
 
-          The game data comes from your own disc (docs/PC.md). Mods go in \`save/mods/\`, one folder per mod.
+          - **Mods:** \`darkcloud-mods.zip\`, MoonMod's mods as the web version has them built in. Unzip it into a
+            \`mods\` folder beside the game (beside \`darkcloud.exe\` on Windows) or the game's \`save/mods/\`; the
+            game's log names the folder it reads ("moonmod: mods folder"). New mods start off: turn them on in
+            Options > Game > Mod Manager.
+
+          The game data comes from your own disc (docs/PC.md).
           EOF
+          # GitHub's Latest is the release of main's newest commit, so a release finishing late for an older one
+          # doesn't take it.
+          latest=false
+          if [ "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" = "$SHA" ]; then latest=true; fi
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release upload "$tag" out/* --clobber
+            gh release edit "$tag" --notes-file notes.md
           else
             gh release create "$tag" out/* --target "$SHA" --title "Build ${SHA:0:8}" --notes-file notes.md \
               --latest=false || gh release upload "$tag" out/* --clobber
           fi
+          if [ "$latest" = true ]; then gh release edit "$tag" --latest; fi

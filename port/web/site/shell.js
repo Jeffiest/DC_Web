@@ -718,25 +718,100 @@ function newerFirst(a, b) {
     return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
 }
 
-// The repository's release tags, or null when GitHub can't be asked (then every link is offered).
-async function releaseTags(repository) {
-    try {
-        const tags = new Set();
-        for (let page = 1; page <= 10; page++) {
-            const response = await fetch(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`);
-            if (!response.ok) {
+// The repository's releases, newest first, or null when GitHub can't be asked. Asked once a page.
+const PAGE_REPOSITORY = 'Jeffiest/DC_Web';
+const releaseLists = new Map();
+
+function releases(repository) {
+    if (!releaseLists.has(repository)) {
+        releaseLists.set(repository, (async () => {
+            try {
+                const all = [];
+                for (let page = 1; page <= 10; page++) {
+                    const response = await fetch(
+                        `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`);
+                    if (!response.ok) {
+                        return null;
+                    }
+                    const listed = await response.json();
+                    all.push(...listed);
+                    if (listed.length < 100) {
+                        break;
+                    }
+                }
+                return all.sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''));
+            } catch {
                 return null;
             }
-            const releases = await response.json();
-            releases.forEach((release) => tags.add(release.tag_name));
-            if (releases.length < 100) {
-                return tags;
-            }
-        }
-        return tags;
-    } catch {
-        return null;
+        })());
     }
+    return releaseLists.get(repository);
+}
+
+// The repository's release tags, or null when GitHub can't be asked (then every link is offered).
+async function releaseTags(repository) {
+    const all = await releases(repository);
+    return all === null ? null : new Set(all.map((release) => release.tag_name));
+}
+
+const PC_SYSTEM_NAMES = {windows: 'Windows', linux: 'Linux', macos: 'macOS'};
+const PC_INSTALL = {
+    windows: 'Unzip the game anywhere and run darkcloud.exe. For mods, make a folder named mods beside ' +
+        'darkcloud.exe and unzip the mods into it, a folder per mod.',
+    linux: 'Install it with: flatpak install --user darkcloud-linux-x86_64.flatpak. For mods, unzip them into the ' +
+        "game's save/mods/ folder, a folder per mod.",
+    macos: "Unpack the archive and start the game. For mods, unzip them into the game's save/mods/ folder, a " +
+        'folder per mod.',
+};
+
+// "Play on your PC": the newest of this repository's build releases (build-<commit>, .github/workflows/builds.yml)
+// for the chosen system, and MoonMod's mods as the page builds them in (mods/builtin/, port/web/mods/builtin.py).
+// Shown whether or not this browser can run the game.
+async function showPcDownloads() {
+    const select = $('pc-system');
+    select.value = pcSystem();
+    const mods = await builtinMods();
+    const bundle = builtinIndex?.bundle;
+    if (bundle?.file) {
+        $('pc-mods-all').href = `mods/builtin/${bundle.file}`;
+        $('pc-mods-all').textContent = `All the mods (.zip, ${mib(bundle.size)})`;
+        $('pc-mods-all').hidden = false;
+    }
+    if (mods.length > 0) {
+        $('pc-builtin').hidden = false;
+        $('pc-builtin-list').replaceChildren(...mods.map((mod) => element('li', {},
+            element('a', {href: `mods/builtin/${mod.file}`, textContent: `${mod.name} ${mod.version}`}),
+            ' ', element('small', {style: 'color: var(--dim)', textContent: mod.id}))));
+    }
+    const builds = (await releases(PAGE_REPOSITORY))?.filter((release) => /^build-/.test(release.tag_name)) ?? null;
+    const draw = () => {
+        const system = select.value;
+        const file = PC_BUILDS[system];
+        const button = $('pc-build');
+        const note = $('pc-build-note');
+        $('pc-install').textContent = PC_INSTALL[system] + ' New mods start off: turn them on in Options > Game > ' +
+            'Mod Manager.';
+        if (builds === null) {
+            button.href = `https://github.com/${PAGE_REPOSITORY}/releases`;
+            button.textContent = `The game for ${PC_SYSTEM_NAMES[system]} (GitHub releases)`;
+            note.textContent = "GitHub couldn't be asked for the newest build; its releases page lists them all.";
+            return;
+        }
+        const release = builds.find((candidate) => candidate.assets?.some((asset) => asset.name === file));
+        const asset = release?.assets.find((candidate) => candidate.name === file);
+        button.hidden = !asset;
+        if (!asset) {
+            note.textContent = `There is no ${PC_SYSTEM_NAMES[system]} build yet.`;
+            return;
+        }
+        button.href = asset.browser_download_url;
+        button.textContent = `The game for ${PC_SYSTEM_NAMES[system]} (${mib(asset.size)})`;
+        const commit = release.tag_name.slice('build-'.length);
+        note.textContent = `Build ${commit}, ${(release.published_at ?? '').slice(0, 10)}. `;
+        note.append(element('a', {href: release.html_url, textContent: 'Every file of this build'}));
+    };
+    select.addEventListener('change', draw);
+    draw();
 }
 
 async function showPcMods() {
@@ -807,7 +882,6 @@ async function showPcMods() {
             list.append(item);
         }
     };
-    $('pc-system').value = pcSystem();
     $('pc-system').addEventListener('change', draw);
     draw();
 }
@@ -1122,6 +1196,7 @@ function showPreviousLog() {
 
 async function main() {
     showPreviousLog();
+    showPcDownloads().catch((error) => log(`[page error] PC downloads: ${error}`));
     $('fullscreen').addEventListener('click', () => {
         if (document.fullscreenElement) {
             document.exitFullscreen();

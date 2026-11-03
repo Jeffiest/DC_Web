@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The mods built into the web page: every mod for Chronicle in MoonMod's mods/ at the commit builtin.json names,
 each zipped as mods/builtin/<id>.zip beside the page with mods/builtin/index.json listing them. The page installs
-them into the browser's save/mods/ (site/shell.js, installBuiltinMods), so they are there without adding them.
+them into the browser's save/mods/ (site/shell.js, installBuiltinMods), so they are there without adding them, and
+offers them for the PC builds too, with all of them in one zip (darkcloud-mods.zip, also attached to each build
+release by .github/workflows/builds.yml).
 
     python port/web/mods/builtin.py --out port/build/web/mods/builtin [--moonmod <checkout>] [--cache <dir>]
 
@@ -28,6 +30,7 @@ sys.path.insert(0, str(HERE))
 from catalog import MOD_ID, VERSION, ZIP_TIME  # noqa: E402
 
 PIN = HERE / "builtin.json"
+BUNDLE = "darkcloud-mods.zip"
 GAME = "chronicle"
 
 
@@ -72,14 +75,16 @@ def mods_at(repo: Path, commit: str, path: str) -> dict[str, dict[str, bytes]]:
     return folders
 
 
-def zip_files(mod_id: str, files: dict[str, bytes], out: Path) -> None:
-    """As catalog.py's zip_mod: <id>/..., in name order, every entry at ZIP_TIME, so the bytes never change."""
+def zip_files(mods: dict[str, dict[str, bytes]], out: Path) -> None:
+    """As catalog.py's zip_mod: <id>/... for each mod, in name order, every entry at ZIP_TIME, so the bytes never
+    change."""
+    entries = {f"{mod_id}/{name}": data for mod_id, files in mods.items() for name, data in files.items()}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for name in sorted(files):
-            info = zipfile.ZipInfo(f"{mod_id}/{name}", ZIP_TIME)
+        for name in sorted(entries):
+            info = zipfile.ZipInfo(name, ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            archive.writestr(info, files[name])
+            archive.writestr(info, entries[name])
 
 
 def build(pin: dict, repo: Path, out: Path) -> list[dict]:
@@ -88,6 +93,7 @@ def build(pin: dict, repo: Path, out: Path) -> list[dict]:
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     listed = []
+    included = {}
     for folder, files in sorted(mods_at(repo, commit, pin["path"]).items()):
         if "mod.json" not in files:
             continue
@@ -101,7 +107,8 @@ def build(pin: dict, repo: Path, out: Path) -> list[dict]:
             print(f"skipping {mod_id}: not for {GAME}")
             continue
         name = f"{mod_id}.zip"
-        zip_files(mod_id, files, staging / name)
+        zip_files({mod_id: files}, staging / name)
+        included[mod_id] = files
         listed.append({
             "id": mod_id,
             "version": manifest["version"],
@@ -109,7 +116,9 @@ def build(pin: dict, repo: Path, out: Path) -> list[dict]:
             "file": name,
             "size": (staging / name).stat().st_size,
         })
-    index = {"repository": pin["repository"], "commit": commit, "mods": listed}
+    zip_files(included, staging / BUNDLE)
+    index = {"repository": pin["repository"], "commit": commit, "mods": listed,
+             "bundle": {"file": BUNDLE, "size": (staging / BUNDLE).stat().st_size}}
     (staging / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
                                         newline="\n")
     shutil.rmtree(out, ignore_errors=True)
@@ -130,7 +139,8 @@ def main() -> None:
     out = args.out.resolve()
     try:
         made = json.loads((out / "index.json").read_text(encoding="utf-8"))
-        if made.get("commit") == pin["commit"] and made.get("repository") == pin["repository"]:
+        if made.get("commit") == pin["commit"] and made.get("repository") == pin["repository"] and \
+                (out / BUNDLE).is_file():
             print(f"built-in mods from {pin['repository']}@{pin['commit'][:8]} are up to date")
             return
     except (OSError, ValueError):

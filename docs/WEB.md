@@ -90,6 +90,11 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   newer pin is copied over the old folder (files the player saved into it, such as the animation editor's motions,
   stay); a built-in mod the player removes stays removed until "Restore the built-in mods", and one they add
   themselves is theirs and left alone. To ship newer mods, set the pin to a pushed MoonMod commit.
+- **Play on your PC.** The page offers the game for the player's own computer: the newest `build-<commit>`
+  release with a file for the system they pick (found through GitHub's API; its releases page if that can't be
+  asked), and the built-in mods for it, all in `mods/builtin/darkcloud-mods.zip` or each on its own. `builds.yml`
+  attaches the same `darkcloud-mods.zip` to each build release and marks the release of main's newest commit as
+  GitHub's Latest.
 - **Mods for the PC.** The page lists mods for players running the game on their own computer
   (`site/mods/catalog.json`), each version with the build it was confirmed with, and offers both for the
   player's system. Both are this repository's releases:
