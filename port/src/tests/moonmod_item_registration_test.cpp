@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,10 +25,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// The clock alone named two tests' roots alike when ctest started them at once on Windows, and each found the
+// other's mod; a random number keeps them apart.
 struct TempRoot {
     fs::path path = fs::temp_directory_path() /
                     ("moonmod-chronicle-item-e2e-" +
-                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                     std::to_string(std::random_device{}()));
     ~TempRoot() {
         std::error_code ignored;
         fs::remove_all(path, ignored);
