@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "common.h"
 
 #include "itemdata.hpp"
@@ -17,6 +19,7 @@ enum PersonalBoardPage {
     BOARD_PAGE_WEAPON       = 1,  /**< Weapons. */
     BOARD_PAGE_ATTACH       = 2,  /**< Attachments. */
     BOARD_PAGE_ATLA_VILLAGE = 3,  /**< First town's Atla; each later town follows it. */
+    BOARD_PAGE_GEAR         = 9,  /**< MoonMod: the item page's Equipment tab, the gear bag (gear.hpp). */
 };
 
 // clang-format on
@@ -298,6 +301,26 @@ void ComMenuSePlay(int sound);
  * Draws a part of a menu texture with an alpha.
  */
 void DrawMenu2DSprite(CTexture *texture, CRect_i_ screen, CRect_i_ texel, int alpha);
+
+/**
+ * MoonMod: whether the item page's board has the Equipment tab, the gear bag after Items, Weapons and Attachments
+ * (a mod opened it with items.gear_page_set). The shops' boards never do.
+ */
+bool GearTabShown();
+
+/**
+ * MoonMod: draws a gear icon (a game path, gear.hpp) at x, y in a 32x32 cell clipped to rows top..bottom: tinted
+ * 0xRRGGBB, or blacked out for an empty slot. Draws nothing for an icon that won't load. Given the piece's kind, an icon
+ * that is the kind's own shows the hero page's character's parts for that kind instead, where a mod named them.
+ */
+void DrawGearIcon(const std::string &game_path, u32 rgb, int x, int y, int top, int bottom, int alpha, bool blacked = false, int kind = -1);
+
+/**
+ * MoonMod: draws kind's parts of the hero page's character's menu model in the size-wide slot at x, y, clipped to rows
+ * top..bottom, tinted 0xRRGGBB or blacked out (battlemenu.cpp). False where it draws nothing: the hero page shut, the
+ * model not read yet, or no parts named for him.
+ */
+bool DrawGearPart(int kind, u32 rgb, int x, int y, int size, int top, int bottom, int alpha, bool blacked);
 
 /**
  * Draws a part of a menu texture tinted by a colour.

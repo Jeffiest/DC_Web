@@ -156,6 +156,20 @@ Draw3DExtent Draw3DVisibleExtent();
  */
 void Draw3DEyeToClip(const game::RenderInfo &info, float clip[4][4]);
 
+// An overhead pass (the aerial dungeon map): projects parallel rays at the perspective scale of
+// reference_depth for as long as the scope lives, then restores the perspective projection.
+float MGPortOrthographicDepth();
+class MGPortOrthographicScope {
+public:
+    explicit MGPortOrthographicScope(float reference_depth);
+    ~MGPortOrthographicScope();
+    MGPortOrthographicScope(const MGPortOrthographicScope &) = delete;
+    MGPortOrthographicScope &operator=(const MGPortOrthographicScope &) = delete;
+
+private:
+    float previous_;
+};
+
 /**
  * Fills the mvp, normal matrix, lights, ambient and fog of one draw, as the VU1 header carried
  * them. On shadow passes 1 and 2 the planar projection info.shadow sits between the model and

@@ -5,11 +5,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <map>
+#include <ranges>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "battle_globals.hpp"
 #include "battlemenu.hpp"
+#include "charm_slots.hpp"
+#include "framevu1.hpp"
+#include "gear.hpp"
+#include "mdt.hpp"
+#include "playable_chara.hpp"
 #include "battlemenu/internal.hpp"
 #include "btactstatus.hpp"
 #include "camera.hpp"
@@ -36,17 +44,22 @@
 #include "mglib.hpp"
 #include "monstorunit.hpp"
 #include "rect.hpp"
+#include "render/texture_registry.hpp"
 #include "savedata.hpp"
 #include "shop.hpp"
 #include "shot_effect.hpp"
 #include "snd.hpp"
 #include "texture.hpp"
 #include "userstatus.hpp"
+#include "visualvu1.hpp"
 #include "vutext.hpp"
 #include "weapon_buildup.hpp"
 #include "weaponlevelup.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/item_icon_override.hpp"
+#include "moonmod/run_menu.hpp"
+#include "ui/framework.hpp"
+#include "ui/menu_pointer.hpp"
 
 namespace dc::game {
 
@@ -1859,6 +1872,38 @@ void DrawWepStatus(int x, int y, WEAPON_HAVE *weapon, int selected, int alpha) {
     DrawWepDamageDraw(rect, weapon, alpha);
 }
 
+namespace {
+
+std::array<std::string, WEAPON_STAT_COUNT> g_stat_labels;
+
+/** A mod's label for stat, its image stretched over the box at x, y; false when the game's stays. */
+bool WeaponStatLabelDraw(int stat, int x, int y, int width, int height, int alpha) {
+    CTexture *texture = g_stat_labels[stat].empty() ? nullptr : HudImageTexture(g_stat_labels[stat].c_str());
+
+    if (texture == nullptr) {
+        return false;
+    }
+
+    const int was = PortBilinear();
+    setbilinear(1);
+    DrawMenu2DSprite(texture, CRect_i_(x, y, width, height), CRect_i_(0, 0, texture->width, texture->height), alpha);
+    setbilinear(was);
+    return true;
+}
+
+} // namespace
+
+void SetWeaponStatLabel(int stat, std::string game_path) {
+    if (stat >= 0 && stat < WEAPON_STAT_COUNT) {
+        g_stat_labels[stat] = std::move(game_path);
+    }
+}
+
+const std::string &WeaponStatLabel(int stat) {
+    static const std::string none;
+    return stat >= 0 && stat < WEAPON_STAT_COUNT ? g_stat_labels[stat] : none;
+}
+
 void DrawWepVolumeDisplay(int x, int y, WEAPON_HAVE *weapon, int alpha) {
     WEAPON_DATA *data = GetWeaponData(weapon->item_no);
 
@@ -1892,7 +1937,11 @@ void DrawWepVolumeDisplay(int x, int y, WEAPON_HAVE *weapon, int alpha) {
     for (int i = 0; i < 4; i++, dest.y += source.height, source.y += source.height) {
         values[i] = std::min(limit[i], values[i]);
 
-        DrawMenu2DSprite(WepStatus, dest, source, alpha);
+        // A mod's label is drawn at the size of the game's two letters in this cell.
+        if (!WeaponStatLabelDraw(i, dest.x, dest.y + 1, 16, 13, alpha)) {
+            DrawMenu2DSprite(WepStatus, dest, source, alpha);
+        }
+
         DrawMenuNumber(values[i], dest.x + source.width + digits.width * 3 - 2, dest.y + 2, WepStatus, digits, 1, alpha);
     }
 }
@@ -2097,6 +2146,24 @@ void DrawBtlMenuLRCursor(int x, int y, int width, int alpha) {
 
 void DrawWeaponStatusTag(int x, int y, WEAPON_HAVE *weapon, int build, int weapon_no, int alpha) {
     WEAPON_DATA *built = nullptr;
+
+    // MoonMod: with a mod's label for any stat, the labels painted into the tab (each overlapping its neighbours) are
+    // wiped to plain stone, six-row strips of the clear band between Abs. and At, each from further along it so the
+    // grain doesn't repeat, and the four are laid again one size, each centred on its bar, 16 apart: the mod's image,
+    // or the game's own label from the card under each weapon.
+    if (std::ranges::any_of(std::views::iota(0, static_cast<int>(WEAPON_STAT_COUNT)), [](int stat) { return !WeaponStatLabel(stat).empty(); })) {
+        for (int strip = 0; strip < 12; strip++) {
+            DrawMenu2DSprite(WepStatus, CRect_i_(x + 6, y + 0x5A + strip * 6, 0x24, 6), CRect_i_(4 + strip * 29 % 140, 0x54, 0x24, 6), alpha);
+        }
+
+        for (int stat = 0; stat < WEAPON_STAT_COUNT; stat++) {
+            const int top = y + 0x5D + stat * 0x10;
+
+            if (!WeaponStatLabelDraw(stat, x + 9, top, 0x1A, 0xF, alpha)) {
+                DrawMenu2DSprite(WepStatus, CRect_i_(x + 9, top - 1, 0x10, 0x10), CRect_i_(0x110, 0xCC + stat * 0x10, 0x10, 0x10), alpha);
+            }
+        }
+    }
 
     if (build == 1) {
         built = GetWeaponData(weapon_no);
@@ -4707,6 +4774,11 @@ void DrawTrushItem() {
     }
 
     int page = ItemMenuMode.board.page;
+
+    if (page < BOARD_PAGE_ITEM || page > BOARD_PAGE_ATTACH) {
+        return; // MoonMod: the Equipment tab has nothing waiting to be thrown away
+    }
+
     int count[3] = {3, 1, 3};
     int first[3] = {0, 3, 4};
     int entry = first[page];
@@ -4751,6 +4823,7 @@ namespace {
  * Remembers where the item page's cursor stood and closes it.
  */
 void ExitItemSelect() {
+    SetHeldGear(0); // MoonMod: a gear piece in hand goes back to the bag
     CommonMenuMes3.rows = 3;
     CommonMenuMes3.narrow_gaiji = false;
     CommonMenuMes3.char_width = 11;
@@ -5065,6 +5138,1718 @@ void DebugSetDefense(int chara, int defense) {
 /**
  * Handles item-menu input, item use, equipment changes, and inventory transfers.
  */
+namespace {
+
+// MoonMod: the item page's quick-use row runs on into the charm slots (charm_slots.hpp), cursor 3 and on. They are
+// drawn beside the weapon and the shield on the character panel, in frames of their size, and reached from the shield.
+constexpr int kCharmCursor = 3;
+constexpr int kCharmX = 0xA7;
+constexpr int kCharmY = 0xC1;
+constexpr int kCharmStep = 0x2D;
+constexpr int kCharmSize = 0x28;
+
+// MoonMod: the hero page (items.gear_page_set). While a mod has the gear page open the character card gives way to the
+// character alone and larger on a panel of his own: down his left side his charm slots and then his weapon, at his
+// hand, and shield, down his right the four gear slots, and his health and water across his feet. Charm slots past
+// the second stand in a column further out. The gear slots are cursors on the quick row past the charms', as the
+// charms' are past the active items'.
+constexpr int kGearCursor = kCharmCursor + CHARM_SLOT_COUNT;
+constexpr int kHeroSlot = 0x28;
+constexpr int kHeroTop = 0xAC;
+constexpr int kHeroStep = 0x30;
+constexpr int kHeroInnerX = 0x46;
+constexpr int kHeroOuterX = 0x1A;
+constexpr int kHeroWeaponY = kHeroTop + 2 * kHeroStep;
+constexpr int kHeroShieldY = kHeroTop + 3 * kHeroStep;
+constexpr int kHeroGearX = 0x10A;
+constexpr int kHeroFigureX = 0x7C;
+constexpr int kHeroFigureY = 0xAC;
+constexpr int kHeroFigureW = 0x80;
+constexpr int kHeroFigureH = 0xB4;
+constexpr int kHeroCentre = kHeroFigureX + kHeroFigureW / 2;
+// The model grown and moved into the figure's place, in the menu camera's units.
+constexpr float kHeroFigureScale = 1.1f;
+constexpr float kHeroFigureDx = -4.3f;
+constexpr float kHeroFigureDy = -1.6f;
+
+bool CharmCursor(int cursor) {
+    return cursor >= kCharmCursor && cursor < kGearCursor;
+}
+
+bool GearCursor(int cursor) {
+    return cursor >= kGearCursor && cursor < kGearCursor + GEAR_KIND_COUNT;
+}
+
+bool HeroPageShown() {
+    return GearPageOpen();
+}
+
+/** Whether the hero page has a pouch slot: only when the mod named the pouch's icon (items.gear_page_set). */
+bool PouchShown() {
+    return !GearKindIcon(GEAR_POUCH).empty();
+}
+
+/** Where the hero page puts a kind's gear slot: down his right side, the pouch at his hip in the outer column. */
+void HeroGearPlace(int kind, int &x, int &y) {
+    x = kind == GEAR_POUCH ? kHeroOuterX : kHeroGearX;
+    y = kHeroTop + (kind == GEAR_POUCH ? 2 : kind) * kHeroStep;
+}
+
+/** The slot index under a charm cursor position. */
+int CharmIndex(int cursor) {
+    return CharmSlotIndex(ItemMenuMode.chara, cursor - kCharmCursor);
+}
+
+/** Where the hero page puts the i-th charm slot shown, and its column: the first two by his side, any more beyond. */
+int HeroCharmPlace(int i, int &x, int &y) {
+    x = i < 2 ? kHeroInnerX : kHeroOuterX;
+    y = kHeroTop + (i < 2 ? i : i - 2) * kHeroStep;
+    return i < 2 ? 1 : 0;
+}
+
+/** A place on the hero page the cursor can be: the mode and quick-row cursor that select it, its column, its box. */
+struct HeroSlot {
+    int mode = ITEM_MENU_QUICK_SLOTS;
+    int cursor = -1; // -1 for a mode with one place
+    int column = 0;  // 0 the charms past the second, 1 his side (charms, weapon, shield), 2 the figure, 3 the gear
+    int x = 0;
+    int y = 0;
+    int w = kHeroSlot;
+    int h = kHeroSlot;
+};
+
+using HeroSlots = std::array<HeroSlot, CHARM_SLOT_COUNT + 3 + GEAR_KIND_COUNT>;
+
+/** The hero page's places, column by column and top to bottom; returns how many. */
+int HeroSlotsNow(HeroSlots &slots) {
+    int       count = 0;
+    const int charms = CharmSlotsShown(ItemMenuMode.chara);
+
+    // The outer column's charms first, then its pouch, then his side's, so each column runs on top to bottom.
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = pass == 0 ? 2 : 0; i < (pass == 0 ? charms : std::min(charms, 2)); i++) {
+            HeroSlot &slot = slots[count++];
+            slot = {ITEM_MENU_QUICK_SLOTS, kCharmCursor + i};
+            slot.column = HeroCharmPlace(i, slot.x, slot.y);
+        }
+
+        if (pass == 0 && PouchShown()) {
+            HeroSlot &slot = slots[count++];
+            slot = {ITEM_MENU_QUICK_SLOTS, kGearCursor + GEAR_POUCH, 0};
+            HeroGearPlace(GEAR_POUCH, slot.x, slot.y);
+        }
+    }
+
+    slots[count++] = {ITEM_MENU_WEAPON, -1, 1, kHeroInnerX, kHeroWeaponY};
+    slots[count++] = {ITEM_MENU_DEFENSE, -1, 1, kHeroInnerX, kHeroShieldY};
+    slots[count++] = {ITEM_MENU_CHARA, -1, 2, kHeroFigureX, kHeroFigureY, kHeroFigureW, kHeroFigureH};
+
+    for (int kind = 0; kind < GEAR_POUCH; kind++) {
+        HeroSlot &slot = slots[count++];
+        slot = {ITEM_MENU_QUICK_SLOTS, kGearCursor + kind, 3};
+        HeroGearPlace(kind, slot.x, slot.y);
+    }
+
+    return count;
+}
+
+/** The place the cursor is on, or -1 on the active items' row. */
+int HeroSlotAt(const HeroSlots &slots, int count) {
+    for (int i = 0; i < count; i++) {
+        if (slots[i].mode == ItemMenuMode.mode && (slots[i].cursor < 0 || slots[i].cursor == ItemMenuMode.board.cursor)) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void HeroGo(const HeroSlot &slot) {
+    ItemMenuMode.mode = static_cast<decltype(ItemMenuMode.mode)>(slot.mode);
+
+    if (slot.cursor >= 0) {
+        ItemMenuMode.board.cursor = slot.cursor;
+    }
+}
+
+/** The place in column nearest height y, or -1 for an empty column. */
+int HeroNearest(const HeroSlots &slots, int count, int column, int y) {
+    int best = -1;
+    int best_gap = 0;
+
+    for (int i = 0; i < count; i++) {
+        const int gap = std::abs(slots[i].y + slots[i].h / 2 - y);
+
+        if (slots[i].column == column && (best < 0 || gap < best_gap)) {
+            best = i;
+            best_gap = gap;
+        }
+    }
+
+    return best;
+}
+
+/** On to the board at the cell row nearest height y, or its overflow list when the page has one, as the game goes. */
+void HeroToBoard(int y) {
+    PERSONAL_BOARD &board = ItemMenuMode.board;
+    const int       row = std::clamp((y - 0x7C) / 0x28, 0, 3);
+    ItemMenuMode.mode = ITEM_MENU_BOARD;
+    board.cursor_area = PERSONAL_BOARD_AREA_CELLS;
+    board.cursor = (board.top_row + row) * 5;
+    const int page = board.page;
+    const int count = page >= BOARD_PAGE_ITEM && page <= BOARD_PAGE_ATTACH ? ItemMenuMode.overflow_count[page] : 0;
+
+    if (count > 0 && (ItemMenuMode.overflow_pages & (1 << (page + 1))) && ItemMenuMode.overflow != 0) {
+        ItemMenuMode.mode = ITEM_MENU_TRUSH;
+        board.cursor = std::max(std::min(row, count - 1), 0);
+    }
+}
+
+/** Off the board's left edge at cell row `row` (0 the top one shown): to the active items or the gear beside it. */
+void HeroFromBoard(int row) {
+    if (row <= 0) {
+        ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
+        ItemMenuMode.board.cursor = 2;
+        return;
+    }
+
+    HeroSlots slots;
+    const int count = HeroSlotsNow(slots);
+    HeroGo(slots[HeroNearest(slots, count, 3, row * 0x28 + 0x7C + 0x14)]);
+}
+
+/** The pad's arrows on the hero page and the active items' row above it. */
+void HeroPageKey() {
+    HeroSlots       slots;
+    const int       count = HeroSlotsNow(slots);
+    const int       now = HeroSlotAt(slots, count);
+    PERSONAL_BOARD &board = ItemMenuMode.board;
+
+    if (now < 0) {
+        if (ItemMenuMode.mode != ITEM_MENU_QUICK_SLOTS || board.cursor > 2) {
+            // A charm slot the character has no more of: back to the row's first.
+            ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
+            board.cursor = 0;
+        }
+
+        if (GamePad.Down(PAD_DOWN) != 0) {
+            static constexpr int kBelow[3] = {1, 2, 3};
+            int column = kBelow[board.cursor];
+            int target = -1;
+
+            while (target < 0 && column < 4) {
+                target = HeroNearest(slots, count, column++, 0);
+            }
+
+            HeroGo(slots[target]);
+        } else if (GamePad.Down(PAD_LEFT) != 0 && board.cursor > 0) {
+            board.cursor--;
+        } else if (GamePad.Down(PAD_RIGHT) != 0) {
+            if (board.cursor < 2) {
+                board.cursor++;
+            } else {
+                HeroToBoard(0x7C);
+            }
+        }
+
+        return;
+    }
+
+    const HeroSlot &slot = slots[now];
+    const int       middle = slot.y + slot.h / 2;
+
+    if (GamePad.Down(PAD_UP) != 0) {
+        if (now > 0 && slots[now - 1].column == slot.column) {
+            HeroGo(slots[now - 1]);
+        } else {
+            ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
+            board.cursor = slot.column <= 1 ? 0 : slot.column - 1;
+        }
+    } else if (GamePad.Down(PAD_DOWN) != 0) {
+        if (now + 1 < count && slots[now + 1].column == slot.column) {
+            HeroGo(slots[now + 1]);
+        }
+    } else if (GamePad.Down(PAD_LEFT) != 0) {
+        for (int column = slot.column - 1; column >= 0; column--) {
+            if (const int target = HeroNearest(slots, count, column, middle); target >= 0) {
+                HeroGo(slots[target]);
+                break;
+            }
+        }
+    } else if (GamePad.Down(PAD_RIGHT) != 0) {
+        int target = -1;
+
+        for (int column = slot.column + 1; target < 0 && column <= 3; column++) {
+            target = HeroNearest(slots, count, column, middle);
+        }
+
+        if (target >= 0) {
+            HeroGo(slots[target]);
+        } else {
+            HeroToBoard(middle);
+        }
+    }
+}
+
+/** Cross on a charm slot: puts the held charm in it (taking up what was there), or picks its charm up. */
+void CharmSlotCross(int cursor) {
+    CharmSlot &slot = CharmSlotAt(ItemMenuMode.chara, CharmIndex(cursor));
+    const int  held = BtlHaveItemPt->item_no;
+    const bool empty_hand = held < ITEM_ATTACH_START;
+
+    if (IconAutoGet.IsMoveIcon() != 0 || (!empty_hand && !CharmSlotAccepts(CharmIndex(cursor), held)) || (empty_hand && slot.item_no < 0)) {
+        ComMenuSePlay(MENU_SOUND_REFUSE);
+        return;
+    }
+
+    const CharmSlot was = slot;
+
+    if (empty_hand) {
+        slot = CharmSlot{};
+    } else {
+        slot.item_no = static_cast<s16>(held);
+        slot.uses = std::max<s32>(BtlHaveItemPt->volume, 0);
+    }
+
+    if (was.item_no >= 0) {
+        BtlHaveItemPt->item_no = was.item_no;
+        BtlHaveItemPt->volume = static_cast<s16>(was.uses);
+        BtlHaveItemPt->slot_state = ITEM_MENU_QUICK_SLOTS;
+        BtlHaveItemPt->from_slot = cursor;
+    } else {
+        InitHaveData(BtlHaveItemPt);
+    }
+
+    ComMenuSePlay(MENU_SOUND_CONFIRM);
+}
+
+/** Square on a charm slot: puts its charm back in the bag, in the first free cell. */
+void CharmSlotToBag(int cursor) {
+    CharmSlot &slot = CharmSlotAt(ItemMenuMode.chara, CharmIndex(cursor));
+
+    for (int i = 0; slot.item_no >= 0 && i < MenuItemPackPt->num; i++) {
+        if (MenuItemPackPt->item[i] < 0) {
+            MenuItemPackPt->item[i] = slot.item_no;
+            MenuItemPackPt->item_vol[i] = static_cast<s16>(slot.uses);
+            slot = CharmSlot{};
+            ComMenuSePlay(MENU_SOUND_CONFIRM);
+            return;
+        }
+    }
+
+    ComMenuSePlay(MENU_SOUND_REFUSE);
+}
+
+// MoonMod: the Equipment tab (gear.hpp). Cross picks a piece up from the gear bag into the hand and puts it back; the
+// trash can throws it away. A piece in hand is not an item: BtlHaveItemPt stays empty and HeldGear names it.
+
+/** Cross on the Equipment tab's board. */
+void GearBoardCross() {
+    PERSONAL_BOARD *board = &ItemMenuMode.board;
+    const u32       held = HeldGear();
+
+    if (BtlHaveItemPt->item_no >= ITEM_ATTACH_START || IconAutoGet.IsMoveIcon() != 0) {
+        ComMenuSePlay(MENU_SOUND_REFUSE);
+        return;
+    }
+
+    if (board->cursor_area == PERSONAL_BOARD_AREA_TRASH) {
+        if (held == 0) {
+            ComMenuSePlay(MENU_SOUND_REFUSE);
+            return;
+        }
+
+        RemoveGear(held);
+        SetHeldGear(0);
+        board->trash_anim = 1;
+        board->trash_frame = 0;
+        ComMenuSePlay(MENU_SOUND_CONFIRM);
+        return;
+    }
+
+    if (held != 0) {
+        SetHeldGear(0);
+        ComMenuSePlay(MENU_SOUND_CONFIRM);
+        return;
+    }
+
+    if (const GearPiece *piece = GearBagPiece(board->cursor)) {
+        SetHeldGear(piece->uid);
+        ComMenuSePlay(MENU_SOUND_CONFIRM);
+        return;
+    }
+
+    ComMenuSePlay(MENU_SOUND_REFUSE);
+}
+
+/** The piece the cursor is over on the Equipment tab, or the one in hand; null for neither. */
+const GearPiece *GearUnderCursor() {
+    if (const GearPiece *held = FindGear(HeldGear())) {
+        return held;
+    }
+
+    if (ItemMenuMode.mode == ITEM_MENU_BOARD && ItemMenuMode.board.page == BOARD_PAGE_GEAR &&
+        ItemMenuMode.board.cursor_area == PERSONAL_BOARD_AREA_CELLS) {
+        return GearBagPiece(ItemMenuMode.board.cursor);
+    }
+
+    if (HeroPageShown() && ItemMenuMode.mode == ITEM_MENU_QUICK_SLOTS && GearCursor(ItemMenuMode.board.cursor)) {
+        return WornGear(ItemMenuMode.chara, ItemMenuMode.board.cursor - kGearCursor);
+    }
+
+    return nullptr;
+}
+
+/**
+ * Cross on a gear slot: a piece of its kind in hand goes on, the one it replaces coming up into the hand; with the hand
+ * empty, the worn piece comes off into it.
+ */
+void GearSlotCross(int kind) {
+    const int        chara = ItemMenuMode.chara;
+    const u32        held = HeldGear();
+    const GearPiece *worn = WornGear(chara, kind);
+
+    if (BtlHaveItemPt->item_no >= ITEM_ATTACH_START || IconAutoGet.IsMoveIcon() != 0) {
+        ComMenuSePlay(MENU_SOUND_REFUSE);
+        return;
+    }
+
+    if (held != 0) {
+        const GearPiece *piece = FindGear(held);
+
+        if (piece == nullptr || piece->kind != kind) {
+            ComMenuSePlay(MENU_SOUND_REFUSE);
+            return;
+        }
+
+        const u32 old = worn != nullptr ? worn->uid : 0;
+        EquipGear(chara, held);
+        SetHeldGear(old);
+        ComMenuSePlay(SE_WEAPON_EQUIP);
+        return;
+    }
+
+    if (worn == nullptr) {
+        ComMenuSePlay(MENU_SOUND_REFUSE);
+        return;
+    }
+
+    SetHeldGear(TakeOffGear(chara, kind));
+    ComMenuSePlay(MENU_SOUND_CONFIRM);
+}
+
+/**
+ * Cross on the hero page's weapon with one of the character's weapons in hand, picked up from the Weapons tab: it goes
+ * back to its cell and he takes it up, as Equip does in the weapon menu and with its checks. The weapon menu reads the
+ * new weapon's effects for an Osmond or Ruby in play; the item page cannot, so it leaves theirs to that menu.
+ */
+void HeroWeaponCross() {
+    IHAVEITEM       *have = BtlHaveItemPt;
+    CDngStatusData  *status = BtlMenuStatusPt;
+    const int        chara = ItemMenuMode.chara;
+    const int        cell = have->from_slot;
+    const int        playing = static_cast<CUserStatus *>(BtlMenuStatusPt)->cur_chara;
+    const bool       effects = BtlMenuMode == BATTLE_MENU_MODE_DUNGEON && chara == playing &&
+                         (CombatChara(chara) == CHARA_OSMOND || CombatChara(chara) == CHARA_RUBY);
+
+    if (have->from_page != BOARD_PAGE_WEAPON || cell / 10 != chara || WhoIsWeaponEquip(have->item_no) != chara ||
+        IconAutoGet.IsMoveIcon() != 0 || (status->GetActiveCharaStatus(chara) & AILMENT_CURSE) ||
+        status->res_limit_zone_current == RES_LIMIT_ZONE_NO_WEAPON_CHANGE || !InParty(*status, chara) || effects) {
+        ComMenuSePlay(MENU_SOUND_REFUSE);
+        return;
+    }
+
+    PersonalBoardItemCancel();
+    status->equipped_weapon_slot[chara] = static_cast<s8>(cell % 10);
+    ItemMenuMode.board.held_equipped_slot = -1;
+    InitHaveData(have);
+    InitHaveWep(&ItemMenuMode.board.weapon);
+    const WEAPON_HAVE &weapon = status->chara_weapons[chara][cell % 10];
+    SetNowEquipWeaponDataForMsg(weapon.item_no, weapon.level);
+    ComMenuSePlay(SE_WEAPON_EQUIP);
+}
+
+/** A piece's name, rarity and what it does, in the help box at the bottom right. */
+void GearInfoDraw(const GearPiece &piece, int alpha, int price = -1) {
+    // The Gauntlet's five, in its colours (moonmod.roguelike LOOT.TIERS).
+    static constexpr const char  *kRarity[GEAR_RARITY_COUNT] = {"Common", "Uncommon", "Rare", "Epic", "Legendary"};
+    static constexpr unsigned char kRarityRgb[GEAR_RARITY_COUNT][3] = {
+        {0xEB, 0xEB, 0xEB}, {0x78, 0xE6, 0x78}, {0x6E, 0xAA, 0xFF}, {0xCD, 0x7D, 0xFF}, {0xFF, 0xAA, 0x3C}};
+    static constexpr unsigned char kText[3] = {0xF0, 0xEE, 0xE8};
+    static constexpr unsigned char kDim[3] = {0xB4, 0xB8, 0xC4};
+    constexpr int                  kX = 0x14E;
+    int                            y = 0x163;
+
+    MoonModMenuLabel(piece.name, kRarityRgb[piece.rarity], kX, y, alpha, 0.78f, false);
+    y += 0x14;
+    char line[96];
+    // A shop's good says what it costs; anything the player has, what it fetches.
+    if (price >= 0) {
+        std::snprintf(line, sizeof line, "%s %s, costs %d G", kRarity[piece.rarity], GearKindName(piece.kind), price);
+    } else {
+        std::snprintf(line, sizeof line, "%s %s, sells for %d G", kRarity[piece.rarity], GearKindName(piece.kind), piece.value);
+    }
+    MoonModMenuLabel(line, kDim, kX, y, alpha, 0.6f, false);
+    y += 0x12;
+
+    std::string effects;
+    const auto  add = [&effects](const std::string &part) {
+        effects += effects.empty() ? part : ", " + part;
+    };
+
+    for (int g = 0; g < GEAR_GUARD_COUNT; g++) {
+        if (piece.effects.guard[g] > 0) {
+            add(std::to_string(piece.effects.guard[g]) + "% to shrug off " + GearGuardName(g));
+        }
+    }
+
+    if (piece.effects.stamina > 0) add("+" + std::to_string(piece.effects.stamina) + " stamina");
+    if (piece.effects.lightness > 0) add("swings cost " + std::to_string(piece.effects.lightness) + "% less");
+    if (piece.effects.defence > 0) add("+" + std::to_string(piece.effects.defence) + " defence");
+    if (piece.effects.run_cost > 0) add("running drains " + std::to_string(piece.effects.run_cost) + "% less");
+    if (piece.effects.bag > 0) add("+" + std::to_string(piece.effects.bag) + " bag slots");
+    if (piece.effects.poise > 0) add("poise " + std::to_string(piece.effects.poise) + ": hits taken without a stagger");
+    if (effects.empty()) effects = "no effects";
+    effects[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(effects[0])));
+
+    // Two lines at most, broken at a comma where it fits.
+    std::string first = effects;
+    std::string second;
+
+    if (effects.size() > 40) {
+        const size_t comma = effects.rfind(", ", 40);
+
+        if (comma != std::string::npos) {
+            first = effects.substr(0, comma + 1);
+            second = effects.substr(comma + 2);
+        }
+    }
+
+    MoonModMenuLabel(first, kText, kX, y, alpha, 0.6f, false);
+
+    if (!second.empty()) {
+        MoonModMenuLabel(second, kText, kX, y + 0x10, alpha, 0.6f, false);
+    }
+}
+
+// The slots' frames, drawn rather than flat so they sit with the game's own (the shield's): a rounded square in a dark
+// edge, its face bevelled and lit from the top left, made kSlotDetail times finer than the menu's pixels and smoothed
+// down. Two textures for each size: the face, a grey shape the slot's colours tint, and the rim laid over it as it is.
+constexpr int   kSlotDetail = 4;
+constexpr float kSlotRadius = 5.0f; // menu pixels
+constexpr float kSlotEdge = 1.3f;
+constexpr float kSlotBevel = 2.8f;
+
+/** The face (rim false) or rim texture of a slot size menu pixels square, made once for each. */
+CTexture *SlotFrameTexture(int size, bool rim) {
+    struct Cached {
+        unsigned tbp = 0;
+        CTexture tex;
+    };
+    static std::map<int, Cached> cache;
+    const int key = size * 2 + (rim ? 1 : 0);
+
+    if (auto found = cache.find(key); found != cache.end() && found->second.tbp != 0 && render::PortKeyLive(found->second.tbp)) {
+        return &found->second.tex;
+    }
+
+    const int   n = size * kSlotDetail;
+    const float d = static_cast<float>(kSlotDetail);
+    const float middle = static_cast<float>(n) / 2.0f;
+    const float radius = kSlotRadius * d;
+    const float inner = middle - 0.5f - radius;
+    const float edge = kSlotEdge * d;
+    const float bevel = kSlotBevel * d;
+
+    std::vector<uint8_t> rgba(static_cast<size_t>(n) * n * 4, 0);
+
+    for (int y = 0; y < n; y++) {
+        for (int x = 0; x < n; x++) {
+            const float px = static_cast<float>(x) + 0.5f - middle;
+            const float py = static_cast<float>(y) + 0.5f - middle;
+            const float qx = std::abs(px) - inner;
+            const float qy = std::abs(py) - inner;
+            // Distance from the rounded square's outline, below 0 inside, and which way is out from there.
+            const float dist = std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) + std::min(std::max(qx, qy), 0.0f) - radius;
+            const float cover = std::clamp(0.5f - dist, 0.0f, 1.0f);
+
+            if (cover <= 0.0f) {
+                continue;
+            }
+
+            float out_x = 0.0f;
+            float out_y = 0.0f;
+
+            if (qx > 0.0f && qy > 0.0f) {
+                const float len = std::hypot(qx, qy);
+                out_x = std::copysign(qx / len, px);
+                out_y = std::copysign(qy / len, py);
+            } else if (qx > qy) {
+                out_x = std::copysign(1.0f, px);
+            } else {
+                out_y = std::copysign(1.0f, py);
+            }
+
+            float r = 128.0f;
+            float g = 128.0f;
+            float b = 128.0f;
+            float a = cover;
+
+            if (rim) {
+                // The bevel: light where the edge faces the top left, shade where it faces away, fading inwards.
+                const float light = -(out_x + out_y) * 0.7071f;
+                const float depth = std::clamp((-dist - edge) / bevel, 0.0f, 1.0f);
+                const float strength = (1.0f - depth) * (1.0f - depth);
+                const float tone = light > 0.0f ? 255.0f : 0.0f;
+                r = g = b = tone;
+                a = std::abs(light) * strength * (light > 0.0f ? 0.62f : 0.5f);
+                // Then the dark edge, blended in over a pixel of the detail.
+                const float outline = std::clamp((dist + edge + 0.5f * d) / (0.8f * d), 0.0f, 1.0f);
+                r += (0x1C - r) * outline;
+                g += (0x22 - g) * outline;
+                b += (0x34 - b) * outline;
+                a = (a + (1.0f - a) * outline) * cover;
+            }
+
+            const size_t at = (static_cast<size_t>(y) * n + x) * 4;
+            rgba[at + 0] = static_cast<uint8_t>(std::lround(std::clamp(r, 0.0f, 255.0f)));
+            rgba[at + 1] = static_cast<uint8_t>(std::lround(std::clamp(g, 0.0f, 255.0f)));
+            rgba[at + 2] = static_cast<uint8_t>(std::lround(std::clamp(b, 0.0f, 255.0f)));
+            rgba[at + 3] = static_cast<uint8_t>(std::lround(std::clamp(a, 0.0f, 1.0f) * 255.0f));
+        }
+    }
+
+    render::PortDecodedTexture decoded{};
+    decoded.width = static_cast<unsigned>(n);
+    decoded.height = static_cast<unsigned>(n);
+    decoded.format = gfx::TextureFormat::Rgba8;
+    decoded.has_alpha = true;
+    decoded.levels.push_back(std::move(rgba));
+    const unsigned tbp = render::PortCreateTexture(decoded, render::PortTextureOwner::Other, nullptr);
+
+    if (tbp == 0) {
+        return nullptr;
+    }
+
+    Cached &entry = cache[key];
+    entry.tbp = tbp;
+    entry.tex.Initialize();
+    std::strcpy(entry.tex.name, rim ? "slotrim" : "slotface");
+    entry.tex.width = n;
+    entry.tex.height = n;
+    entry.tex.bpp = 4;
+    entry.tex.block = -1;
+    entry.tex.tex0 = static_cast<u_long>(tbp) | (1ull << 34);
+    entry.tex.tex1 = 0;
+    return &entry.tex;
+}
+
+/** A slot's frame at x, y, size square: its face top colour above darkening to bottom, bevelled, in a dark edge. */
+void SlotFrameDraw(int x, int y, int size, spRGBA top, spRGBA bottom, int alpha) {
+    top.a = bottom.a = static_cast<u8>(alpha);
+    CTexture *face = SlotFrameTexture(size, false);
+    CTexture *rim = SlotFrameTexture(size, true);
+
+    if (face == nullptr || rim == nullptr) {
+        spRGBA edge = {0x1C, 0x22, 0x34, static_cast<u8>(alpha)};
+        DrawMenuColorGradation(Ps2Lvalue(CRect_i_(x, y, size, size)), &edge, &edge, &edge, &edge);
+        DrawMenuColorGradation(Ps2Lvalue(CRect_i_(x + 2, y + 2, size - 4, size - 4)), &top, &top, &bottom, &bottom);
+        return;
+    }
+
+    const int      was = PortBilinear();
+    const CRect_i_ source(0, 0, size * kSlotDetail, size * kSlotDetail);
+    const CRect_i_ screen(x, y, size, size);
+    setbilinear(1);
+    DrawMenu2DSprite(face, CRect_i_(x + 1, y + 2, size, size), source, 0, 0, 0, alpha * 0x48 >> 7);
+    DrawMenu2DSprite(face, screen, source, &top, &top, &bottom, &bottom);
+    DrawMenu2DSprite(rim, screen, source, alpha);
+    setbilinear(was);
+}
+
+/** The charm slots, with their charms: an empty one shows an amulet blacked out, so it is clear what goes there. */
+void CharmSlotsDraw(int alpha) {
+    MenuTextureReload(ItemMenuWeaponIconReadBlock);
+    const spRGBA top = {0x7C, 0xAA, 0xDC, 0};
+    const spRGBA bottom = {0x42, 0x66, 0xA8, 0};
+
+    for (int i = 0; i < CharmSlotsShown(ItemMenuMode.chara); i++) {
+        int x = kCharmX + i * kCharmStep;
+        int y = kCharmY;
+
+        if (HeroPageShown()) {
+            HeroCharmPlace(i, x, y);
+        }
+
+        const int index = CharmSlotIndex(ItemMenuMode.chara, i);
+        const int item_no = CharmSlotAt(ItemMenuMode.chara, index).item_no;
+
+        // A frame like the shield's: a rounded, bevelled blue that darkens downwards.
+        SlotFrameDraw(x, y, kCharmSize, top, bottom, alpha);
+
+        if (item_no >= ITEM_DUNGEON_START) {
+            DrawIconParts(item_no, x + 4, y + 4, 0, 0x280, alpha, 0);
+            // Its uses left in the corner, as a quick slot shows its count.
+            DrawMenuNumber(CharmUsesShown(item_no, CharmSlotAt(ItemMenuMode.chara, index).uses), x + kCharmSize - 2, y + kCharmSize - 0xE, PerBoardTex, RECT{0x90, 0xDC, 0xC, 0xC}, 0, alpha);
+            continue;
+        }
+
+        int       u = 0;
+        int       v = 0;
+        CTexture *texture = RetCTex(static_cast<short>(index == CHARM_FEATHER_SLOT ? ITEM_DRAN_S_FEATHER : ITEM_ANTIDOTE_AMULET), u, v);
+
+        if (texture != nullptr) {
+            DrawMenu2DSprite(texture, CRect_i_(x + 4, y + 4, 32, 32), CRect_i_(u, v, 32, 32), 0x08, 0x0A, 0x12, alpha * 0x60 >> 7);
+        }
+    }
+}
+
+void MenuCharaPolyDraw();
+
+// MoonMod: a kind of gear shown as the parts of the hero page's character's own menu model (items.gear_page_set parts),
+// the rest of him hidden, grown and moved until the parts fill the slot, held at the turn the mod gives.
+struct GearPartJob {
+    const GearKindParts *parts = nullptr;
+    int                  x = 0;
+    int                  y = 0;
+    int                  size = 0;
+    float                tint[3] = {1.0f, 1.0f, 1.0f};
+    bool                 blacked = false;
+    int                  clip_top = 0; // the rows the slot shows, as the board's scroll leaves them
+    int                  clip_bottom = 0;
+};
+
+GearPartJob g_part_job;
+
+/** Calls f on frame, its brothers and everything under them. */
+template <class F> void EachFrame(CFrame *frame, const F &f) {
+    for (; frame != nullptr; frame = frame->brother) {
+        f(frame);
+        EachFrame(frame->child, f);
+    }
+}
+
+/** Whether a frame is one of names: its whole name, or the part before the "__" its flags follow. */
+bool FrameNamed(const CFrame *frame, const std::vector<std::string> &names) {
+    const std::string_view name(frame->name);
+    const std::string_view bare = name.substr(0, name.find("__"));
+    return std::ranges::any_of(names, [&](const std::string &wanted) { return wanted == name || wanted == bare; });
+}
+
+/** The screen box of the named frames' bounds, as the menu camera sees them; false when the model has none of them. */
+bool PartBox(CFrame *root, const std::vector<std::string> &names, float low[2], float high[2]) {
+    bool any = false;
+    low[0] = low[1] = 1e9f;
+    high[0] = high[1] = -1e9f;
+    EachFrame(root, [&](CFrame *frame) {
+        if (!FrameNamed(frame, names)) {
+            return;
+        }
+
+        sceVu0FMATRIX world;
+        frame->GetLWMatrix(world);
+
+        for (const auto &corner : frame->corner) {
+            sceVu0FVECTOR point;
+            sceVu0ApplyMatrix(point, world, const_cast<float *>(corner));
+            point[3] = 1.0f;
+            int screen[4];
+            MGRotTransPers2D(screen, point, 0);
+
+            for (int axis = 0; axis < 2; axis++) {
+                low[axis] = std::min(low[axis], static_cast<float>(screen[axis]));
+                high[axis] = std::max(high[axis], static_cast<float>(screen[axis]));
+            }
+        }
+
+        any = true;
+    });
+    return any && high[0] > low[0] && high[1] > low[1];
+}
+
+/**
+ * The screen box of the named frames' vertices that fall below screen height cut, as the menu camera sees them; false
+ * when none do. A character's frames are CFrameVu1 (dataset.cpp), a skinned mesh's vertices kept where the motion puts
+ * them, so his shoes are measured as they stand.
+ */
+bool MeshBoxBelow(CFrame *root, const std::vector<std::string> &names, float cut, float low[2], float high[2]) {
+    bool any = false;
+    low[0] = low[1] = 1e9f;
+    high[0] = high[1] = -1e9f;
+    EachFrame(root, [&](CFrame *frame) {
+        if (!FrameNamed(frame, names)) {
+            return;
+        }
+
+        CVisualVu1 *visual = static_cast<CFrameVu1 *>(frame)->GetVisual();
+        const auto *model = visual != nullptr ? reinterpret_cast<const MDT_HEADER *>(visual->GetMDTDataAddress()) : nullptr;
+
+        if (model == nullptr) {
+            return;
+        }
+
+        const auto   *local = reinterpret_cast<const sceVu0FVECTOR *>(reinterpret_cast<const u_char *>(model) + model->vertex_ofs);
+        sceVu0FMATRIX world;
+        frame->GetLWMatrix(world);
+
+        for (int k = 0; k < model->vertex_num; k++) {
+            sceVu0FVECTOR corner = {local[k][0], local[k][1], local[k][2], 1.0f};
+            sceVu0FVECTOR point;
+            sceVu0ApplyMatrix(point, world, corner);
+            point[3] = 1.0f;
+            int screen[4];
+            MGRotTransPers2D(screen, point, 0);
+
+            if (static_cast<float>(screen[1]) <= cut) {
+                continue;
+            }
+
+            for (int axis = 0; axis < 2; axis++) {
+                low[axis] = std::min(low[axis], static_cast<float>(screen[axis]));
+                high[axis] = std::max(high[axis], static_cast<float>(screen[axis]));
+            }
+
+            any = true;
+        }
+    });
+    return any && high[0] > low[0] && high[1] > low[1];
+}
+
+/**
+ * Where a kind's `below` frames cut its slot off, as a screen height: a third of the way down their box, so a shoe shows
+ * from under the ankle wrap without the leg above it; at the joint itself for a bone with no mesh (an ankle). False when
+ * the kind has none.
+ */
+bool BelowCut(CFrame *root, const GearKindParts &parts, float &cut) {
+    float low[2];
+    float high[2];
+
+    if (parts.below.empty()) {
+        return false;
+    }
+
+    if (PartBox(root, parts.below, low, high)) {
+        cut = low[1] + (high[1] - low[1]) / 3.0f;
+        return true;
+    }
+
+    CFrame *joint = nullptr;
+    EachFrame(root, [&](CFrame *frame) {
+        if (joint == nullptr && FrameNamed(frame, parts.below)) {
+            joint = frame;
+        }
+    });
+
+    if (joint == nullptr) {
+        return false;
+    }
+
+    sceVu0FMATRIX world;
+    joint->GetLWMatrix(world);
+    sceVu0FVECTOR point = {world[3][0], world[3][1], world[3][2], 1.0f};
+    int           screen[4];
+    MGRotTransPers2D(screen, point, 0);
+    cut = static_cast<float>(screen[1]);
+    return true;
+}
+
+/** The root of the model on the screen. */
+void RootOnScreen(const float position[4], float out[2], float across = 0.0f, float up = 0.0f) {
+    sceVu0FVECTOR point = {position[0] + across, position[1] + up, position[2], 1.0f};
+    int           screen[4];
+    MGRotTransPers2D(screen, point, 0);
+    out[0] = static_cast<float>(screen[0]);
+    out[1] = static_cast<float>(screen[1]);
+}
+
+void GearPartPolyDraw() {
+    const GearPartJob &job = g_part_job;
+    CCharacter        &model = MenuCharaFrame;
+    CFrame            *root = model.frame;
+    const int          chara = ItemMenuMode.chara;
+    const auto        &fit = job.parts->fit.empty() ? job.parts->draw : job.parts->fit;
+
+    const auto place = [&](float scale, float dx, float dy) {
+        MenuCharaPlace(chara, scale, dx, dy);
+        root->SetPosition(model.pos);
+        root->SetRotation(model.rotation.x, model.rotation.y, model.rotation.z);
+        root->SetScale(model.scale);
+    };
+
+    // Turned as the mod asks and held there, so each slot keeps the one view the mod chose.
+    model.rotation.y = job.parts->turn;
+    model.rotation.x = job.parts->tilt;
+
+    float scale = 1.0f;
+    float dx = 0.0f;
+    float dy = 0.0f;
+    place(scale, dx, dy);
+
+    // Pixels a menu-camera unit at the root's depth, from ten units across and up.
+    float root_screen[2];
+    float across[2];
+    float above[2];
+    RootOnScreen(model.pos, root_screen);
+    RootOnScreen(model.pos, across, 10.0f, 0.0f);
+    RootOnScreen(model.pos, above, 0.0f, 10.0f);
+    const float per_x = (across[0] - root_screen[0]) / 10.0f;
+    const float per_y = (above[1] - root_screen[1]) / 10.0f;
+
+    if (std::abs(per_x) < 0.01f || std::abs(per_y) < 0.01f) {
+        return;
+    }
+
+    const float want = static_cast<float>(job.size - 6);
+    const float centre_x = static_cast<float>(job.x) + static_cast<float>(job.size) / 2.0f;
+    const float centre_y = static_cast<float>(job.y) + static_cast<float>(job.size) / 2.0f;
+
+    // Twice, the second pass taking up what the camera's perspective left of the first.
+    for (int pass = 0; pass < 2; pass++) {
+        float low[2];
+        float high[2];
+
+        if (!PartBox(root, fit, low, high)) {
+            return;
+        }
+
+        // Cut off through the `below` frames: what is fitted is the drawn frames' vertices beneath the cut.
+        if (float cut = 0.0f; BelowCut(root, *job.parts, cut)) {
+            if (!MeshBoxBelow(root, job.parts->draw, cut, low, high)) {
+                return;
+            }
+        }
+
+        RootOnScreen(model.pos, root_screen);
+        const float grow = std::clamp(want / std::max(high[0] - low[0], high[1] - low[1]), 0.2f, 8.0f);
+        // The model grows about its root, which stays where it is on the screen.
+        const float grown_x = root_screen[0] + grow * ((low[0] + high[0]) / 2.0f - root_screen[0]);
+        const float grown_y = root_screen[1] + grow * ((low[1] + high[1]) / 2.0f - root_screen[1]);
+        scale *= grow;
+        dx += (centre_x - grown_x) / per_x;
+        dy += (centre_y - grown_y) / per_y;
+        place(scale, dx, dy);
+    }
+
+    // And drawn only under it: the clip's top brought down to the cut.
+    if (float cut = 0.0f; BelowCut(root, *job.parts, cut)) {
+        const int top = std::max(job.clip_top, static_cast<int>(std::ceil(cut)));
+
+        if (job.clip_bottom - top < 2) {
+            return;
+        }
+
+        const int clip_left = job.x + 1;
+        MGSetWindowRect(CRect_i_(clip_left * 2, top / 2, job.x + job.size - 2 - clip_left * 2, (job.clip_bottom - top) / 2 - 1));
+    }
+
+    // Only the parts drawn; every other frame hidden, its children still walked.
+    static std::vector<short> saved;
+    saved.clear();
+    EachFrame(root, [&](CFrame *frame) {
+        saved.push_back(frame->attr.draw_on);
+        frame->attr.draw_on = static_cast<short>((frame->attr.draw_on & 4) | (FrameNamed(frame, job.parts->draw) ? 1 : 0));
+    });
+
+    // Lit as the figure is, the light and ambient scaled by the piece's colour; an empty slot's part all dark.
+    float ambient[4];
+    float saved_ambient[4];
+    float direction[4][4];
+    float colour[4][4];
+    float saved_colour[4][4];
+    MGGetAmbient(saved_ambient);
+    MGGetPLight(direction, colour);
+    sceVu0CopyMatrix(saved_colour, colour);
+    sceVu0CopyVector(ambient, saved_ambient);
+
+    for (int channel = 0; channel < 3; channel++) {
+        const float tint = job.blacked ? 0.0f : job.tint[channel];
+        ambient[channel] *= tint;
+
+        for (auto &light : colour) {
+            light[channel] *= tint;
+        }
+    }
+
+    MGSetAmbient(ambient);
+    MGSetPLight(direction, colour);
+    MGDraw(root);
+    MGSetAmbient(saved_ambient);
+    MGSetPLight(direction, saved_colour);
+
+    size_t index = 0;
+    EachFrame(root, [&](CFrame *frame) { frame->attr.draw_on = saved[index++]; });
+}
+
+/** Draws a kind's parts in the slot at x, y (size wide and high) clipped to rows top..bottom; false where it can't. */
+bool GearPartDraw(int kind, u32 rgb, int x, int y, int size, int top, int bottom, int alpha, bool blacked) {
+    if (!HeroPageShown() || MenuExTextureReadFlag != MENU_EX_TEX_READY || MenuCharaFrame.frame == nullptr ||
+        !InParty(*BtlMenuStatusPt, ItemMenuMode.chara)) {
+        return false;
+    }
+
+    const GearKindParts &parts = GearPartsFor(ItemMenuMode.chara, kind);
+
+    // An empty slot whose clothes come off the hero (bare) has the kind's icon: he isn't wearing them, and a cloth left
+    // out of his draw is never laid out to be drawn here either.
+    if (parts.draw.empty() || (blacked && !parts.bare.empty())) {
+        return false;
+    }
+
+    const int clip_top = std::max(y, top);
+    const int clip_bottom = std::min(y + size, bottom);
+
+    if (clip_bottom - clip_top < 2) {
+        return true;
+    }
+
+    CCharacter &model = MenuCharaFrame;
+    float       saved_position[4];
+    float       saved_scale[4];
+    std::memcpy(saved_position, model.pos, sizeof(saved_position));
+    std::memcpy(saved_scale, model.scale, sizeof(saved_scale));
+    const CVector3_f_ saved_rotation = model.rotation;
+
+    // A colour from the menu's 0 to 255 into a light's scale, mostly left white so the part keeps its own look; the
+    // colour shows in the ground behind it, which fades from the top of the slot.
+    g_part_job = {&parts, x, y, size, {}, blacked, clip_top, clip_bottom};
+
+    for (int channel = 0; channel < 3; channel++) {
+        g_part_job.tint[channel] = 0.7f + 0.5f * static_cast<float>(rgb >> (16 - channel * 8) & 0xFF) / 255.0f;
+    }
+
+    if (!blacked) {
+        const int ground_top = std::max(y + 4, top);
+        const int ground_bottom = std::min(y + size - 4, bottom);
+
+        if (ground_bottom > ground_top) {
+            const auto  channel = [rgb](int shift) { return static_cast<u8>(rgb >> shift & 0xFF); };
+            const float faded = static_cast<float>(ground_top - y - 4) / static_cast<float>(size - 8);
+            const float fade_end = static_cast<float>(ground_bottom - y - 4) / static_cast<float>(size - 8);
+            spRGBA      high = {channel(16), channel(8), channel(0), static_cast<u8>(alpha * (0x58 - 0x48 * faded) / 0x80)};
+            spRGBA      low = {channel(16), channel(8), channel(0), static_cast<u8>(alpha * (0x58 - 0x48 * fade_end) / 0x80)};
+            DrawMenuColorGradation(Ps2Lvalue(CRect_i_(x + 4, ground_top, size - 8, ground_bottom - ground_top)), &high, &high, &low, &low);
+        }
+    }
+
+    MenuTextureReload(MenuExtendReadBlock);
+    // MGSetWindowRect halves the left edge it is given (not the right), so the left is given doubled and the width cut
+    // to match: the clip is the slot's inside, x + 1 to x + size - 2, not reaching back halfway to the screen's edge.
+    const int clip_left = x + 1;
+    MGSetWindowRect(CRect_i_(clip_left * 2, clip_top / 2, x + size - 2 - clip_left * 2, (clip_bottom - clip_top) / 2 - 1));
+    MenuPolygonDraw(blacked ? alpha * 0x60 >> 7 : alpha, GearPartPolyDraw);
+    MGSetWindowRect();
+
+    std::memcpy(model.pos, saved_position, sizeof(saved_position));
+    std::memcpy(model.scale, saved_scale, sizeof(saved_scale));
+    model.rotation = saved_rotation;
+
+    if (model.frame != nullptr) {
+        model.frame->SetPosition(model.pos);
+        model.frame->SetRotation(model.rotation.x, model.rotation.y, model.rotation.z);
+        model.frame->SetScale(model.scale);
+    }
+
+    return true;
+}
+
+/** A slot's frame on the hero page: a rounded, bevelled colour that darkens downwards. */
+void HeroFrame(int x, int y, spRGBA top, spRGBA bottom, int alpha) {
+    SlotFrameDraw(x, y, kHeroSlot, top, bottom, alpha);
+}
+
+/** A piece's colour (0xRRGGBB) at level of its brightness, as a slot's ground. */
+spRGBA HeroShade(u32 rgb, float level) {
+    const auto channel = [&](int shift) { return static_cast<u8>(static_cast<float>(rgb >> shift & 0xFF) * level); };
+    return {channel(16), channel(8), channel(0), 0};
+}
+
+/** A bar from x, y, w wide and h high: a dark track, filled to fill of w in the colours of gradation. */
+void HeroBar(int x, int y, int w, float fill, int gradation, int alpha, int h = 6) {
+    spRGBA track = {0x10, 0x10, 0x18, static_cast<u8>(alpha)};
+    DrawMenuColorGradation(Ps2Lvalue(CRect_i_(x - 1, y - 1, w + 2, h + 2)), &track, &track, &track, &track);
+    GRADATION_COLOR_INFO2 colours{};
+    memcpy(&colours, GetGradationColorInfo2(gradation), sizeof(colours));
+
+    for (auto &colour : colours.colors) {
+        colour.a = static_cast<u8>(alpha);
+    }
+
+    const int filled = static_cast<int>(static_cast<float>(w) * std::clamp(fill, 0.0f, 1.0f));
+
+    if (filled > 0) {
+        DrawMenuColorGradation(Ps2Lvalue(CRect_i_(x, y, filled, h)), &colours.colors[0], &colours.colors[1], &colours.colors[2], &colours.colors[3]);
+    }
+}
+
+/** A small count in a slot's bottom right corner, as a quick slot shows how many it holds. */
+void HeroCount(int value, int x, int y, int alpha) {
+    DrawMenuNumber(value, x + kHeroSlot - 3, y + kHeroSlot - 0xF, PerBoardTex, RECT{0x90, 0xDC, 0xC, 0xC}, 0, alpha);
+}
+
+// On the hero page ACTIVE ITEM and the hero share one tablet: the game's character card (the status sheet's stone under
+// ACTIVE ITEM) grown from ACTIVE ITEM's top to the page's foot, its corners and rim from the card's edges and the rest
+// from its plain stone, each repeat mirrored so neighbours meet without a seam. ACTIVE ITEM's title and boxes are set
+// into it with their edges faded, so its own plate's outline doesn't show.
+constexpr int kHeroTabletY = 0x4B; // where ACTIVE ITEM's plate stands
+constexpr int kHeroTabletBottom = 0x16E;
+constexpr int kCardV = 0x50; // the card in the sheet
+constexpr int kCardW = 0xFC;
+constexpr int kCardH = 0x86;
+constexpr int kCardCorner = 12;
+
+/** The left of the hero's tablet: out to the further charm column when he has one. */
+int HeroPanelX(int chara) {
+    return CharmSlotsShown(chara) > 2 || PouchShown() ? 0x0E : 0x36;
+}
+
+/** Fills x, y (w by h) with the sheet's u, v (tw by th), each other repeat mirrored so the edges meet. */
+void HeroStoneTile(int x, int y, int w, int h, int u, int v, int tw, int th, int alpha) {
+    for (int dy = 0, row = 0; dy < h; dy += th, row++) {
+        const int rows = std::min(th, h - dy);
+        const int sv = row % 2 == 0 ? v : v + th;
+        const int sh = row % 2 == 0 ? rows : -rows;
+
+        for (int dx = 0, col = 0; dx < w; dx += tw, col++) {
+            const int cols = std::min(tw, w - dx);
+            const int su = col % 2 == 0 ? u : u + tw;
+            const int sw = col % 2 == 0 ? cols : -cols;
+            DrawMenu2DSprite(CharaStatus, CRect_i_(x + dx, y + dy, cols, rows), CRect_i_(su, sv, sw, sh), alpha);
+        }
+    }
+}
+
+/** Draws the sheet's u, v (w by h) at x, y, 1:1, fading to nothing over its outer feather pixels. */
+void HeroFeathered(int x, int y, int u, int v, int w, int h, int feather, int alpha) {
+    const int xs[4] = {0, feather, w - feather, w};
+    const int ys[4] = {0, feather, h - feather, h};
+    const auto at = [&](int i, int j) {
+        const bool inside = i > 0 && i < 3 && j > 0 && j < 3;
+        return spRGBA{0x80, 0x80, 0x80, static_cast<u8>(inside ? alpha : 0)};
+    };
+
+    for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 3; i++) {
+            spRGBA top_left = at(i, j);
+            spRGBA top_right = at(i + 1, j);
+            spRGBA bottom_left = at(i, j + 1);
+            spRGBA bottom_right = at(i + 1, j + 1);
+            const int cw = xs[i + 1] - xs[i];
+            const int ch = ys[j + 1] - ys[j];
+            DrawMenu2DSprite(CharaStatus, CRect_i_(x + xs[i], y + ys[j], cw, ch), CRect_i_(u + xs[i], v + ys[j], cw, ch),
+                             &top_left, &top_right, &bottom_left, &bottom_right);
+        }
+    }
+}
+
+/** The shared tablet, with ACTIVE ITEM's title and boxes set in; plate_x is where ACTIVE ITEM's plate stands. */
+void HeroTabletDraw(int plate_x, int alpha) {
+    constexpr int c = kCardCorner;
+    const int     x = HeroPanelX(ItemMenuMode.chara);
+    const int     w = kHeroGearX + kHeroSlot + 0x12 - x;
+    const int     y = kHeroTabletY;
+    const int     h = kHeroTabletBottom - y;
+    const int     bottom_v = kCardV + kCardH - c;
+    // The card's plain stone: right of its slots and below its top rim; its left rim below its icons.
+    constexpr int kPlainU = 0x78;
+    constexpr int kPlainW = 0x70;
+    constexpr int kPlainV = kCardV + c;
+    constexpr int kPlainH = kCardH - 2 * c;
+    constexpr int kLeftV = kCardV + 0x50;
+    constexpr int kLeftH = kCardH - c - 0x50;
+
+    HeroStoneTile(x + c, y + c, w - 2 * c, h - 2 * c, kPlainU, kPlainV, kPlainW, kPlainH, alpha);
+    HeroStoneTile(x + c, y, w - 2 * c, c, kPlainU, kCardV, kPlainW, c, alpha);
+    HeroStoneTile(x + c, y + h - c, w - 2 * c, c, kPlainU, bottom_v, kPlainW, c, alpha);
+    HeroStoneTile(x, y + c, c, h - 2 * c, 0, kLeftV, c, kLeftH, alpha);
+    HeroStoneTile(x + w - c, y + c, c, h - 2 * c, kCardW - c, kPlainV, c, kPlainH, alpha);
+    DrawMenu2DSprite(CharaStatus, CRect_i_(x, y, c, c), CRect_i_(0, kCardV, c, c), alpha);
+    DrawMenu2DSprite(CharaStatus, CRect_i_(x + w - c, y, c, c), CRect_i_(kCardW - c, kCardV, c, c), alpha);
+    DrawMenu2DSprite(CharaStatus, CRect_i_(x, y + h - c, c, c), CRect_i_(0, bottom_v, c, c), alpha);
+    DrawMenu2DSprite(CharaStatus, CRect_i_(x + w - c, y + h - c, c, c), CRect_i_(kCardW - c, bottom_v, c, c), alpha);
+
+    // ACTIVE ITEM's title, then its three boxes, from its plate (the sheet's 0, 0), where the plate would stand.
+    HeroFeathered(plate_x + 0x05, y + 0x01, 0x05, 0x01, 0xC2, 0x1E, 7, alpha);
+    HeroFeathered(plate_x + 0x0E, y + 0x1C, 0x0E, 0x1C, 0xB6, 0x31, 6, alpha);
+}
+
+
+// The tablet built whole, once, from the status sheet's own pixels (kept as the sheet loads, RememberMenuSheet): its
+// stone in patches of the card's plain stone cross-faded into one another, so nothing repeats in a line; its outline
+// a rounded rectangle, rimmed and lit from the top left as the game's plates are; ACTIVE ITEM's title and boxes copied
+// in, only where they differ from the stone, toned to it, centred on the tablet (kHeroActiveItemShift).
+struct MenuSheet {
+    unsigned             width = 0;
+    unsigned             height = 0;
+    std::vector<uint8_t> rgba;
+    unsigned             generation = 0;
+};
+MenuSheet g_status_sheet;
+
+constexpr int kTabletDetail = 2;    // texels a menu pixel, so the slant and the corners stay smooth
+constexpr int kTabletRadius = 7;    // its corners
+constexpr int kStoneU = 0x70;       // the card's plain stone in the sheet
+constexpr int kStoneV = 0x60;
+constexpr int kStoneW = 0x7C;
+constexpr int kStoneH = 0x68;
+constexpr float kStoneCell = 36.0f; // the size of a patch, in menu pixels
+
+/** The sheet's colour at u, v (texel centres at .5), blended between texels and held at its edges. */
+std::array<float, 3> SheetAt(float u, float v) {
+    const MenuSheet &sheet = g_status_sheet;
+    const float      fu = std::clamp(u - 0.5f, 0.0f, static_cast<float>(sheet.width) - 1.001f);
+    const float      fv = std::clamp(v - 0.5f, 0.0f, static_cast<float>(sheet.height) - 1.001f);
+    const int        u0 = static_cast<int>(fu);
+    const int        v0 = static_cast<int>(fv);
+    const float      tu = fu - static_cast<float>(u0);
+    const float      tv = fv - static_cast<float>(v0);
+    std::array<float, 3> out{};
+
+    for (int c = 0; c < 3; c++) {
+        const auto at = [&](int x, int y) { return static_cast<float>(sheet.rgba[(static_cast<size_t>(y) * sheet.width + x) * 4 + c]); };
+        const float top = at(u0, v0) + (at(u0 + 1, v0) - at(u0, v0)) * tu;
+        const float bottom = at(u0, v0 + 1) + (at(u0 + 1, v0 + 1) - at(u0, v0 + 1)) * tu;
+        out[c] = top + (bottom - top) * tv;
+    }
+
+    return out;
+}
+
+/** t folded back and forth across 0..n, so a patch read past its end turns back rather than jumping. */
+float Mirrored(float t, float n) {
+    t = std::fmod(t, 2.0f * n);
+    t = t < 0.0f ? t + 2.0f * n : t;
+    return t < n ? t : 2.0f * n - t;
+}
+
+/** The tablet's stone at x, y (menu pixels from its corner). */
+std::array<float, 3> StoneAt(float x, float y) {
+    // Each patch is a different place in the card's stone; between patch centres one fades into the next over the
+    // middle of the way, so the stone is whole and no edge or repeat runs straight.
+    const float gx = x / kStoneCell - 0.5f;
+    const float gy = y / kStoneCell - 0.5f;
+    const int   cx = static_cast<int>(std::floor(gx));
+    const int   cy = static_cast<int>(std::floor(gy));
+    const auto  weight = [](float t) {
+        const float f = std::clamp((t - 0.3f) / 0.4f, 0.0f, 1.0f);
+        return f * f * (3.0f - 2.0f * f);
+    };
+    const float wx = weight(gx - static_cast<float>(cx));
+    const float wy = weight(gy - static_cast<float>(cy));
+    std::array<float, 3> out{};
+
+    for (int j = 0; j < 2; j++) {
+        for (int i = 0; i < 2; i++) {
+            const float w = (i == 0 ? 1.0f - wx : wx) * (j == 0 ? 1.0f - wy : wy);
+
+            if (w <= 0.0f) {
+                continue;
+            }
+
+            const unsigned seed = static_cast<unsigned>(cx + i) * 73856093u ^ static_cast<unsigned>(cy + j) * 19349663u;
+            const float    ox = static_cast<float>((seed >> 3) % kStoneW);
+            const float    oy = static_cast<float>((seed >> 11) % kStoneH);
+            const auto     colour = SheetAt(kStoneU + Mirrored(x + ox, kStoneW), kStoneV + Mirrored(y + oy, kStoneH));
+
+            for (int c = 0; c < 3; c++) {
+                out[c] += colour[c] * w;
+            }
+        }
+    }
+
+    return out;
+}
+
+/** Signed distance from p to the convex polygon (negative inside). */
+float PolygonDistance(const std::vector<std::array<float, 2>> &poly, float px, float py) {
+    float best = 1e9f;
+    bool  inside = true;
+
+    for (size_t i = 0; i < poly.size(); i++) {
+        const auto &a = poly[i];
+        const auto &b = poly[(i + 1) % poly.size()];
+        const float ex = b[0] - a[0];
+        const float ey = b[1] - a[1];
+        const float wx = px - a[0];
+        const float wy = py - a[1];
+        const float t = std::clamp((wx * ex + wy * ey) / (ex * ex + ey * ey), 0.0f, 1.0f);
+        best = std::min(best, std::hypot(wx - ex * t, wy - ey * t));
+        // Clockwise on the screen (y down): inside lies to the right of every edge.
+        if (ex * wy - ey * wx < 0.0f) {
+            inside = false;
+        }
+    }
+
+    return inside ? -best : best;
+}
+
+/** The tablet's outline, w by h, its corners rounded by kTabletRadius: the shape drawn in by the radius, then grown. */
+std::vector<std::array<float, 2>> TabletOutline(float w, float h) {
+    const float r = static_cast<float>(kTabletRadius);
+    return {{r, r}, {w - r, r}, {w - r, h - r}, {r, h - r}};
+}
+
+struct TabletKey {
+    int      x, w, h, plate_dx;
+    unsigned generation;
+    bool     operator==(const TabletKey &) const = default;
+};
+
+/** The tablet's texture for the key, built when the key changes; null without the sheet's pixels. */
+CTexture *HeroTabletTexture(const TabletKey &key) {
+    static TabletKey cached_key{};
+    static unsigned  tbp = 0;
+    static CTexture  texture;
+    const MenuSheet &sheet = g_status_sheet;
+
+    if (sheet.width < kStoneU + kStoneW || sheet.height < kStoneV + kStoneH) {
+        return nullptr;
+    }
+
+    if (tbp != 0 && cached_key == key && render::PortKeyLive(tbp)) {
+        return &texture;
+    }
+
+    if (tbp != 0) {
+        render::PortReleaseKey(tbp);
+        tbp = 0;
+    }
+
+    const int   tw = key.w * kTabletDetail;
+    const int   th = key.h * kTabletDetail;
+    const float w = static_cast<float>(key.w);
+    const float h = static_cast<float>(key.h);
+    const auto  outline = TabletOutline(w, h);
+    const float radius = static_cast<float>(kTabletRadius);
+
+    // ACTIVE ITEM's plate: its title and boxes are what differs from its stone, measured against the stone between
+    // its boxes; the plate's colour is moved to the card's so the two stones agree where the art fades out.
+    constexpr int kArtU = 0x06;
+    constexpr int kArtV = 0x03;
+    constexpr int kArtW = 0xBB;
+    constexpr int kArtH = 0x49;
+    std::array<float, 3> plate_mean{};
+    std::array<float, 3> stone_mean{};
+    int                  plate_count = 0;
+    int                  stone_count = 0;
+
+    for (int v = 0x22; v < 0x46; v++) {
+        for (int u = 0x42; u < 0x52; u++) {
+            const auto colour = SheetAt(static_cast<float>(u) + 0.5f, static_cast<float>(v) + 0.5f);
+            for (int c = 0; c < 3; c++) {
+                plate_mean[c] += colour[c];
+            }
+            plate_count++;
+        }
+    }
+
+    for (int v = kStoneV; v < kStoneV + kStoneH; v += 2) {
+        for (int u = kStoneU; u < kStoneU + kStoneW; u += 2) {
+            const auto colour = SheetAt(static_cast<float>(u) + 0.5f, static_cast<float>(v) + 0.5f);
+            for (int c = 0; c < 3; c++) {
+                stone_mean[c] += colour[c];
+            }
+            stone_count++;
+        }
+    }
+
+    for (int c = 0; c < 3; c++) {
+        plate_mean[c] /= static_cast<float>(std::max(plate_count, 1));
+        stone_mean[c] /= static_cast<float>(std::max(stone_count, 1));
+    }
+
+    // How much of each texel of the plate is art: far from the stone's colour, then spread a little so outlines and
+    // shadows come with it, softly.
+    std::vector<float> art(static_cast<size_t>(kArtW) * kArtH, 0.0f);
+
+    for (int v = 0; v < kArtH; v++) {
+        for (int u = 0; u < kArtW; u++) {
+            const auto  colour = SheetAt(static_cast<float>(kArtU + u) + 0.5f, static_cast<float>(kArtV + v) + 0.5f);
+            const float distance = std::hypot(colour[0] - plate_mean[0], colour[1] - plate_mean[1], colour[2] - plate_mean[2]);
+            const float f = std::clamp((distance - 22.0f) / 30.0f, 0.0f, 1.0f);
+            art[static_cast<size_t>(v) * kArtW + u] = f;
+        }
+    }
+
+    std::vector<float> spread(art.size(), 0.0f);
+
+    for (int v = 0; v < kArtH; v++) {
+        for (int u = 0; u < kArtW; u++) {
+            float best = 0.0f;
+
+            for (int dv = -3; dv <= 3; dv++) {
+                for (int du = -3; du <= 3; du++) {
+                    const int su = u + du;
+                    const int sv = v + dv;
+
+                    if (su < 0 || sv < 0 || su >= kArtW || sv >= kArtH) {
+                        continue;
+                    }
+
+                    const float fall = std::max(0.0f, 1.0f - std::hypot(static_cast<float>(du), static_cast<float>(dv)) / 3.5f);
+                    best = std::max(best, art[static_cast<size_t>(sv) * kArtW + su] * fall);
+                }
+            }
+
+            // Faded to nothing at the region's own edge, so a plate rim it may catch never shows.
+            const float edge = std::min({static_cast<float>(u), static_cast<float>(v), static_cast<float>(kArtW - 1 - u),
+                                         static_cast<float>(kArtH - 1 - v)});
+            spread[static_cast<size_t>(v) * kArtW + u] = best * std::clamp(edge / 2.0f, 0.0f, 1.0f);
+        }
+    }
+
+    const auto art_at = [&](float u, float v) {
+        const float fu = u - 0.5f;
+        const float fv = v - 0.5f;
+
+        if (fu < 0.0f || fv < 0.0f || fu >= static_cast<float>(kArtW - 1) || fv >= static_cast<float>(kArtH - 1)) {
+            return 0.0f;
+        }
+
+        const int   u0 = static_cast<int>(fu);
+        const int   v0 = static_cast<int>(fv);
+        const float tu = fu - static_cast<float>(u0);
+        const float tv = fv - static_cast<float>(v0);
+        const auto  at = [&](int x, int y) { return spread[static_cast<size_t>(y) * kArtW + x]; };
+        const float top = at(u0, v0) + (at(u0 + 1, v0) - at(u0, v0)) * tu;
+        const float bottom = at(u0, v0 + 1) + (at(u0 + 1, v0 + 1) - at(u0, v0 + 1)) * tu;
+        return top + (bottom - top) * tv;
+    };
+
+    std::vector<uint8_t> rgba(static_cast<size_t>(tw) * th * 4, 0);
+    constexpr float kLightX = -0.45f;
+    constexpr float kLightY = -0.89f;
+
+    for (int j = 0; j < th; j++) {
+        for (int i = 0; i < tw; i++) {
+            const float x = (static_cast<float>(i) + 0.5f) / kTabletDetail;
+            const float y = (static_cast<float>(j) + 0.5f) / kTabletDetail;
+            const float d = PolygonDistance(outline, x, y) - radius;
+            const float cover = std::clamp(0.5f - d * kTabletDetail, 0.0f, 1.0f);
+
+            if (cover <= 0.0f) {
+                continue;
+            }
+
+            auto colour = StoneAt(x + static_cast<float>(key.x), y);
+            // A little lighter at the top, as the game's plates are.
+            const float lift = 1.04f - 0.08f * y / h;
+
+            for (float &c : colour) {
+                c *= lift;
+            }
+
+            // ACTIVE ITEM's art, where it stands.
+            const float au = x - static_cast<float>(key.plate_dx) - kArtU;
+            const float av = y - kArtV;
+            const float amount = art_at(au, av);
+
+            if (amount > 0.0f) {
+                const auto plate = SheetAt(static_cast<float>(kArtU) + au, static_cast<float>(kArtV) + av);
+
+                for (int c = 0; c < 3; c++) {
+                    colour[c] += (plate[c] - plate_mean[c] + stone_mean[c] * lift - colour[c]) * amount;
+                }
+            }
+
+            // The rim: lit where it faces the light, shadowed where it faces away, a dark edge outside it.
+            const float in = -d;
+
+            if (in < 4.5f) {
+                const float gx = PolygonDistance(outline, x + 0.25f, y) - PolygonDistance(outline, x - 0.25f, y);
+                const float gy = PolygonDistance(outline, x, y + 0.25f) - PolygonDistance(outline, x, y - 0.25f);
+                const float length = std::max(std::hypot(gx, gy), 1e-5f);
+                const float facing = (gx * kLightX + gy * kLightY) / length;
+                const float profile = std::sin(std::clamp((in - 1.0f) / 3.5f, 0.0f, 1.0f) * 3.14159265f);
+                const float shade = facing * profile * (facing > 0.0f ? 70.0f : 45.0f);
+
+                for (float &c : colour) {
+                    c += shade;
+                }
+
+                const float dark = 1.0f - std::clamp((in - 0.6f) / 0.9f, 0.0f, 1.0f);
+                colour[0] += (0x2A - colour[0]) * dark;
+                colour[1] += (0x34 - colour[1]) * dark;
+                colour[2] += (0x4C - colour[2]) * dark;
+            }
+
+            const size_t at = (static_cast<size_t>(j) * tw + i) * 4;
+
+            for (int c = 0; c < 3; c++) {
+                rgba[at + c] = static_cast<uint8_t>(std::lround(std::clamp(colour[c], 0.0f, 255.0f)));
+            }
+
+            rgba[at + 3] = static_cast<uint8_t>(std::lround(cover * 255.0f));
+        }
+    }
+
+    render::PortDecodedTexture decoded{};
+    decoded.width = static_cast<unsigned>(tw);
+    decoded.height = static_cast<unsigned>(th);
+    decoded.format = gfx::TextureFormat::Rgba8;
+    decoded.has_alpha = true;
+    decoded.levels.push_back(std::move(rgba));
+    tbp = render::PortCreateTexture(decoded, render::PortTextureOwner::Other, nullptr);
+
+    if (tbp == 0) {
+        return nullptr;
+    }
+
+    cached_key = key;
+    texture.Initialize();
+    std::strcpy(texture.name, "herotablet");
+    texture.width = tw;
+    texture.height = th;
+    texture.bpp = 4;
+    texture.block = -1;
+    texture.tex0 = static_cast<u_long>(tbp) | (1ull << 34);
+    texture.tex1 = 0;
+    return &texture;
+}
+
+/** The whole tablet, its shadow under it; false when it can't be built (the pieced one is drawn instead). */
+bool HeroTabletWhole(int plate_x, int alpha) {
+    const int x = HeroPanelX(ItemMenuMode.chara);
+    const int w = kHeroGearX + kHeroSlot + 0x12 - x;
+    const int h = kHeroTabletBottom - kHeroTabletY;
+    CTexture *tablet = HeroTabletTexture({x, w, h, plate_x - x, g_status_sheet.generation});
+
+    if (tablet == nullptr) {
+        return false;
+    }
+
+    const int      was = PortBilinear();
+    const CRect_i_ source(0, 0, w * kTabletDetail, h * kTabletDetail);
+    setbilinear(1);
+    DrawMenu2DSprite(tablet, CRect_i_(x + 2, kHeroTabletY + 3, w, h), source, 0, 0, 0, alpha * 0x40 >> 7);
+    DrawMenu2DSprite(tablet, CRect_i_(x, kHeroTabletY, w, h), source, alpha);
+    setbilinear(was);
+    return true;
+}
+
+/** The hero page: the character larger, with no card, his slots about him and his health and water at his feet. */
+void HeroPageDraw(int alpha) {
+    const int       chara = ItemMenuMode.chara;
+    CDngStatusData *status = BtlMenuStatusPt;
+    const int       hp = status->hp[chara];
+    const int       max_hp = std::max<int>(status->max_hp[chara], 1);
+
+    // His panel is drawn before ACTIVE ITEM (HeroPanelDraw).
+
+    if (MenuExTextureReadFlag == MENU_EX_TEX_READY && InParty(*status, chara)) {
+        const int motion = hp < max_hp * 3 / 10 ? 1 : 0;
+
+        if (motion != MenuCharaFrame.motion_no) {
+            MenuCharaFrame.SetMotion(motion, 0);
+        }
+
+        MenuTextureReload(MenuExtendReadBlock);
+        MenuCharaPlace(chara, kHeroFigureScale, kHeroFigureDx, kHeroFigureDy);
+        MGSetWindowRect(CRect_i_(kHeroFigureX, kHeroFigureY / 2, kHeroFigureW - 1, kHeroFigureH / 2 - 1));
+        MenuPolygonDraw(alpha, MenuCharaPolyDraw);
+        MGSetWindowRect();
+    }
+
+    // His name over him, between the party arrows.
+    MenuTextureReload(CommonMenuMes3.tex_block);
+    const int mes_no = chara < SAVE_CHARA_COUNT ? chara + 0xC2 : CharaNameLine(chara);
+
+    if (CommonMenuMes3.mes_made != mes_no) {
+        CommonMenuMes3.MakeMesWin(mes_no);
+    }
+
+    static constexpr s8 kCharWidth[7] = {8, 6, 6, 6, 6, 6, 6};
+    CommonMenuMes3.edge_alpha = alpha;
+    CommonMenuMes3.stay_frame = false;
+    DrawMenuClsMes(&CommonMenuMes3, kHeroCentre - GetMsgLengthCharaName(chara) * kCharWidth[BtlMenuNowLang], 0x9E);
+
+    MenuTextureReload(ItemMenuWeaponIconReadBlock);
+
+    // The weapon at his hand: its attack in the corner and how worn it is up its left edge.
+    WEAPON_HAVE *weapon = status->equipped_weapon_slot[chara] < 0 ? &ItemMenuMode.board.weapon
+                                                                   : &status->chara_weapons[chara][status->equipped_weapon_slot[chara]];
+    HeroFrame(kHeroInnerX, kHeroWeaponY, {0xF8, 0xCC, 0x84, 0}, {0xD0, 0x8C, 0x44, 0}, alpha);
+
+    if (weapon->item_no >= ITEM_WEAPON_START) {
+        int       u = 0;
+        int       v = 0;
+        CTexture *own = RetCTex(weapon->item_no, u, v);
+        CTexture *icon = own != nullptr && own != WepIcon ? own : TexManager.GetTexture("wepicon", -1);
+        WEAPON_HAVE total;
+        WeaponAllValueSet(weapon, &total, 0);
+
+        if (icon != nullptr) {
+            DrawMenu2DSprite(icon, CRect_i_(kHeroInnerX + 4, kHeroWeaponY + 4, 0x20, 0x20), CRect_i_(u, v, 0x20, 0x20), alpha);
+        }
+
+        const float durability = std::clamp(weapon->durability_f / std::max(static_cast<float>(weapon->durability), 1.0f), 0.0f, 1.0f);
+        spRGBA      track = {0x10, 0x10, 0x18, static_cast<u8>(alpha)};
+        spRGBA      worn = durability < 0.3f ? spRGBA{0xF0, 0x58, 0x40, static_cast<u8>(alpha)} : spRGBA{0x9C, 0xE0, 0x6C, static_cast<u8>(alpha)};
+        const int   tall = kHeroSlot - 8;
+        const int   left = static_cast<int>(static_cast<float>(tall) * durability);
+        DrawMenuColorGradation(Ps2Lvalue(CRect_i_(kHeroInnerX + 3, kHeroWeaponY + 4, 4, tall)), &track, &track, &track, &track);
+        DrawMenuColorGradation(Ps2Lvalue(CRect_i_(kHeroInnerX + 4, kHeroWeaponY + 4 + tall - left, 2, left)), &worn, &worn, &worn, &worn);
+        MenuTextureReload(BtlMenuReadBlock);
+        HeroCount(total.attack, kHeroInnerX, kHeroWeaponY, alpha);
+        MenuTextureReload(ItemMenuWeaponIconReadBlock);
+    }
+
+    // The shield, with his defence.
+    DrawMenu2DSprite(CharaStatus, CRect_i_(kHeroInnerX, kHeroShieldY, kHeroSlot, kHeroSlot), CRect_i_(0xFE, 0x2E, 0x28, 0x28), alpha);
+    MenuTextureReload(BtlMenuReadBlock);
+    HeroCount(status->defense[chara], kHeroInnerX, kHeroShieldY, alpha);
+    MenuTextureReload(ItemMenuWeaponIconReadBlock);
+
+    // The gear down his right side; an empty slot shows its kind blacked out.
+    for (int kind = 0; kind < GEAR_KIND_COUNT; kind++) {
+        if (kind == GEAR_POUCH && !PouchShown()) {
+            continue;
+        }
+
+        int x = 0;
+        int y = 0;
+        HeroGearPlace(kind, x, y);
+        const GearPiece *piece = WornGear(chara, kind);
+        HeroFrame(x, y, piece != nullptr ? HeroShade(piece->color, 0.75f) : spRGBA{0x7C, 0xAA, 0xDC, 0},
+                  piece != nullptr ? HeroShade(piece->color, 0.35f) : spRGBA{0x42, 0x66, 0xA8, 0}, alpha);
+
+        if (piece != nullptr) {
+            DrawGearIcon(piece->icon.empty() ? GearKindIcon(kind) : piece->icon, piece->color, x + 4, y + 4, 0, 0x1C0, alpha, false, kind);
+        } else {
+            DrawGearIcon(GearKindIcon(kind), 0xFFFFFF, x + 4, y + 4, 0, 0x1C0, alpha, true, kind);
+        }
+    }
+
+    // His health and water across his feet, over a shade that rises from the panel's floor: the label and the numbers
+    // on one line, the bar the figure's width under them, the water centred under that.
+    constexpr int kRowY = kHeroFigureY + kHeroFigureH - 0x26;
+    spRGBA        clear = {0x18, 0x22, 0x36, 0};
+    spRGBA        band = {0x18, 0x22, 0x36, static_cast<u8>(alpha * 0x40 >> 7)};
+    constexpr int kShadeTop = kRowY - 0x16;
+    constexpr int kShadeH = kHeroFigureY + kHeroFigureH - kShadeTop;
+    constexpr int kFade = 0x10;
+    // Faded at its sides as at its top, so it has no edge against the panel.
+    DrawMenuColorGradation(Ps2Lvalue(CRect_i_(kHeroFigureX, kShadeTop, kFade, kShadeH)), &clear, &clear, &clear, &band);
+    DrawMenuColorGradation(Ps2Lvalue(CRect_i_(kHeroFigureX + kFade, kShadeTop, kHeroFigureW - 2 * kFade, kShadeH)), &clear, &clear, &band, &band);
+    DrawMenuColorGradation(Ps2Lvalue(CRect_i_(kHeroFigureX + kHeroFigureW - kFade, kShadeTop, kFade, kShadeH)), &clear, &clear, &band, &clear);
+    MenuTextureReload(ItemMenuWeaponIconReadBlock);
+    static constexpr unsigned char kLabel[3] = {0xF0, 0xE6, 0xD2};
+    MoonModMenuLabel("HP", kLabel, kHeroFigureX + 4, kRowY - 0x12, alpha, 0.9f, false);
+    MenuTextureReload(ItemMenuWeaponIconReadBlock);
+    int values[2] = {hp, max_hp};
+    DrawStatusNumberNowAndMax(values, kHeroFigureX + kHeroFigureW - 4, kRowY - 0xE, 1, alpha);
+    const int colour = hp < max_hp * 15 / 100 ? 2 : hp < max_hp * 3 / 10 ? 1 : 0;
+    HeroBar(kHeroFigureX + 4, kRowY, kHeroFigureW - 8, static_cast<float>(hp) / static_cast<float>(max_hp), 0x16 + colour, alpha);
+
+    const int water_y = kRowY + 0xA;
+    const int cups = static_cast<int>(status->water_max[chara] / 10.0f);
+    const int water_w = cups > 0 ? (cups - 1) * 0x12 + 0x18 : 0;
+    const int water_x = kHeroCentre - water_w / 2;
+    int       x = water_x;
+
+    for (int i = 0; i < cups - 1; i++) {
+        DrawMenu2DSprite(CharaStatus, CRect_i_(x, water_y + 2, 0x12, 0x15), CRect_i_(0x154, 0x10, 0x12, 0x14), alpha);
+        x += 0x12;
+    }
+
+    if (cups > 0) {
+        DrawMenu2DSprite(CharaStatus, CRect_i_(x, water_y + 2, 0x18, 0x15), CRect_i_(0x166, 0x10, 0x18, 0x14), alpha);
+    }
+
+    x = water_x + 2;
+    const int water = static_cast<int>(status->water_now[chara]);
+
+    for (int i = 0; i < water / 10; i++) {
+        DrawMenu2DSprite(CharaStatus, CRect_i_(x, water_y, 0x10, 0x14), CRect_i_(0x128, 0x2C, 0x10, 0x14), alpha);
+        x += 0x12;
+    }
+
+    if (water % 10 != 0) {
+        DrawMenu2DSprite(CharaStatus, CRect_i_(x, water_y, 0x10, 0x14), CRect_i_(0x128 + (3 - static_cast<int>(water % 10 / 2.5f)) * 0x10, 0x2C, 0x10, 0x14), alpha);
+    }
+
+    MenuTextureReload(BtlMenuReadBlock);
+    CharaStatusMsgDraw(kHeroFigureX + 4, kHeroFigureY + 2, chara, 0, alpha);
+}
+
+/**
+ * What Cross and Square do on the hero page's place under the cursor, for the help box at the bottom left: two lines
+ * with the pad's glyphs. False where the game's own help says it (the active items, the figure, the weapon with
+ * nothing in hand).
+ */
+bool HeroHint(std::string &first, std::string &second) {
+    HeroSlots slots;
+    const int count = HeroSlotsNow(slots);
+    const int now = HeroSlotAt(slots, count);
+
+    if (now < 0) {
+        return false;
+    }
+
+    const HeroSlot   &slot = slots[now];
+    const int         chara = ItemMenuMode.chara;
+    const int         held = BtlHaveItemPt->item_no;
+    const bool        holding = held >= ITEM_ATTACH_START;
+    const GearPiece  *held_gear = FindGear(HeldGear());
+    static constexpr const char *kA[GEAR_KIND_COUNT] = {"a hat", "a tunic", "gloves", "boots", "a pouch"};
+    static constexpr const char *kOnly[GEAR_KIND_COUNT] = {"Only a hat goes here.", "Only a tunic goes here.", "Only gloves go here.",
+                                                           "Only boots go here.", "Only a pouch goes here."};
+
+    if (slot.mode == ITEM_MENU_QUICK_SLOTS && GearCursor(slot.cursor)) {
+        const int        kind = slot.cursor - kGearCursor;
+        const GearPiece *worn = WornGear(chara, kind);
+
+        if (held_gear != nullptr) {
+            first = held_gear->kind != kind ? kOnly[kind] : worn != nullptr ? "{cross} Wear it, taking this off." : "{cross} Wear it.";
+            second = "{circle} Put it back.";
+        } else if (worn != nullptr) {
+            first = "{cross} Take it in hand.";
+            second = "{square} Back to the bag.";
+        } else {
+            first = std::string("Bring ") + kA[kind] + " from the";
+            second = "Equipment tab.";
+        }
+
+        return true;
+    }
+
+    if (slot.mode == ITEM_MENU_QUICK_SLOTS && CharmCursor(slot.cursor)) {
+        const int  index = CharmIndex(slot.cursor);
+        const bool feather = index == CHARM_FEATHER_SLOT;
+
+        if (holding) {
+            first = CharmSlotAccepts(index, held) ? "{cross} Put it in." : feather ? "Only Dran's Feather goes here." : "Only an amulet goes here.";
+            second = "{circle} Put it back.";
+        } else if (CharmSlotAt(chara, index).item_no >= 0) {
+            first = "{cross} Take it in hand.";
+            second = "{square} Back to the bag.";
+        } else {
+            first = feather ? "Bring Dran's Feather from" : "Bring an amulet from";
+            second = "the Items tab.";
+        }
+
+        return true;
+    }
+
+    if (slot.mode == ITEM_MENU_WEAPON && holding && BtlHaveItemPt->from_page == BOARD_PAGE_WEAPON) {
+        first = BtlHaveItemPt->from_slot / 10 == chara ? "{cross} Equip it." : "Only this hero's weapons go here.";
+        second = "{circle} Put it back.";
+        return true;
+    }
+
+    return false;
+}
+
+/** The hero page's help in the help box at the bottom left, in the box's own place for text. */
+void HeroHintDraw(const std::string &first, const std::string &second, int alpha) {
+    for (int line = 0; line < 2; line++) {
+        ui::Label label(line == 0 ? first : second, ui::ColorWhite, ui::Alignment::Left, true, 0.86f);
+        label.SetOutline(1.5f, 24, 16, 8);
+        label.Draw(0x4A, 0x178 + line * 0x15, alpha);
+    }
+}
+
+} // namespace
+
 int ItemMenuMainKey() {
     float effect_x = 0.0f;
     float effect_y = 0.0f;
@@ -5242,7 +7027,9 @@ int ItemMenuMainKey() {
                     int done = PersonalBoardKey();
                     int row = ItemMenuMode.board.cursor / 5 - ItemMenuMode.board.top_row;
 
-                    if (done != 0) {
+                    if (done != 0 && HeroPageShown()) {
+                        HeroFromBoard(row);
+                    } else if (done != 0) {
                         if (row < 2) {
                             ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
                             ItemMenuMode.board.cursor = 2;
@@ -5251,9 +7038,9 @@ int ItemMenuMainKey() {
                         }
 
                         int page = ItemMenuMode.board.page;
-                        int count = ItemMenuMode.overflow_count[page];
+                        int count = page >= BOARD_PAGE_ITEM && page <= BOARD_PAGE_ATTACH ? ItemMenuMode.overflow_count[page] : 0;
 
-                        if ((ItemMenuMode.overflow_pages & (1 << (page + 1))) && ItemMenuMode.overflow != 0) {
+                        if (count > 0 && (ItemMenuMode.overflow_pages & (1 << (page + 1))) && ItemMenuMode.overflow != 0) {
                             ItemMenuMode.mode = ITEM_MENU_TRUSH;
                             ItemMenuMode.board.cursor = row;
 
@@ -5270,7 +7057,28 @@ int ItemMenuMainKey() {
             }
 
             if (MenuExTextureReadFlag >= MENU_EX_TEX_READY && MenuWepLevelUp.operation_kind == WEP_EFFECT_NONE) {
-                if (GamePad.Down(PAD_CROSS) != 0) {
+                const bool gear_board = ItemMenuMode.mode == ITEM_MENU_BOARD && ItemMenuMode.board.page == BOARD_PAGE_GEAR;
+                const bool gear_slot = HeroPageShown() && ItemMenuMode.mode == ITEM_MENU_QUICK_SLOTS && GearCursor(ItemMenuMode.board.cursor);
+                const bool weapon_to_hand = HeroPageShown() && ItemMenuMode.mode == ITEM_MENU_WEAPON &&
+                                            BtlHaveItemPt->item_no >= ITEM_ATTACH_START &&
+                                            WhatIsKindofItem(BtlHaveItemPt->item_no) == BOARD_PAGE_WEAPON;
+
+                if (GamePad.Down(PAD_CROSS) != 0 && (gear_board || gear_slot || HeldGear() != 0)) {
+                    // MoonMod: the Equipment tab and the hero page's gear slots, and nothing else takes a gear piece
+                    // in hand.
+                    if (gear_board) {
+                        GearBoardCross();
+                    } else if (gear_slot) {
+                        GearSlotCross(ItemMenuMode.board.cursor - kGearCursor);
+                    } else {
+                        ComMenuSePlay(MENU_SOUND_REFUSE);
+                    }
+                } else if (GamePad.Down(PAD_CROSS) != 0 && weapon_to_hand) {
+                    HeroWeaponCross();
+                } else if (GamePad.Down(PAD_CIRCLE) != 0 && HeldGear() != 0) {
+                    SetHeldGear(0);
+                    ComMenuSePlay(MENU_SOUND_REFUSE);
+                } else if (GamePad.Down(PAD_CROSS) != 0) {
                     int            cursor = ItemMenuMode.board.cursor;
                     COM_ITEM_INFO *info = GetCommonItemInfo(BtlHaveItemPt->item_no);
 
@@ -5278,7 +7086,9 @@ int ItemMenuMainKey() {
                         case ITEM_MENU_QUICK_SLOTS: {
                             int held = BtlHaveItemPt->item_no;
 
-                            if ((held >= ITEM_ATTACH_START && held < ITEM_DUNGEON_START) || held >= ITEM_WEAPON_START) {
+                            if (CharmCursor(cursor)) {
+                                CharmSlotCross(cursor);
+                            } else if ((held >= ITEM_ATTACH_START && held < ITEM_DUNGEON_START) || held >= ITEM_WEAPON_START) {
                                 ComMenuSePlay(MENU_SOUND_REFUSE);
                             } else if (IconAutoGet.IsMoveIcon() != 0) {
                                 ComMenuSePlay(MENU_SOUND_REFUSE);
@@ -5771,6 +7581,19 @@ int ItemMenuMainKey() {
                                 break;
                             case ITEM_MENU_QUICK_SLOTS: {
                                 int slot = BtlHaveItemPt->from_slot;
+
+                                if (CharmCursor(slot)) {
+                                    CharmSlot &charm = CharmSlotAt(ItemMenuMode.chara, CharmIndex(slot));
+
+                                    if (charm.item_no < 0 && CharmSlotAccepts(CharmIndex(slot), held)) {
+                                        charm.item_no = held;
+                                        charm.uses = std::max<s32>(BtlHaveItemPt->volume, 0);
+                                        InitHaveData(BtlHaveItemPt);
+                                    }
+
+                                    break;
+                                }
+
                                 slot_item = &MenuItemPackPt->quick_item_slot[slot];
                                 slot_qty = &MenuItemPackPt->quick_item_qty[slot];
                                 auto *status = static_cast<CUserStatus *>(BtlMenuStatusPt);
@@ -5824,6 +7647,17 @@ int ItemMenuMainKey() {
                         case ITEM_MENU_QUICK_SLOTS: {
                             int        cursor = ItemMenuMode.board.cursor;
                             ITEM_PACK *pack = MenuItemPackPt;
+
+                            if (CharmCursor(cursor)) {
+                                CharmSlotToBag(cursor);
+                                break;
+                            }
+
+                            if (GearCursor(cursor)) {
+                                ComMenuSePlay(UnequipGear(ItemMenuMode.chara, cursor - kGearCursor) ? MENU_SOUND_CONFIRM : MENU_SOUND_REFUSE);
+                                break;
+                            }
+
                             s16       *items = pack->item;
                             s16       *vols = pack->item_vol;
                             s16       *slot_item = &pack->quick_item_slot[cursor];
@@ -5888,6 +7722,11 @@ int ItemMenuMainKey() {
 
                     switch (ItemMenuMode.mode) {
                         case ITEM_MENU_QUICK_SLOTS: {
+                            if (CharmCursor(cursor) || GearCursor(cursor)) {
+                                ComMenuSePlay(MENU_SOUND_REFUSE);
+                                break;
+                            }
+
                             s16 *slot_item = &MenuItemPackPt->quick_item_slot[cursor];
                             s16 *slot_qty = &MenuItemPackPt->quick_item_qty[cursor];
 
@@ -6200,10 +8039,12 @@ int ItemMenuMainKey() {
 
     switch (ItemMenuMode.mode) {
         case ITEM_MENU_QUICK_SLOTS: {
-            s16 *slot = &MenuItemPackPt->quick_item_slot[cursor];
+            const s16 item_no = CharmCursor(cursor) ? CharmSlotAt(ItemMenuMode.chara, CharmIndex(cursor)).item_no
+                                : GearCursor(cursor) ? static_cast<s16>(-1)
+                                                     : MenuItemPackPt->quick_item_slot[cursor];
 
-            if (*slot >= ITEM_DUNGEON_START) {
-                message = *slot + 0x1F4;
+            if (item_no >= ITEM_DUNGEON_START) {
+                message = item_no + 0x1F4;
             }
 
             break;
@@ -6386,6 +8227,11 @@ void ItemMenuModeDraw() {
     BtlMenuTexBlockEnter();
     CharaStatus = TexManager.GetTexture("status", -1);
 
+    // MoonMod: the bag the size the worn pouches make it, as they go on and come off (gear.hpp).
+    if (BtlMenuStatusPt != nullptr) {
+        GearSyncBag(BtlMenuStatusPt->item_pack);
+    }
+
     switch (ItemMenuMode.mode) {
         case ITEM_MENU_QUICK_SLOTS:
         case ITEM_MENU_CHARA:
@@ -6393,14 +8239,20 @@ void ItemMenuModeDraw() {
         case ITEM_MENU_DEFENSE:
         case ITEM_MENU_BOARD:
         case ITEM_MENU_TRUSH: {
-            ActiveItemDraw(0x3A, 0x4A, 0x80);
+            ActiveItemDraw(0x3A + MoonModActiveItemShift(), 0x4A, 0x80);
             DrawPersonalBoard(0x154, 0x78, ItemMenuMode.board.page, 0x80, 0);
             CommonTrushDraw(0x232, 0x10C, 0x80);
             CommonMoneyBoardDraw(0x163, 0x120, static_cast<CUserStatus *>(BtlMenuStatusPt)->money, 0x80);
             DrawTrushItem();
             IconAutoGet.IconAutoMove();
             IconAutoGet.IconAutoMoveDraw();
-            ItemMenuCharaStatusDraw(0x3A, 0xB4, ItemMenuMode.chara, 0x80);
+            if (HeroPageShown()) {
+                HeroPageDraw(0x80);
+            } else {
+                ItemMenuCharaStatusDraw(0x3A, 0xB4, ItemMenuMode.chara, 0x80);
+            }
+
+            CharmSlotsDraw(0x80);
             MenuTextureReload(BtlMenuReadBlock);
             int arrow_x = -1;
             int arrow_y = arrow_x;
@@ -6412,9 +8264,9 @@ void ItemMenuModeDraw() {
                 case ITEM_MENU_WEAPON:
                 case ITEM_MENU_DEFENSE:
                     if (PartyCount(*BtlMenuStatusPt) > 1) {
-                        arrow_x = 0x32;
+                        arrow_x = HeroPageShown() ? 0x70 : 0x32;
                         arrow_y = 0x9C;
-                        arrow_w = 0xE8;
+                        arrow_w = HeroPageShown() ? 0x98 : 0xE8; // MoonMod: close either side of the hero page's name
                     }
 
                     break;
@@ -6422,7 +8274,7 @@ void ItemMenuModeDraw() {
                 case ITEM_MENU_TRUSH:
                     arrow_x = 0x146;
                     arrow_y = 0x2A;
-                    arrow_w = 0xE6;
+                    arrow_w = GearTabShown() ? 0x10A : 0xE6; // MoonMod: past the Equipment tab's plate
                     break;
                 default:
                     break;
@@ -6444,12 +8296,20 @@ void ItemMenuModeDraw() {
         s8    shift[7] = {0, 0, 0, 0, 0, -16, -16};
         float heights[7] = {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 2.4f, 2.4f};
         MenuHelpWinDraw(0x36, 0x174 + shift[BtlMenuNowLang], widths[BtlMenuNowLang], heights[BtlMenuNowLang], 0x80);
-        AtoraNameMes.stay_frame = false;
-        AtoraNameMes.text_x = 0x4A;
-        AtoraNameMes.text_y = 0x178;
-        AtoraNameMes.edge_alpha = 0x80;
-        AtoraNameMes.Step();
-        AtoraNameMes.DrawMesWin();
+        // MoonMod: on the hero page's own places, what the pad does there.
+        std::string first;
+        std::string second;
+
+        if (HeroPageShown() && HeroHint(first, second)) {
+            HeroHintDraw(first, second, 0x80);
+        } else {
+            AtoraNameMes.stay_frame = false;
+            AtoraNameMes.text_x = 0x4A;
+            AtoraNameMes.text_y = 0x178;
+            AtoraNameMes.edge_alpha = 0x80;
+            AtoraNameMes.Step();
+            AtoraNameMes.DrawMesWin();
+        }
     }
 
     MenuTextureReload(BtlMenuReadBlock);
@@ -6467,10 +8327,27 @@ void ItemMenuModeDraw() {
         {0x11A, 0   },
         {0,     0   }
     };
-    cursor_pos[0][0] = (ItemMenuMode.board.cursor << 6) + 0x3E;
+    cursor_pos[0][0] = (ItemMenuMode.board.cursor << 6) + 0x3E + MoonModActiveItemShift();
+
+    if (CharmCursor(ItemMenuMode.board.cursor)) {
+        cursor_pos[0][0] = kCharmX + (ItemMenuMode.board.cursor - kCharmCursor) * kCharmStep - 0x20;
+        cursor_pos[0][1] = 0xBF;
+    }
     cursor_pos[5][1] = ItemMenuMode.board.cursor * 0x2C + 0x7E;
     int             x = cursor_pos[ItemMenuMode.mode][0];
     int             y = cursor_pos[ItemMenuMode.mode][1];
+    // MoonMod: the hero page's places, where the hero page draws them.
+    HeroSlots hero_slots;
+    const int hero_count = HeroPageShown() ? HeroSlotsNow(hero_slots) : 0;
+    const int hero = HeroPageShown() ? HeroSlotAt(hero_slots, hero_count) : -1;
+
+    if (hero >= 0 && hero_slots[hero].mode == ITEM_MENU_CHARA) {
+        x = kHeroFigureX - 0x10;
+        y = kHeroFigureY + kHeroFigureH / 2 - 0x10;
+    } else if (hero >= 0) {
+        x = hero_slots[hero].x - 0x20;
+        y = hero_slots[hero].y - 2;
+    }
     PERSONAL_BOARD *board = &ItemMenuMode.board;
 
     switch (ItemMenuMode.mode) {
@@ -6508,17 +8385,26 @@ void ItemMenuModeDraw() {
         frame_y = y - 0x26;
     }
 
+    if (hero >= 0 && ItemMenuMode.mode == ITEM_MENU_CHARA) {
+        frame_x = kHeroFigureX;
+        frame_y = kHeroFigureY;
+        frame_w = kHeroFigureW;
+        frame_h = kHeroFigureH;
+    }
+
     int vibe = 0;
 
-    if (board->held_item.item_no >= ITEM_ATTACH_START) {
+    if (board->held_item.item_no >= ITEM_ATTACH_START || HeldGear() != 0) {
         vibe = 2;
     } else {
         switch (ItemMenuMode.mode) {
             case ITEM_MENU_QUICK_SLOTS: {
-                int  cursor = ItemMenuMode.board.cursor;
-                s16 *slot = &MenuItemPackPt->quick_item_slot[cursor];
+                int cursor = ItemMenuMode.board.cursor;
+                s16 slot = CharmCursor(cursor) ? CharmSlotAt(ItemMenuMode.chara, CharmIndex(cursor)).item_no
+                         : GearCursor(cursor)  ? static_cast<s16>(WornGear(ItemMenuMode.chara, cursor - kGearCursor) != nullptr ? ITEM_DUNGEON_START : -1)
+                                               : MenuItemPackPt->quick_item_slot[cursor];
 
-                if (0 <= cursor && *slot >= ITEM_DUNGEON_START) {
+                if (0 <= cursor && slot >= ITEM_DUNGEON_START) {
                     vibe = 1;
                 }
 
@@ -6529,6 +8415,10 @@ void ItemMenuModeDraw() {
                 int cursor = ItemMenuMode.board.cursor;
 
                 if (SearchBoardNowPosItemExist(ItemMenuMode.board.page, cursor) >= ITEM_ATTACH_START) {
+                    vibe = 1;
+                }
+
+                if (ItemMenuMode.board.page == BOARD_PAGE_GEAR && GearBagPiece(cursor) != nullptr) {
                     vibe = 1;
                 }
 
@@ -6569,6 +8459,16 @@ void ItemMenuModeDraw() {
 
         DrawMenuVibeItem(static_cast<int>(SysCur[0]), static_cast<int>(SysCur[1]), 2, -0xC, 0x80);
     }
+
+    // MoonMod: a gear piece in hand rides the cursor as an item does (main_ring names it in the help window).
+    if (const GearPiece *held = FindGear(HeldGear())) {
+        float pointer_x = SysCur[0];
+        float pointer_y = SysCur[1];
+        dc::ui::MenuPointerHand(pointer_x, pointer_y);
+        DrawGearIcon(held->icon.empty() ? GearKindIcon(held->kind) : held->icon, held->color, static_cast<int>(pointer_x) + 2,
+                     static_cast<int>(pointer_y) - 0xC, 0, 0x1C0, 0x80, false, held->kind);
+    }
+
 
     switch (ItemMenuMode.state) {
         case ITEM_MENU_STATE_LOADING:
@@ -6669,6 +8569,9 @@ int ItemMenuModeKey() {
         if (count <= ItemMenuMode.board.cursor) {
             ItemMenuMode.board.cursor = count - 1;
         }
+    } else if (HeroPageShown()) {
+        HeroPageKey(); // MoonMod: the hero page's places
+        return 0;
     }
 
     if (GamePad.Down(PAD_UP) != 0) {
@@ -6686,6 +8589,13 @@ int ItemMenuModeKey() {
                 ItemMenuMode.board.cursor = std::max(ItemMenuMode.board.cursor, 0);
 
                 break;
+            case ITEM_MENU_QUICK_SLOTS:
+                if (CharmCursor(ItemMenuMode.board.cursor)) {
+                    ItemMenuMode.board.cursor = 2;
+                    break;
+                }
+
+                [[fallthrough]];
             default:
                 ItemMenuMode.board.cursor = 1;
                 ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
@@ -6708,6 +8618,11 @@ int ItemMenuModeKey() {
                 break;
             }
             case ITEM_MENU_QUICK_SLOTS:
+                if (CharmCursor(ItemMenuMode.board.cursor)) {
+                    ItemMenuMode.mode = ITEM_MENU_CHARA;
+                    break;
+                }
+
                 if (ItemMenuMode.board.cursor == 0) {
                     ItemMenuMode.mode = ITEM_MENU_WEAPON;
                     break;
@@ -6721,7 +8636,9 @@ int ItemMenuModeKey() {
     if (GamePad.Down(PAD_LEFT) != 0) {
         switch (ItemMenuMode.mode) {
             case ITEM_MENU_QUICK_SLOTS:
-                if (0 < ItemMenuMode.board.cursor) {
+                if (ItemMenuMode.board.cursor == kCharmCursor) {
+                    ItemMenuMode.mode = ITEM_MENU_DEFENSE;
+                } else if (0 < ItemMenuMode.board.cursor) {
                     ItemMenuMode.board.cursor--;
                 }
 
@@ -6751,7 +8668,13 @@ int ItemMenuModeKey() {
                 ItemMenuMode.board.cursor = (ItemMenuMode.board.top_row + ItemMenuMode.board.cursor) * 5;
                 break;
             case ITEM_MENU_QUICK_SLOTS:
-                if (ItemMenuMode.board.cursor < 2) {
+                if (CharmCursor(ItemMenuMode.board.cursor)) {
+                    if (ItemMenuMode.board.cursor < kCharmCursor + CharmSlotsShown(ItemMenuMode.chara) - 1) {
+                        ItemMenuMode.board.cursor++;
+                    } else {
+                        ItemMenuMode.mode = ITEM_MENU_CHARA;
+                    }
+                } else if (ItemMenuMode.board.cursor < 2) {
                     ItemMenuMode.board.cursor++;
                 } else {
                     ItemMenuMode.mode = ITEM_MENU_BOARD;
@@ -6764,7 +8687,13 @@ int ItemMenuModeKey() {
                 ItemMenuMode.mode = ITEM_MENU_DEFENSE;
                 break;
             case ITEM_MENU_DEFENSE:
-                ItemMenuMode.mode = ITEM_MENU_CHARA;
+                if (CharmSlotsShown(ItemMenuMode.chara) > 0) {
+                    ItemMenuMode.mode = ITEM_MENU_QUICK_SLOTS;
+                    ItemMenuMode.board.cursor = kCharmCursor;
+                } else {
+                    ItemMenuMode.mode = ITEM_MENU_CHARA;
+                }
+
                 break;
             case ITEM_MENU_CHARA:
                 ItemMenuMode.mode = ITEM_MENU_BOARD;
@@ -6797,7 +8726,14 @@ void ActiveItemDraw(int x, int y, int alpha) {
     MenuTextureReload(ItemMenuWeaponIconReadBlock);
     int slot_x = x + 0xE;
     int slot_y = 0;
-    DrawMenu2DSprite(CharaStatus, CRect_i_(slot_x, y + 1, 0xE0, 0x4F), CRect_i_(0, 0, 0xE0, 0x50), alpha);
+    if (HeroPageShown()) {
+        if (!HeroTabletWhole(slot_x, alpha)) {
+            HeroTabletDraw(slot_x, alpha);
+        }
+        MenuTextureReload(ItemMenuWeaponIconReadBlock);
+    } else {
+        DrawMenu2DSprite(CharaStatus, CRect_i_(slot_x, y + 1, 0xE0, 0x4F), CRect_i_(0, 0, 0xE0, 0x50), alpha);
+    }
     s16 *items = MenuItemPackPt->quick_item_slot;
     s16 *counts = MenuItemPackPt->quick_item_qty;
 
@@ -8824,6 +10760,149 @@ void MenuClsMes::Draw1(int x, int y, int draw_alpha) {
                 break;
         }
     }
+}
+
+bool MoonModGearInfoShown() { return GearUnderCursor() != nullptr; }
+
+bool MoonModHeroPageShown() { return HeroPageShown(); }
+
+namespace {
+
+/** Whether a model's root frame is chara's: named for their pack, by its "c" and number (c01 for c01d.chr) if it has one. */
+bool ModelIsChara(std::string_view root, int chara) {
+    const char *pack = CharaPackPath(chara);
+
+    if (pack == nullptr) {
+        return false;
+    }
+
+    std::string_view stem(pack);
+    stem = stem.substr(stem.rfind('/') + 1);
+    stem = stem.substr(0, stem.find('.'));
+    size_t digits = 1;
+
+    while (digits < stem.size() && stem[digits] >= '0' && stem[digits] <= '9') {
+        digits++;
+    }
+
+    const std::string_view key = stem.size() > 1 && stem[0] == 'c' && digits > 1 ? stem.substr(0, digits) : stem;
+    return !key.empty() && root.starts_with(key) && (root.size() == key.size() || root[key.size()] < '0' || root[key.size()] > '9');
+}
+
+} // namespace
+
+GearBareScope::GearBareScope(CFrame *root) {
+    if (root == nullptr || !GearPageOpen()) {
+        return;
+    }
+
+    // The dungeon's hero and the item page's are known by which model they are, the rest (Toan in town) by name.
+    const std::string_view name(root->name);
+    const int              known = root == CharaMain.frame ? nowUnitNow : root == MenuCharaFrame.frame ? ItemMenuMode.chara : -1;
+
+    for (int chara = 0; chara < CharaCount(); chara++) {
+        if (known >= 0 ? chara != known : !ModelIsChara(name, chara)) {
+            continue;
+        }
+
+        for (int kind = 0; kind < GEAR_KIND_COUNT; kind++) {
+            const GearKindParts &parts = GearPartsFor(chara, kind);
+
+            if (parts.bare.empty() || WornGear(chara, kind) != nullptr) {
+                continue;
+            }
+
+            EachFrame(root, [&](CFrame *frame) {
+                if (!FrameNamed(frame, parts.bare)) {
+                    return;
+                }
+
+                bare_.push_back(frame);
+
+                if ((frame->attr.draw_on & 1) != 0) {
+                    hidden_.emplace_back(frame, frame->attr.draw_on);
+                    frame->attr.draw_on = static_cast<short>(frame->attr.draw_on & ~1);
+                }
+            });
+        }
+
+        return;
+    }
+}
+
+bool GearBareScope::Hides(const CFrame *frame) const {
+    return frame != nullptr && std::ranges::find(bare_, frame) != bare_.end();
+}
+
+GearBareScope::~GearBareScope() {
+    for (auto it = hidden_.rbegin(); it != hidden_.rend(); ++it) {
+        it->first->attr.draw_on = it->second;
+    }
+}
+
+int MoonModActiveItemShift() {
+    // ACTIVE ITEM's title and boxes (centred at 0x76 from its x) to the middle of the hero's tablet.
+    if (!HeroPageShown()) {
+        return 0;
+    }
+
+    const int left = HeroPanelX(ItemMenuMode.chara);
+    const int right = kHeroGearX + kHeroSlot + 0x12;
+    return (left + right) / 2 - (0x3A + 0x76);
+}
+
+bool DrawGearPart(int kind, u32 rgb, int x, int y, int size, int top, int bottom, int alpha, bool blacked) {
+    return GearPartDraw(kind, rgb, x, y, size, top, bottom, alpha, blacked);
+}
+
+bool MoonModHeroSlotAt(float x, float y, int &mode, int &cursor, bool &drag) {
+    if (!HeroPageShown()) {
+        return false;
+    }
+
+    HeroSlots slots;
+    const int count = HeroSlotsNow(slots);
+
+    for (int i = 0; i < count; i++) {
+        const HeroSlot &slot = slots[i];
+
+        if (x >= slot.x && x < slot.x + slot.w && y >= slot.y && y < slot.y + slot.h) {
+            mode = slot.mode;
+            cursor = slot.cursor >= 0 ? slot.cursor : ItemMenuMode.board.cursor;
+            drag = slot.mode == ITEM_MENU_QUICK_SLOTS;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void MoonModGearInfoDraw(int alpha) {
+    if (const GearPiece *piece = GearUnderCursor()) {
+        GearInfoDraw(*piece, alpha);
+    }
+}
+
+void MoonModGearCardDraw(const GearPiece &piece, int alpha, int price) {
+    GearInfoDraw(piece, alpha, price);
+}
+
+
+void RememberMenuSheet(std::string_view name, unsigned width, unsigned height, const std::vector<uint8_t> &rgba) {
+    if (name != "status" || width == 0 || height == 0 || rgba.size() < static_cast<size_t>(width) * height * 4) {
+        return;
+    }
+
+    MenuSheet &sheet = g_status_sheet;
+
+    if (sheet.width == width && sheet.height == height && sheet.rgba == rgba) {
+        return;
+    }
+
+    sheet.width = width;
+    sheet.height = height;
+    sheet.rgba = rgba;
+    sheet.generation++;
 }
 
 } // namespace dc::game

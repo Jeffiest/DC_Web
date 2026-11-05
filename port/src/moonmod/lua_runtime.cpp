@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -2259,9 +2260,13 @@ struct LuaMod::Impl {
             return {ApiCallStatus::Unsupported, nullptr, reason};
         }
         if (path == "info.get") {
+            // The calendar day in UTC, so a daily challenge seed is the same for every player that day.
+            const std::chrono::year_month_day today{std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
             return {ApiCallStatus::Ok,
                     {{"id", config.game_id}, {"name", config.game_name}, {"api_major", config.framework_api},
-                     {"mod_id", manifest.id}},
+                     {"mod_id", manifest.id},
+                     {"date", {{"year", static_cast<int>(today.year())}, {"month", static_cast<unsigned>(today.month())},
+                               {"day", static_cast<unsigned>(today.day())}}}},
                     {}};
         }
         if (path == "events.list") {

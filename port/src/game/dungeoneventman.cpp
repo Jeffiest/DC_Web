@@ -235,6 +235,7 @@ void CDungeonEventMan::SetupEvent(CDungeonMap *map, int mode) {
                     runtime_event->dir[3] = 1.0f;
                     definition->placement_frame->SetPosition(160.0f * static_cast<float>(column), 0.0f, 160.0f * static_cast<float>(row));
                     definition->trigger_frame->GetWorldPosition(runtime_event->pos, local_origin);
+                    DngLiftPoint(map, runtime_event->pos);
                 }
             }
         }

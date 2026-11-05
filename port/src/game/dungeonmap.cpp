@@ -1,5 +1,8 @@
 #include "dungeonmap.hpp"
 
+#include "dungeon_aerial.hpp"
+#include "dungeon_grid.hpp"
+#include "dungeon_visibility.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "platform/config.hpp"
 
@@ -331,14 +334,13 @@ void CDungeonMap::DrawMapCalc(int mode) {
                     CDungeonParts *part;
                     int            dir = this->cells[cell_no].direction;
 
-                    part = &this->parts[this->cells[cell_no].parts_no];
+                    part = DngCellPart(this, cell_no); // MoonMod: a zone of another dungeon's (part banks)
                     part->direction = dir;
-                    part = &this->parts[this->cells[cell_no].parts_no];
                     part->pos[0] = 160.0f * col;
                     part->pos[1] = 0.0f;
                     part->pos[2] = 160.0f * row;
                     part->pos[3] = 1.0f;
-                    this->parts[this->cells[cell_no].parts_no].DrawCalc(col, row, this->cells[cell_no].direction, mode);
+                    part->DrawCalc(col, row, this->cells[cell_no].direction, mode);
                 }
             }
         }
@@ -388,10 +390,14 @@ void CDungeonMap::DrawMap(CCameraFollow *camera, CFrameVu1 * /*player*/) {
         for (int m = 0; m < DngNpcMarkCount; m++) {
             const DngNpcMark &mark = DngNpcMarks[m];
             if (this->npc[mark.npc].draw_num >= 16) continue;
-            this->ReservNPC_Draw(mark.npc, 160.0f * mark.x, 0.0f, 160.0f * mark.y, mark.facing);
+            this->ReservNPC_Draw(mark.npc, 160.0f * mark.x, DngFloorHeight(this, 160.0f * mark.x, 160.0f * mark.y), 160.0f * mark.y, mark.facing);
         }
     }
     float nearest = 10000.0f;
+    // Cells the camera cannot see past the walls are not drawn beyond two cells away.
+    static_assert(dungeon_grid::side == kMapWidth);
+    const auto visible_cells = dungeon_visibility::Build<dungeon_grid::side>(this->cells, cam_pos[0], cam_pos[2]);
+    const bool walls_hide = selectMapNo != DUNGEON_MOON_SEA && UserStatus->cur_georama != 5;
 
     for (int row = 0; row < kMapWidth; row++) {
         for (int col = 0; col < kMapWidth; col++) {
@@ -467,12 +473,15 @@ void CDungeonMap::DrawMap(CCameraFollow *camera, CFrameVu1 * /*player*/) {
                     }
                 }
             }
+            if (walls_hide && !visible_cells[col + row * kMapWidth] && dist >= 2.0f * kCellSize) {
+                draw = false;
+            }
             cell.visible = draw;
             if (!draw) {
                 continue;
             }
 
-            CDungeonParts &part = this->parts[cell.parts_no];
+            CDungeonParts &part = *DngCellPart(this, col + row * kMapWidth); // MoonMod: part banks
             part.direction = cell.direction;
             part.pos[0] = world_x;
             part.pos[1] = 0.0f;
@@ -483,7 +492,7 @@ void CDungeonMap::DrawMap(CCameraFollow *camera, CFrameVu1 * /*player*/) {
                 if (this->npc[npc_no].parts_no == cell.parts_no && this->npc[npc_no].draw_num < 16 &&
                     (dist < kCellSize ||
                      view[0] * (delta_x - view_delta[0]) + view[2] * (delta_z - view_delta[2]) > 0.0f)) {
-                    this->ReservNPC_Draw(npc_no, world_x, 0.0f, world_z, cell.direction);
+                    this->ReservNPC_Draw(npc_no, world_x, DngFloorHeight(this, world_x, world_z), world_z, cell.direction);
                 }
             }
 
@@ -508,7 +517,10 @@ void CDungeonMap::DrawMap(CCameraFollow *camera, CFrameVu1 * /*player*/) {
             for (int d = 0; d < DngShortcutDoorCount; ++d) {
                 // Only a floor with more than one lock colours them, and its first stays the native door: the
                 // colours are there to tell the keys apart.
-                if (d > 0 && DngShortcutDoorTable[d].locked && DngShortcutDoorTable[d].x == col && DngShortcutDoorTable[d].y == row) shortcut_key = DngShortcutDoorTable[d].key_item;
+                if (d > 0 && DngShortcutDoorTable[d].locked && DngShortcutDoorTable[d].key_item > 0 && DngShortcutDoorTable[d].x == col &&
+                    DngShortcutDoorTable[d].y == row) {
+                    shortcut_key = DngShortcutDoorTable[d].key_item;
+                }
             }
             // A locked zone gate always shows its key's colour; a smoke gate (no key) draws pale as smoke.
             bool smoke_gate = false;
@@ -669,6 +681,10 @@ void CDungeonMap::DrawDummyModel(CCamera *camera) {
 }
 
 void CDungeonMap::DrawMiniMap(float *pos, float angle) {
+    // game.aerial_map draws the live floor from above; the tile map below is its fallback.
+    if (DungeonAerialDrawMiniMap(this, pos, angle)) {
+        return;
+    }
     // The full-screen and aerial map (game.dungeon_aerial_map, game.fit_dungeon_map) fit the grid to the screen,
     // and a mod's player tuning can reveal the map and the monsters.
     const auto viewport=gfx::VisibleLogicalRect(gfx::kMainTarget);
@@ -1169,7 +1185,7 @@ void CDungeonMap::DrawFire(CFrameVu1 *frame, CCameraFollow *camera) {
                         continue;
                     }
 #endif
-                    for (j = 0; j < (part = &this->parts[this->cells[cell_no].parts_no])->fire_num; j++) {
+                    for (j = 0; j < (part = DngCellPart(this, cell_no))->fire_num; j++) {
                         float turn;
                         float rot_x;
                         float rot_z;
@@ -1252,7 +1268,7 @@ void CDungeonMap::DrawRaster(CFrameVu1 *frame) {
                 if (this->cells[cell_no].parts_no != MAP_PARTS_NONE && this->cells[cell_no].camera_dist <= 240.0f && this->cells[cell_no].visible == 1) {
                     CDungeonParts *part;
 
-                    for (i = 0; i < (part = &this->parts[this->cells[cell_no].parts_no])->fire_num; i++) {
+                    for (i = 0; i < (part = DngCellPart(this, cell_no))->fire_num; i++) {
                         float x;
                         float y;
                         float z;
@@ -1339,15 +1355,15 @@ void CDungeonMap::DrawWater(float *pos, int mute) {
                 continue;
             }
 
-            part = &this->parts[this->cells[cell_no].parts_no];
+            part = DngCellPart(this, cell_no);
             water = &part->water;
 
-            if (this->parts[this->cells[cell_no].parts_no].water.used == 0) {
+            if (part->water.used == 0) {
                 continue;
             }
 
             vec[0] = 160.0f * static_cast<float>(col);
-            vec[1] = water->vertex[0][1];
+            vec[1] = water->vertex[0][1] + DngFloorHeight(this, vec[0], 160.0f * static_cast<float>(row));
             vec[2] = 160.0f * static_cast<float>(row);
             dist = DistVector(pos, vec);
 
@@ -2611,6 +2627,7 @@ void setRoomDivid() {
 }
 
 void setUnderDungeonStart() {
+    if (zonesOn && DngZoneVaults == 0) return; // MoonMod (set_zones vaults = false)
     int safe[120];
     int safe_num;
     int i;
@@ -2804,6 +2821,7 @@ void CDungeonMap::SetupTrapCircle(float *pos) {
         // Populate the first free slot with a trap circle of a random kind.
         if (is_free) {
             sceVu0CopyVector(this->trap_circle[i].pos, pos);
+            DngLiftPoint(this, this->trap_circle[i].pos);
             this->trap_circle[i].state = 1;
             this->trap_circle[i].kind = static_cast<int>((10.0f * static_cast<float>(rand())) / 2147483648.0f);
 
@@ -2904,6 +2922,7 @@ int CDungeonMap::CheckAtra(float *pos, float dist) {
 }
 
 void CDungeonMap::SetAtraBoll(float *pos, int atra_no) {
+    DngLiftPoint(this, pos);
     sceVu0CopyVector(this->atra[this->atra_num].pos, pos);
     this->atra[this->atra_num].phase = 0.0f;
     this->atra[this->atra_num].atra_no = atra_no;
@@ -2976,6 +2995,7 @@ int CDungeonMap::SetTreasureBox(float *pos, int item_no, int kind, int trap_no) 
         return -1;
     }
 
+    DngLiftPoint(this, pos);
     sceVu0CopyVector(this->boxes[box_no].pos, pos);
     this->boxes[box_no].used = 1;
     this->boxes[box_no].lid_angle = 0;
@@ -3132,6 +3152,7 @@ void CDungeonMap::buildEventData(int floor_no, int enabled, int place_atla) {
     // its own zone, each ball remembering its floor for the pickup.
     if (place_atla != 0 && DngZoneSourcesShown(this->map_seed)) {
         for (int z = 0; z < DngZoneFloorCount; ++z) {
+            if (DngZoneFloorDungeon[z] >= 0) continue; // a zone of another dungeon (source_dungeon) has none of the floor's atla
             const int zone_floor = DngZoneFloorSource[z] >= 0 ? DngZoneFloorSource[z] : floor_no;
             const int zone_count = BtAtraFloorCyoice(selectMapNo, zone_floor, atra_no);
             int       placed = 0;
@@ -3238,6 +3259,7 @@ void CDungeonMap::SetMimicEvent(float x, float y, float z, int item_no, int kind
     this->events[event_no].placed_flag = 0;
     this->events[event_no].index = box_no;
 
+    DngLiftPoint(this, pos);
     sceVu0CopyVector(this->boxes[box_no].pos, pos);
     this->boxes[box_no].used = 1;
     this->boxes[box_no].lid_angle = 0;
@@ -3676,18 +3698,29 @@ void CDungeonMap::GetRoomLinkInfo() {
 void CDungeonMap::PlaceShortcutDoors(int first_build) {
     if (first_build != 0) DngShortcutDoorCount = 0;
     if (first_build == 0 && DngShortcutDoorSeed != this->map_seed) return;
-    int placed = 0;
+    int placed = 0, planned = 0, keyed = 0, walls = 0;
     for (const ShortcutPlan &plan : shortcutPlans) {
+        const bool illusory = first_build != 0 && planned++ >= DngShortcutDoors;
         MAP_CELL &cell = this->cells[plan.door_x + plan.door_y * DNG_GRID];
         if (first_build == 0) {
             const int k = placed++;
             if (k < DngShortcutDoorCount && DngShortcutDoorTable[k].locked) {
                 cell.parts_no = DngShortcutDoorTable[k].gate_part;
-                cell.direction = 0;
+                cell.direction = DngShortcutDoorTable[k].key_item == 0 ? DngShortcutDoorTable[k].open_direction : 0;
             }
             continue;
         }
         if (cell.parts_no < MAP_PARTS_ROOM_DOOR_NORTH || cell.parts_no > MAP_PARTS_ROOM_DOOR_WEST) continue; // another part took it
+        if (illusory) {
+            // The doorway drawn as the room's own wall on that side: nothing tells it from the rest until it is struck.
+            DNG_SHORTCUT_DOOR &wall = DngShortcutDoorTable[DngShortcutDoorCount++];
+            const int wall_part = cell.parts_no - (MAP_PARTS_ROOM_DOOR_NORTH - MAP_PARTS_ROOM_WALL_NORTH);
+            wall = {plan.door_x, plan.door_y, 0, wall_part, cell.parts_no, cell.direction, 1};
+            if ((DngIllusoryOpen >> walls++) & 1) wall.locked = 0;
+            else cell.parts_no = wall_part;
+            if (DngShortcutDoorCount >= DNG_SHORTCUT_MAX) break;
+            continue;
+        }
         // The gate faces the corridor it closes.
         const int x = plan.door_x, y = plan.door_y;
         int gate = -1;
@@ -3698,7 +3731,7 @@ void CDungeonMap::PlaceShortcutDoors(int first_build) {
         if (gate < 0) continue;
         // The key goes in the dead end: the next of the seven keys, passing over the floor's own gate key so no one key
         // fits two locks.
-        int key = ITEM_BONE_KEY + DngShortcutDoorCount;
+        int key = ITEM_BONE_KEY + keyed;
         if (key >= ITEM_BONE_KEY + selectMapNo) ++key;
         if (key > ITEM_BONE_KEY + DNG_SHORTCUT_MAX - 1) break;
         if (zonesOn && key >= DngZoneGateKey(DngZoneCount - 1)) break; // the rest belong to the zone gates
@@ -3712,12 +3745,42 @@ void CDungeonMap::PlaceShortcutDoors(int first_build) {
         }
         if (!chest) continue;
         DNG_SHORTCUT_DOOR &door = DngShortcutDoorTable[DngShortcutDoorCount++];
+        ++keyed;
         door = {x, y, key, gate, cell.parts_no, cell.direction, 1};
-        cell.parts_no = gate;
-        cell.direction = 0;
+        if ((DngShortcutOpenKeys >> (key - ITEM_BONE_KEY)) & 1) {
+            door.locked = 0; // opened on an earlier visit of this floor (set_shortcuts open): its key chest stays for the count
+        } else {
+            cell.parts_no = gate;
+            cell.direction = 0;
+        }
         if (DngShortcutDoorCount >= DNG_SHORTCUT_MAX) break;
     }
     if (first_build != 0) DngShortcutDoorSeed = this->map_seed;
+}
+
+// MoonMod rooms that shut (dungeons.room_seal): each room's doorways, with the gate facing the corridor each leads to.
+// Recorded before the Warden room closes its own, which then aren't doorways (nor are shortcut doors or illusory walls).
+void RecordRoomSeals(CDungeonMap *map) {
+    DngSealDoorCount = 0;
+    DngSealRoomCount = std::min(roomStackCnt, DNG_ROOM_MAX);
+    DngSealRoomSeed = map->map_seed;
+    for (int room = 0; room < DngSealRoomCount; ++room) {
+        const ROOM_INFO &info = roomStack[room];
+        DngSealRoomTable[room] = {info.x, info.y, info.width, info.height};
+        for (const auto &[x, y] : RoomDoors(room)) {
+            const MAP_CELL &cell = map->cells[x + y * DNG_GRID];
+            const bool doorway = (cell.parts_no >= MAP_PARTS_ROOM_DOOR_NORTH && cell.parts_no <= MAP_PARTS_ROOM_DOOR_WEST) ||
+                                 (cell.parts_no >= MAP_PARTS_ROOM_DOOR_B_NORTH && cell.parts_no <= MAP_PARTS_ROOM_DOOR_B_WEST);
+            if (!doorway || DngSealDoorCount >= DNG_SEAL_DOORS || x <= 0 || y <= 0 || x >= DNG_GRID - 1 || y >= DNG_GRID - 1) continue;
+            int gate = -1;
+            if ((buildMapDat[x + (y - 1) * DNG_GRID].content & BUILD_CELL_CORRIDOR) == BUILD_CELL_CORRIDOR) gate = MAP_PARTS_ROOM_GATE_NORTH;
+            if ((buildMapDat[x + (y + 1) * DNG_GRID].content & BUILD_CELL_CORRIDOR) == BUILD_CELL_CORRIDOR) gate = MAP_PARTS_ROOM_GATE_SOUTH;
+            if ((buildMapDat[x + y * DNG_GRID + 1].content & BUILD_CELL_CORRIDOR) == BUILD_CELL_CORRIDOR) gate = MAP_PARTS_ROOM_GATE_EAST;
+            if ((buildMapDat[x + y * DNG_GRID - 1].content & BUILD_CELL_CORRIDOR) == BUILD_CELL_CORRIDOR) gate = MAP_PARTS_ROOM_GATE_WEST;
+            if (gate < 0) continue;
+            DngSealDoorTable[DngSealDoorCount++] = {room, x, y, gate, cell.parts_no, cell.direction};
+        }
+    }
 }
 
 // MoonMod Warden room: the floor's Warden room (BuildWardenRoom; failing that, the room behind the floor's room gate)
@@ -3728,6 +3791,7 @@ void CDungeonMap::PlaceWardenRoom(int first_build) {
     DngWardenRoomState = DNG_WARDEN_NONE;
     DngWardenDoorCount = 0;
     DngWardenRoomSeed = this->map_seed;
+    RecordRoomSeals(this);
     if (!DngWardenRoomEnabled) return;
     int room = wardenRoom;
     // The room gate: a gate that is not a shortcut door. The room lies on the side away from its corridor.
@@ -3981,7 +4045,10 @@ bool FloorReachable(const CDungeonMap &map, int closed, bool obstacles_block = t
 // reaches with every gate shut is the first zone, what opening the gate into the next adds is the next, and so on.
 // Gates the mod named as opened are put back to doorways afterwards. A floor where a room landed outside its own zone,
 // or the stair up isn't in the last, is marked to be built again.
+void BuildZoneHeights(const CDungeonMap &map, std::span<const int> gates);
+
 void PlaceZoneGates(CDungeonMap &map) {
+    DngHeightSeed = -1;
     DngZoneGateCount = 0;
     DngZoneFloorCount = 0;
     std::fill(DngZoneOfCell, DngZoneOfCell + DNG_CELLS, static_cast<unsigned char>(DNG_ZONE_NONE));
@@ -4045,12 +4112,107 @@ void PlaceZoneGates(CDungeonMap &map) {
     if (!zonesFailed) {
         DngZoneFloorCount = DngZoneCount;
         for (int z = 0; z < DNG_ZONE_MAX; ++z) DngZoneFloorSource[z] = z < DngZoneCount ? DngZoneSourceFloor[z] : -1;
+        for (int z = 0; z < DNG_ZONE_MAX; ++z) DngZoneFloorDungeon[z] = z < DngZoneCount ? DngZoneSourceDungeon[z] : -1;
         DngZoneFloorExit = DngZoneExitFloor;
+        DngZoneFloorQuietMask = DngZoneQuietMask;
+        DngZoneFloorHealMask = DngZoneHealMask;
+        // The Moon Sea's water lies at one height across a floor: its floors stay level.
+        if (DngZoneDescent > 0 && selectMapNo != DUNGEON_MOON_SEA) BuildZoneHeights(map, gates);
     }
+}
+
+// Height steps (dungeons.set_zones descent): each zone lies below the zone its gate is entered from, and a straight
+// corridor cell outside the gate (the nearest, along the corridor, within kRampReach cells) slopes down to it. The
+// gates are in zone order (gate k leads into zone k + 1), so the zone outside each is already placed when it is reached.
+void BuildZoneHeights(const CDungeonMap &map, std::span<const int> gates) {
+    static constexpr int kStep[4][2] = {{0, -1}, {1, 0}, {-1, 0}, {0, 1}};
+    static constexpr int kSide[4] = {1, 2, 4, 8};
+    static constexpr int kRampReach = 4;
+    const ReachRules rules{map, {}, false};
+    const auto back_of = [](int side) { return side == 1 ? 8 : side == 8 ? 1 : side == 2 ? 4 : 2; };
+    float zone_y[DNG_ZONE_MAX] = {};
+    std::fill(DngCellY0, DngCellY0 + DNG_CELLS, 0.0f);
+    std::fill(DngCellY1, DngCellY1 + DNG_CELLS, 0.0f);
+    std::fill(DngCellRamp, DngCellRamp + DNG_CELLS, static_cast<signed char>(0));
+    struct Ramp {
+        int cell, side; // side: the ramp's way toward the gate (1 north, 2 east, 4 west, 8 south)
+        std::vector<int> between;
+        int outer, inner;
+    };
+    std::vector<Ramp> ramps;
+    for (int g = 0; g < static_cast<int>(gates.size()) && g < DngZoneGateCount; ++g) {
+        const DNG_ZONE_GATE &gate = DngZoneGateTable[g];
+        const int inner = gate.zone;
+        // the corridor's side of the gate, as PlaceZoneGates chose its part
+        int side = 0;
+        switch (gate.gate_part) {
+            case MAP_PARTS_ROOM_GATE_NORTH: side = 1; break;
+            case MAP_PARTS_ROOM_GATE_EAST: side = 2; break;
+            case MAP_PARTS_ROOM_GATE_WEST: side = 4; break;
+            case MAP_PARTS_ROOM_GATE_SOUTH: side = 8; break;
+        }
+        int at = gate.x + gate.y * DNG_GRID, found = -1, found_side = 0;
+        std::vector<int> between;
+        for (int hop = 0; hop < kRampReach && side != 0; ++hop) {
+            const int s = side == 1 ? 0 : side == 2 ? 1 : side == 4 ? 2 : 3;
+            const int col = at % DNG_GRID + kStep[s][0], row = at / DNG_GRID + kStep[s][1];
+            if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) break;
+            const int next = col + row * DNG_GRID;
+            if (rules.Kind(next) != ReachRules::kRoadCell || DngZoneOfCell[next] == DNG_ZONE_NONE || DngZoneOfCell[next] == inner) break;
+            const MAP_CELL &cell = map.cells[next];
+            const bool along_z = side == 1 || side == 8;
+            if (cell.parts_no == MAP_PARTS_ROAD_STRAIGHT && (cell.direction == 0) == along_z) {
+                found = next;
+                found_side = back_of(side);
+                break;
+            }
+            // on round a corner: the one way out of it that isn't the way back
+            int out = 0, ways = 0;
+            for (int k = 0; k < 4; ++k) {
+                if (kSide[k] == back_of(side)) continue;
+                const int nc = col + kStep[k][0], nr = row + kStep[k][1];
+                if (nc < 0 || nr < 0 || nc >= DNG_GRID || nr >= DNG_GRID) continue;
+                const int beyond = nc + nr * DNG_GRID;
+                if (rules.Kind(beyond) != ReachRules::kNone && rules.Opens(next, kSide[k], beyond) && rules.Opens(beyond, back_of(kSide[k]), next)) {
+                    out = kSide[k];
+                    ++ways;
+                }
+            }
+            if (ways != 1) break;
+            between.push_back(next);
+            at = next;
+            side = out;
+        }
+        const int outer = found >= 0 ? DngZoneOfCell[found] : (between.empty() ? -1 : DngZoneOfCell[between.front()]);
+        if (outer < 0 || outer >= DNG_ZONE_MAX || inner >= DNG_ZONE_MAX) continue;
+        if (found < 0) {
+            zone_y[inner] = zone_y[outer]; // no straight corridor near: level with the zone before
+            continue;
+        }
+        zone_y[inner] = zone_y[outer] - static_cast<float>(DngZoneDescent);
+        ramps.push_back({found, found_side, between, outer, inner});
+    }
+    for (int cell = 0; cell < DNG_CELLS; ++cell) {
+        const int zone = DngZoneOfCell[cell];
+        if (zone != DNG_ZONE_NONE && zone < DNG_ZONE_MAX) DngCellY0[cell] = DngCellY1[cell] = zone_y[zone];
+    }
+    for (const Ramp &ramp : ramps) {
+        for (int cell : ramp.between) DngCellY0[cell] = DngCellY1[cell] = zone_y[ramp.inner];
+        const float low = zone_y[ramp.inner], high = zone_y[ramp.outer];
+        // Y0 is the west or north edge's height, Y1 the east or south edge's; the gate's edge is the low one
+        switch (ramp.side) {
+            case 1: DngCellRamp[ramp.cell] = 2; DngCellY0[ramp.cell] = low; DngCellY1[ramp.cell] = high; break;
+            case 8: DngCellRamp[ramp.cell] = 2; DngCellY0[ramp.cell] = high; DngCellY1[ramp.cell] = low; break;
+            case 4: DngCellRamp[ramp.cell] = 1; DngCellY0[ramp.cell] = low; DngCellY1[ramp.cell] = high; break;
+            case 2: DngCellRamp[ramp.cell] = 1; DngCellY0[ramp.cell] = high; DngCellY1[ramp.cell] = low; break;
+        }
+    }
+    DngHeightSeed = map.map_seed;
 }
 
 // A floor that would not come out as zones in its rebuilds is left whole: its gates open, no zones.
 void DropZones(CDungeonMap &map) {
+    DngHeightSeed = -1;
     for (int g = 0; g < DngZoneGateCount; ++g) {
         MAP_CELL &cell = map.cells[DngZoneGateTable[g].x + DngZoneGateTable[g].y * DNG_GRID];
         if (cell.parts_no == DngZoneGateTable[g].gate_part) {
@@ -4062,6 +4224,87 @@ void DropZones(CDungeonMap &map) {
     DngZoneFloorCount = 0;
     std::fill(DngZoneOfCell, DngZoneOfCell + DNG_CELLS, static_cast<unsigned char>(DNG_ZONE_NONE));
 }
+
+} // namespace
+
+bool DngHeightsOn(const CDungeonMap *map) {
+    return map != nullptr && map == &MainDungeonMap && map->map_type == 1 && DngHeightSeed >= 0 && DngHeightSeed == map->map_seed;
+}
+
+float DngFloorHeight(const CDungeonMap *map, float x, float z) {
+    if (!DngHeightsOn(map)) return 0.0f;
+    const int col = static_cast<int>(std::floor((x + 80.0f) / 160.0f)), row = static_cast<int>(std::floor((z + 80.0f) / 160.0f));
+    if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return 0.0f;
+    const int cell = col + row * DNG_GRID;
+    if (DngCellRamp[cell] == 0) return DngCellY0[cell];
+    const float edge = DngCellRamp[cell] == 1 ? 160.0f * static_cast<float>(col) - 80.0f : 160.0f * static_cast<float>(row) - 80.0f;
+    const float t = std::clamp(((DngCellRamp[cell] == 1 ? x : z) - edge) / 160.0f, 0.0f, 1.0f);
+    return DngCellY0[cell] + (DngCellY1[cell] - DngCellY0[cell]) * t;
+}
+
+void DngLiftPoint(const CDungeonMap *map, float *pos) {
+    if (!DngHeightsOn(map) || std::fabs(pos[1]) > 1.0f) return;
+    pos[1] += DngFloorHeight(map, pos[0], pos[2]);
+}
+
+namespace {
+// The frames sheared for a ramp, with the base matrix their srt placement builds on.
+std::vector<std::pair<CFrame *, std::array<std::array<float, 4>, 4>>> g_sheared_frames;
+} // namespace
+
+void DngRestoreCellFrame(CFrame *frame) {
+    for (auto it = g_sheared_frames.begin(); it != g_sheared_frames.end(); ++it) {
+        if (it->first != frame) continue;
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) frame->local[r][c] = it->second[r][c];
+        }
+        frame->srt = true;
+        frame->world_valid = false;
+        g_sheared_frames.erase(it);
+        return;
+    }
+}
+
+void DngLiftCellFrame(const CDungeonMap *map, CFrame *frame, int col, int row, CBoxVu0 *box) {
+    DngRestoreCellFrame(frame);
+    if (frame == nullptr || !DngHeightsOn(map) || col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return;
+    const int cell = col + row * DNG_GRID;
+    if (DngCellRamp[cell] == 0) {
+        if (DngCellY0[cell] != 0.0f) frame->SetPosition(frame->position[0], frame->position[1] + DngCellY0[cell], frame->position[2]);
+        return;
+    }
+    // The frame as turned and placed, then sheared in world space: y gains Y0 at the ramp's west (north) edge, Y1 at
+    // its east (south) edge. Row vectors: world = local * placed * shear.
+    sceVu0FMATRIX placed;
+    std::array<std::array<float, 4>, 4> base{};
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) base[r][c] = frame->local[r][c];
+    }
+    g_sheared_frames.emplace_back(frame, base);
+    frame->world_valid = false;
+    frame->GetLWMatrix(placed);
+    const bool along_x = DngCellRamp[cell] == 1;
+    const float edge = along_x ? 160.0f * static_cast<float>(col) - 80.0f : 160.0f * static_cast<float>(row) - 80.0f;
+    const float k = (DngCellY1[cell] - DngCellY0[cell]) / 160.0f;
+    sceVu0FMATRIX shear = {{1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+    shear[along_x ? 0 : 2][1] = k;
+    shear[3][1] = DngCellY0[cell] - k * edge;
+    sceVu0FMATRIX out;
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            out[r][c] = placed[r][0] * shear[0][c] + placed[r][1] * shear[1][c] + placed[r][2] * shear[2][c] + placed[r][3] * shear[3][c];
+        }
+    }
+    frame->SetTransMatrix(out);
+    frame->srt = false;
+    if (box != nullptr) {
+        const float reach = std::max(std::fabs(DngCellY0[cell]), std::fabs(DngCellY1[cell])) + 1.0f;
+        box->min[1] -= reach;
+        box->max[1] += reach;
+    }
+}
+
+namespace {
 
 // A character part goes on one of the candidate cells. When a mod chooses who can be used (the Gauntlet's drafted
 // party), it only goes where the whole floor stays reachable without passing it, so it is a way round, never the only
@@ -4281,6 +4524,8 @@ void CDungeonMap::buildRandomMap(int room_max, int first_build) {
 
     // A mod's layout (dungeons.set_layout) and room bonus decide how many rooms the floor gets.
     moonmod::ChroniclePrepareFloorGeneration(first_build == 0);
+    // MoonMod: zones the mod asked for just now may take parts from other dungeons than the map loaded (part banks).
+    BtReloadPartBanks();
     if (DngLayoutRooms > 0) {
         room_max = DngLayoutRooms;
     }
@@ -4397,6 +4642,11 @@ void CDungeonMap::buildRandomMap(int room_max, int first_build) {
             h = static_cast<int>((DNG_BUILD_ROOM_SPAN_F * static_cast<float>(rand())) / 2147483648.0f) + DNG_BUILD_ROOM_MIN;
             x = static_cast<int>((static_cast<float>(DNG_BUILD_AREA - w) * static_cast<float>(rand())) / 2147483648.0f);
             y = static_cast<int>((static_cast<float>(DNG_BUILD_AREA - h) * static_cast<float>(rand())) / 2147483648.0f);
+            if (zonesOn && (DngZoneArenaMask & (1 << zone)) != 0) { // set_zones arena: a boss's room
+                w = h = 6;
+                x = static_cast<int>((static_cast<float>(DNG_BUILD_AREA - w) * static_cast<float>(rand())) / 2147483648.0f);
+                y = static_cast<int>((static_cast<float>(DNG_BUILD_AREA - h) * static_cast<float>(rand())) / 2147483648.0f);
+            }
             if (zonesOn) {
                 x += ZoneOriginX(zone);
                 y += ZoneOriginY(zone);
@@ -4443,7 +4693,7 @@ void CDungeonMap::buildRandomMap(int room_max, int first_build) {
     wardenRoom = first_build != 0 && DngWardenRoomEnabled && !rest ? BuildWardenRoom() : -1;
 
     // MoonMod dungeons.set_shortcuts: dead ends loop back before the rooms are furnished.
-    PlanShortcuts(std::min(DngShortcutDoors, DNG_SHORTCUT_MAX));
+    PlanShortcuts(std::min(DngShortcutDoors + DngIllusoryWalls, DNG_SHORTCUT_MAX)); // the keyed doors first, then the illusory walls
 
 #ifdef PORT
     RepairCornerDoors();

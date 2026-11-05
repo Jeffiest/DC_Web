@@ -498,6 +498,12 @@ void BattleActionPlay_Ozumond_F(int aimed);
 void autoCamTrial();
 
 /**
+ * MoonMod player.tuning_set lock_camera: how much further out the camera may sit, locked on to a large monster (its
+ * body radius or half its height past 15 units, doubled, up to 60), so it and the player both fit in the frame.
+ */
+float MoonModLockPullOut();
+
+/**
  * Spends one use of an active item slot, dropping its model on the last use.
  */
 void DelActiveItem(int slot);
@@ -511,6 +517,25 @@ int Run_TrapCircle(MAP_TRAP_CIRCLE *trap);
  * Drops the lock-on, and with it the cursor and the life gauge.
  */
 void LockOffTargte();
+
+/**
+ * MoonMod lock-on extras, each frame while locked on (player.tuning_set): a right-stick flick moves the lock to the
+ * nearest enemy on that side of the target (lock_flick); a wall between the player and the target for half a second
+ * drops it (lock_sight).
+ */
+void MoonModLockOnExtras();
+
+/** MoonMod: lockOnTargetNo while locked on to an invader (a hostile companion) rather than a monster slot. */
+inline constexpr int kLockOnInvader = -2;
+
+/** MoonMod: the locked-on target's position, a monster's or an invader's; false (and the player's own) for none. */
+bool MoonModLockedPosition(float *out);
+
+/**
+ * MoonMod: on the lock-on press, an invader nearer than the nearest monster (or with none in reach) becomes the
+ * target (lockOnTargetNo = kLockOnInvader), so a duel can be fought locked on.
+ */
+void MoonModLockOnInvaderPick();
 
 /**
  * Draws the life gauge of the enemy that the player has locked on to.

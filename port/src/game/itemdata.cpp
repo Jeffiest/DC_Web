@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <iterator>
 #include <print>
 #include <string>
@@ -58,7 +59,7 @@ int TEIGI_FIRE_IMG[] = {1, 1, 0};
 } // namespace
 
 char          pathName[256];
-OBJ_ANIME_SEQ FrameObjAnim[48];
+OBJ_ANIME_SEQ FrameObjAnim[FRAME_OBJ_ANIM_MAX];
 int           FrameObjAnimCnt;
 int           VERSION_VOL;
 float         run_speed = 1.0f;
@@ -520,6 +521,11 @@ void TEIGIImgLoad(u_int *pack, CDataAlloc2<1> *arena) {
     }
 }
 
+// MoonMod (part banks): 1 while TEIGILoadPartBank reads another dungeon's parts, which leaves what belongs to the
+// whole map (the Dran field, NPCs, events) as the floor's own. Its lights, ambient, fog and background are read (the
+// bank's loader keeps them for its zones and puts the floor's back).
+static int TeigiBankLoad = 0;
+
 void TEIGIMdsLoad(u_int *pack, int reuse_only) {
     CFrame     *current_collision = nullptr;
     CFrame     *current_model = nullptr;
@@ -530,10 +536,12 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
     attr.clip_depth = 20.0f;
     attr.clip_enable = true;
     attr.program_option = 0;
-    FrameObjAnimCnt = 0;
+    if (TeigiBankLoad == 0) {
+        FrameObjAnimCnt = 0;
 
-    for (OBJ_ANIME_SEQ &sequence : FrameObjAnim) {
-        sequence.property = OBJ_ANIME_PROPERTY_NONE;
+        for (OBJ_ANIME_SEQ &sequence : FrameObjAnim) {
+            sequence.property = OBJ_ANIME_PROPERTY_NONE;
+        }
     }
 
     nowPartsCnt = 0;
@@ -564,6 +572,15 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
         const float (&args)[36] = argValBuff[line];
         char (&string_arg)[36] = argStrBuff[line];
         const int command = static_cast<int>(args[0]);
+
+        if (TeigiBankLoad != 0) {
+            const int *map_wide[] = {TEIGI_DebugFlag, TEIGI_RUN_SPEED, TEIGI_URA_LIGHT_C,
+                                     TEIGI_URA_AMBIENT, TEIGI_URA_BG_COL, TEIGI_URA_FOG,
+                                     TEIGI_VIEWLEVEL, TEIGI_BG_MODEL, TEIGI_DRAW_FLAG, TEIGI_DUMMY_MODEL,
+                                     TEIGI_DRANS_PARTS, TEIGI_DRANS_COLS, TEIGI_PT_NPC, TEIGI_PT_MARKER,
+                                     TEIGI_PT_HIT_MARKER, TEIGI_PT_DRAW_FLAG};
+            if (std::ranges::any_of(map_wide, [&](const int *entry) { return entry[0] == command; })) continue;
+        }
 
         if (TEIGI_DebugFlag[0] == command) {
             debugModeFlag = static_cast<int>(args[1]);
@@ -932,7 +949,7 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
             sceVu0FVECTOR range = {80.0f, 80.0f, 80.0f, 80.0f};
             sceVu0FVECTOR speed = {128.0f, 128.0f, 128.0f, 128.0f};
 
-            if (FrameObjAnimCnt >= 48) {
+            if (FrameObjAnimCnt >= FRAME_OBJ_ANIM_MAX) {
                 std::printf("over frame anim!\n");
             } else {
                 OBJ_ANIME_SEQ &sequence = FrameObjAnim[FrameObjAnimCnt];
@@ -1048,7 +1065,7 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
         }
 
         if (TEIGI_PT_ROT[0] == command) {
-            if (FrameObjAnimCnt >= 48) {
+            if (FrameObjAnimCnt >= FRAME_OBJ_ANIM_MAX) {
                 std::printf("over frame anim!\n");
             } else {
                 OBJ_ANIME_SEQ &sequence = FrameObjAnim[FrameObjAnimCnt];
@@ -1068,7 +1085,7 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
         }
 
         if (TEIGI_PT_SCALE[0] == command) {
-            if (FrameObjAnimCnt >= 48) {
+            if (FrameObjAnimCnt >= FRAME_OBJ_ANIM_MAX) {
                 std::printf("over frame anim!\n");
             } else {
                 OBJ_ANIME_SEQ &sequence = FrameObjAnim[FrameObjAnimCnt];
@@ -1125,6 +1142,75 @@ void TEIGIMdsLoad(u_int *pack, int reuse_only) {
             add_fire(args, 3);
         }
     }
+}
+
+// MoonMod (dungeons.set_zones source_dungeon): another dungeon's floor pack read into a bank of parts beside the
+// map's own (moonmod/dungeonmap_layout.hpp). Its ground images go in texture_block and its models take their textures
+// from that block first. The floor's own parse is kept as it was, for the rest of the floor's load.
+bool TEIGILoadPartBank(const char *map_name, CDungeonParts *out, int texture_block) {
+    static CDungeonMap bank_map;
+    const int          saved_level = argLevel;
+    const int          saved_parts = nowPartsCnt;
+    std::vector<char>  saved_strings(sizeof(argStrBuff));
+    std::vector<char>  saved_values(sizeof(argValBuff));
+    std::string        saved_path(pathName);
+    std::memcpy(saved_strings.data(), argStrBuff, sizeof(argStrBuff));
+    std::memcpy(saved_values.data(), argValBuff, sizeof(argValBuff));
+
+    std::string cfg_path = std::format("dun/{}.cfg", map_name);
+    std::string mpd_path = std::format("dun/mpd_pack/{}.mpd", map_name);
+    TEIGIAnalyz(cfg_path.data());
+    int size = 0;
+    LoadFile(mpd_path.data(), read_buffer, &size);
+    wait_now_loading_vsync();
+    const bool loaded = size > 0 && size < 6400000;
+
+    if (loaded) {
+        LOADTEXTURE_INFO2 images[6] = {};
+        int               count = 0;
+        pathName[0] = '\0';
+        for (int i = 0; i < argLevel && count < 5; i++) {
+            if (TEIGI_SET_PATH[0] == static_cast<int>(argValBuff[i][0])) std::strcpy(pathName, argStrBuff[i]);
+            if (TEIGI_GRD_IMG[0] != static_cast<int>(argValBuff[i][0])) continue;
+            std::string full_path = std::string(pathName) + argStrBuff[i];
+            int         image_size = 0;
+            u_int      *image = GetPackFile(read_buffer, full_path.data(), &image_size);
+            if (image == nullptr || image_size <= 0) continue;
+            u_char        *destination = &MapModelBuffer.base[static_cast<std::ptrdiff_t>(MapModelBuffer.used) * 16];
+            DataReadSource source;
+            const bool     has_source = DataReadSourceRange(image, static_cast<std::size_t>(image_size), source);
+            MapModelBuffer.Alloc((((image_size >> 6) + 1) << 6) >> 4);
+            std::memcpy(destination, image, static_cast<std::size_t>(image_size));
+            if (has_source) DataReadRegisterCopiedSource(destination, static_cast<std::size_t>(image_size), &MapModelBuffer, source);
+            images[count].name = reinterpret_cast<char *>(destination);
+            images[count].block_no = texture_block;
+            images[count].mipmap = static_cast<int>(argValBuff[i][2]);
+            count++;
+        }
+        images[count].name = nullptr;
+        TexManager.DeleteTextureBlock(texture_block);
+        TexManager.CleanUpTextureList();
+        TexManager.CleanUpBuffer();
+        if (count > 0) TexManager.LoadTextureBlockEX(-1, images);
+
+        CDungeonMap *map = NowDngMap;
+        for (CDungeonParts &part : bank_map.parts) part.initalize();
+        NowDngMap = &bank_map;
+        TeigiBankLoad = 1;
+        TexPreferBlock = texture_block;
+        TEIGIMdsLoad(read_buffer, 0);
+        TexPreferBlock = -1;
+        TeigiBankLoad = 0;
+        NowDngMap = map;
+        std::copy(std::begin(bank_map.parts), std::end(bank_map.parts), out);
+    }
+
+    argLevel = saved_level;
+    nowPartsCnt = saved_parts;
+    std::memcpy(argStrBuff, saved_strings.data(), sizeof(argStrBuff));
+    std::memcpy(argValBuff, saved_values.data(), sizeof(argValBuff));
+    std::strcpy(pathName, saved_path.c_str());
+    return loaded;
 }
 
 /*

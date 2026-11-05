@@ -11,9 +11,12 @@ namespace dc::game {
 /**
  * Holds the projectile effects the dungeon can run, and which one is being set up.
  */
+// MoonMod: retail's 5, raised for maps with many dungeons' monsters.
+constexpr int SHOT_EFFECT_PACK_MAX = 32;
+
 class CSHOT_EFFECT_PACK {
 public:
-    CSHOT_EFFECT effect[5]; /**< The effects the dungeon can run. */
+    CSHOT_EFFECT effect[SHOT_EFFECT_PACK_MAX]; /**< The effects the dungeon can run. */
 
     s32 current_effect; /**< Effect that SetUserID2 and SetDmg apply to. */
 
@@ -21,6 +24,7 @@ public:
      * Fires one effect from a position in a direction, and selects it.
      */
     void Set(int index, float *position, float *direction) {
+        if (index < 0 || index >= SHOT_EFFECT_PACK_MAX) return; // MoonMod: an effect that found no slot
         effect[index].Set(position, direction, -1, -1, 0, nullptr, -1);
         current_effect = index;
     }

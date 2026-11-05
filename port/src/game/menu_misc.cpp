@@ -193,6 +193,12 @@ int ItemUseFunc(CUserStatus *status, int item_no, int chara, int target, WEAPON_
         return 0;
     }
 
+    // MoonMod item_heal_lock: no healing from the item menu with an enemy near.
+    if ((data->kind_flags & ITEMKINDF_CONSUMABLE) && target == ITEM_USE_ON_CHARA &&
+        ((data->use_flags & ITEMUSE_HEAL_HP) || item_no == ITEM_MELLOW_BANANA) && moonmod::ChronicleHealItemLocked()) {
+        return 0;
+    }
+
     if ((data->kind_flags & ITEMKINDF_CONSUMABLE) && target == ITEM_USE_ON_CHARA) {
         if (item_no != ITEM_MELLOW_BANANA) {
             if ((data->use_flags & ITEMUSE_HEAL_HP) && 0 < now_hp && now_hp < max_hp) {
@@ -1082,6 +1088,29 @@ int StartLoadCharaMDS(u_long128 *buffer, int chara, int read_no) {
     return 0;
 }
 
+namespace {
+
+// Where each combat character stands on the item page, and his size.
+constexpr float kMenuCharaPosition[6][4] = {
+    {-4.8f, -13.0f, 0.0f, 1.0f},
+    {-5.2f, -12.8f, 0.0f, 1.0f},
+    {-5.0f, -11.4f, 0.0f, 1.0f},
+    {-5.0f, -15.0f, 0.0f, 1.0f},
+    {-5.0f, -16.0f, 0.0f, 1.0f},
+    {-5.0f, -15.0f, 0.0f, 1.0f}
+};
+constexpr float kMenuCharaScale[6] = {1.0f, 1.0f, 1.0f, 1.0f, 0.9f, 0.9f};
+
+} // namespace
+
+void MenuCharaPlace(int chara, float scale, float dx, float dy) {
+    const int combat = CombatChara(chara);
+    sceVu0FVECTOR position = {kMenuCharaPosition[combat][0] + dx, kMenuCharaPosition[combat][1] + dy, kMenuCharaPosition[combat][2], 1.0f};
+    float         size[3] = {kMenuCharaScale[combat] * scale, kMenuCharaScale[combat] * scale, kMenuCharaScale[combat] * scale};
+    MenuCharaFrame.SetPosition(position);
+    MenuCharaFrame.SetScale(size);
+}
+
 void MenuCharaMDSBuild2(int chara, int texture_block) {
     int size = 0;
 
@@ -1121,26 +1150,9 @@ void MenuCharaMDSBuild2(int chara, int texture_block) {
         MenuCharaFrame.frame->SetAttr(attr, 1, 4);
     }
 
-    sceVu0FVECTOR position[6] = {
-        {-4.8f, -13.0f, 0.0f, 1.0f},
-        {-5.2f, -12.8f, 0.0f, 1.0f},
-        {-5.0f, -11.4f, 0.0f, 1.0f},
-        {-5.0f, -15.0f, 0.0f, 1.0f},
-        {-5.0f, -16.0f, 0.0f, 1.0f},
-        {-5.0f, -15.0f, 0.0f, 1.0f}
-    };
-    float scale[6][3] = {
-        {1.0f, 1.0f, 1.0f},
-        {1.0f, 1.0f, 1.0f},
-        {1.0f, 1.0f, 1.0f},
-        {1.0f, 1.0f, 1.0f},
-        {0.9f, 0.9f, 0.9f},
-        {0.9f, 0.9f, 0.9f}
-    };
     // MoonMod: a registered character stands and is scaled as his CombatChara is.
-    MenuCharaFrame.SetPosition(position[CombatChara(chara)]);
+    MenuCharaPlace(chara, 1.0f, 0.0f, 0.0f);
     SetNowCharaMotionNo(chara);
-    MenuCharaFrame.SetScale(scale[CombatChara(chara)]);
     MenuCharaFrame.Step();
 
     if (chara == 0) {

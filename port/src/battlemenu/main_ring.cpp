@@ -580,7 +580,13 @@ void PortDrawBattleMenu() {
     if (game_help) {
         // MoonMod: a mod's weapon card takes the description's place.
         const bool card = BattleMenuFlag == BTLMENU_STATE_WEAPON && MoonModWeaponCardShown();
-        if (BtlMenuReadEndFlag != 0 && draw_help != 0 && !card) {
+        // MoonMod: a gear piece on the item page is named in the window in place of the description.
+        const bool gear = BattleMenuFlag == BTLMENU_STATE_ITEM && MoonModGearInfoShown();
+        if (BtlMenuReadEndFlag != 0 && draw_help != 0 && !card && gear) {
+            MenuHelpWinDraw(static_cast<int>(HelpWinHead[0]), static_cast<int>(HelpWinHead[1]), BtlHelpWinW, BtlHelpWinH,
+                            BtlHelpWinAlpha);
+            MoonModGearInfoDraw(BtlHelpWinAlpha);
+        } else if (BtlMenuReadEndFlag != 0 && draw_help != 0 && !card) {
             MenuHelpWinDraw(static_cast<int>(HelpWinHead[0]), static_cast<int>(HelpWinHead[1]), BtlHelpWinW, BtlHelpWinH,
                             BtlHelpWinAlpha);
             MenuTextureReload(CommonMenuMes2.tex_block);

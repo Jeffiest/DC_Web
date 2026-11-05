@@ -559,13 +559,13 @@ void CSHOT_EFFECT::Initialize() {
 }
 
 int CSHOT_EFFECT_PACK::Entry(BT_SHOT_EFFECT *description, unsigned int *resource, int texture_block, CDataAlloc2<1> *allocator, int slots) {
-    for (int index = 0; index < 5; index++) {
+    for (int index = 0; index < SHOT_EFFECT_PACK_MAX; index++) {
         if (effect[index].effect_data == description) {
             return index;
         }
     }
 
-    for (int index = 0; index < 5; index++) {
+    for (int index = 0; index < SHOT_EFFECT_PACK_MAX; index++) {
         if (effect[index].Entry(description, resource, texture_block, allocator, slots) != 0) {
             return index;
         }

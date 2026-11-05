@@ -57,6 +57,7 @@
 #include "moonmod/item_icon_override.hpp"
 #include "moonmod/runtime.hpp"
 #include "moonmod/title_modes.hpp"
+#include "moonmod/sky_screen.hpp"
 #include "ui/framework.hpp"
 #include "ui/menu_pointer.hpp"
 #include "vutext.hpp"
@@ -1422,6 +1423,10 @@ void TitlePortReopenMode() {
         CProcess.no = kTitleStepModMode;
         return;
     }
+}
+
+void MoonModDrawSkyPage(const moonmod::TitleMode &mode, int alpha) {
+    if (mode.sky && !mode.sky->nodes.empty()) DrawTitleSky(mode, alpha);
 }
 
 } // namespace dc::game

@@ -17,6 +17,7 @@
 #include "btmisc.hpp"
 #include "character.hpp"
 #include "charaheight.hpp"
+#include "charm_slots.hpp"
 #include "cloth.hpp"
 #include "clothread.hpp"
 #include "clsmes.hpp"
@@ -154,7 +155,7 @@ int CheckHealingWater() {
 
                 if (part->water.used != 0) {
                     water_position[0] = 160.0f * static_cast<float>(column);
-                    water_position[1] = water->vertex[0][1];
+                    water_position[1] = water->vertex[0][1] + DngFloorHeight(NowDngMap, 160.0f * static_cast<float>(column), 160.0f * static_cast<float>(row));
                     water_position[2] = 160.0f * static_cast<float>(row);
 
                     const float distance = DistVector(position, water_position);
@@ -212,7 +213,7 @@ int CheckHealZone() {
         return 0;
     }
 
-    CDungeonParts *part = &NowDngMap->parts[parts_no];
+    CDungeonParts *part = DngCellPart(NowDngMap, (row * DNG_GRID) + column); // MoonMod: a zone's own spring (part banks)
 
     if (part->heal_on == 0) {
         return 0;
@@ -221,6 +222,7 @@ int CheckHealZone() {
     sceVu0CopyVector(center, part->heal_pos);
     center[0] += 160.0f * static_cast<float>(column);
     center[2] += 160.0f * static_cast<float>(row);
+    center[1] += DngFloorHeight(NowDngMap, center[0], center[2]);
     sceVu0CopyVector(low, center);
     sceVu0CopyVector(high, center);
     low[0] -= part->heal_width / 2.0f;
@@ -250,7 +252,14 @@ void WaterSplash_Init() {
 }
 
 bool ShrineWaterDry() {
-    return DngZoneShrineHeal == 0 && NowDngMap == &MainDungeonMap && DngZoneFloorIs(NowDngMap->map_seed);
+    if (!(DngZoneShrineHeal == 0 && NowDngMap == &MainDungeonMap && DngZoneFloorIs(NowDngMap->map_seed))) return false;
+    if (DngZoneFloorHealMask == 0) return true;
+    float at[4];
+    CharaMain.GetPosition(at); // set_zones heal: the spring of a zone that heals
+    const int col = static_cast<int>((at[0] + 80.0f) / 160.0f), row = static_cast<int>((at[2] + 80.0f) / 160.0f);
+    if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return true;
+    const int zone = DngZoneOfCell[col + row * DNG_GRID];
+    return zone == DNG_ZONE_NONE || (DngZoneFloorHealMask & (1 << zone)) == 0;
 }
 
 void HealingWater() {
@@ -649,6 +658,20 @@ void topStatusInfo(int y, int selected_item, int floor) {
     spRGBA    fill_right = {0xE0, 0xB0, 0x30, 0x80};
     for (const auto &bar : moonmod::ChronicleHudBars()) {
         const double ratio = bar.maximum > 0.0 ? std::clamp(bar.current / bar.maximum, 0.0, 1.0) : 0.0;
+        if (bar.boss) {
+            // A boss's bar (render.bar_register boss = true): wide along the bottom, its name over it.
+            spRGBA boss_trough = {0x08, 0x04, 0x04, 0x70};
+            spRGBA boss_left = {0x90, 0x10, 0x10, 0x80};
+            spRGBA boss_right = {0xD0, 0x40, 0x20, 0x80};
+            constexpr int kBossX = 0x78, kBossY = 0x19A, kBossWidth = 0x190;
+            set2DSpriteC4(Vif1Packet, CRect_i_(kBossX - 1, kBossY - 1, kBossWidth + 2, 9), &boss_trough, &boss_trough, &boss_trough, &boss_trough);
+            const int boss_filled = static_cast<int>(kBossWidth * ratio);
+            if (boss_filled > 0) {
+                set2DSpriteC4(Vif1Packet, CRect_i_(kBossX, kBossY, boss_filled, 7), &boss_left, &boss_right, &boss_left, &boss_right);
+            }
+            ui::Label(bar.label, ui::ColorWhite, ui::Alignment::Left, true, ui::metrics::kScaleSmall).Draw(kBossX, kBossY - 18);
+            continue;
+        }
         set2DSpriteC4(Vif1Packet, CRect_i_(0x32, bar_y, bar_width + 2, 7), &trough, &trough, &trough, &trough);
         const int filled = static_cast<int>(bar_width * ratio);
         if (filled > 0) {
@@ -773,6 +796,39 @@ void topStatusInfo(int y, int selected_item, int floor) {
     int                 icon_right = 0x1FA;
     const gfx::UiAnchor status_anchor = gfx::CurrentUiAnchor();
     gfx::SetUiAnchor(gfx::UiAnchor::Side(1, -1));
+    // MoonMod: the charms the active character wears (charm_slots.hpp) next to the key, each with its uses left in
+    // its corner, then the mod icons beyond them.
+    for (int i = 0; i < CharmSlotsShown(chara); i++) {
+        const int        index = CharmSlotIndex(chara, i);
+        const CharmSlot &charm = CharmSlotAt(chara, index);
+        if (charm.item_no < 0) {
+            continue;
+        }
+        // A mod's own icon, else the copy of the game's in the HUD sheet (DngActiveItemTextureCopy).
+        CTexture *texture = ItemIconOverrideTexture(charm.item_no);
+        int       u = 0;
+        int       v = 0;
+        if (texture == nullptr) {
+            texture = icons;
+            CharmHudCell(index, u, v);
+        }
+        constexpr int kCharmIcon = 26;
+        icon_right -= kCharmIcon;
+        spRGBA backing = {0x10, 0x14, 0x20, 0x50};
+        set2DSpriteC4(Vif1Packet, CRect_i_(icon_right, y + 0x08, kCharmIcon, kCharmIcon), &backing, &backing, &backing, &backing);
+        const int texel = texture == icons ? CHARM_HUD_ICON_SIZE : 32;
+        set2DSprite(Vif1Packet, texture, CRect_i_(icon_right + 1, y + 0x09, kCharmIcon - 2, kCharmIcon - 2), CRect_i_(u, v, texel, texel));
+        // The uses left, right-aligned in the bottom corner in the quick slots' digits.
+        int digit_x = icon_right + kCharmIcon - 8;
+        for (int uses = CharmUsesShown(charm.item_no, charm.uses); ; uses /= 10) {
+            set2DSprite(Vif1Packet, frame, CRect_i_(digit_x, y + 0x08 + kCharmIcon - 10, 9, 9), CRect_i_(uses % 10 * 12, 0xD4, 0xC, 0xC));
+            digit_x -= 7;
+            if (uses < 10) {
+                break;
+            }
+        }
+        icon_right -= 3;
+    }
     for (const moonmod::ChronicleHudIcon &icon : moonmod::ChronicleHudIcons()) {
         const int icon_alpha = icon.blink ? pulse_alpha : 0x80;
         if (icon.native >= 0 && icon.native < 5) {
@@ -1031,7 +1087,7 @@ void BtStatusErrDraw(int y) {
     }
 }
 
-void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax, int dsay) {
+void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax, int dsay, int size) {
     CTexture *page = TexManager.GetTexture(page_name, -1);
     CTexture *item = TexManager.GetTexture(item_name, -1);
 
@@ -1040,7 +1096,7 @@ void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax,
     int sbw = (page->tex0 >> 14) & 0x3F;
     int dbw = (item->tex0 >> 14) & 0x3F;
 
-    MoveImageTest(Vif1Packet, sbp, sbw, 0x13, CRect_i_(x, y, 0x20, 0x20), dbp, dbw, 0x13, dsax, dsay, 0);
+    MoveImageTest(Vif1Packet, sbp, sbw, 0x13, CRect_i_(x, y, size, size), dbp, dbw, 0x13, dsax, dsay, 0);
 }
 
 void BtMapJumpCashClear() {
@@ -1048,6 +1104,25 @@ void BtMapJumpCashClear() {
     BtCfgFlag = 0;
     BtSteebMsgNo = -1;
 }
+
+#ifdef PORT
+namespace {
+int g_bank_mark = -1; // where the map's part banks start in its buffer
+} // namespace
+
+void BtReloadPartBanks() {
+    if (g_bank_mark < 0 || NowDngMap != &MainDungeonMap || DngPartBanksWanted(selectMapNo) == DngPartBanksLoaded()) return;
+    MapModelBuffer.used = g_bank_mark;
+    u_int *pack = read_buffer;
+    read_buffer = old_read_buffer;
+    DngLoadPartBanks(selectMapNo);
+    read_buffer = pack;
+    const int map_used = MapModelBuffer.used;
+    MonstorModelBuffer.base = &MapModelBuffer.base[static_cast<std::ptrdiff_t>(map_used) * 16];
+    MonstorModelBuffer.limit = MapModelBuffer.limit - map_used - 0x88B8;
+    MonstorModelBuffer.used = 0;
+}
+#endif
 
 int BtMapJumpLoad(char *map_name) {
     // A floor added by game.dungeons.register with its own map reads that floor pack instead.
@@ -1101,7 +1176,8 @@ int BtMapJumpLoad(char *map_name) {
     NowDngMap = &MainDungeonMap;
     NowEventMan = &DngEventMan;
 
-    if (BtCfgCash == map_name && BtCfgFlag != 0) {
+    // MoonMod: a change in the dungeons a zoned floor takes parts from loads the map again (part banks).
+    if (BtCfgCash == map_name && BtCfgFlag != 0 && DngPartBanksWanted(selectMapNo) == DngPartBanksLoaded()) {
         return 0;
     }
 
@@ -1188,6 +1264,12 @@ int BtMapJumpLoad(char *map_name) {
         sceVu0FVECTOR turn = {0.0f, 0.0f, 0.0f, 0.0f};
         MainDungeonMap.SetNPC(model.npc, read_buffer, 9999, origin, turn, 1, model.motion, &MapModelBuffer, model.cfg);
     }
+#endif
+
+#ifdef PORT
+    // MoonMod (dungeons.set_zones source_dungeon): other dungeons' parts, beside the map's own.
+    g_bank_mark = MapModelBuffer.used;
+    DngLoadPartBanks(selectMapNo);
 #endif
 
     // The monsters get whatever the map left of its buffer.

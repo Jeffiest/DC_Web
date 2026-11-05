@@ -61,6 +61,13 @@ void TEIGIImgLoad(u_int *pack, CDataAlloc2<1> *arena);
  */
 void TEIGIMdsLoad(u_int *pack, int reuse_only);
 
+class CDungeonParts;
+/**
+ * MoonMod (dungeons.set_zones source_dungeon): reads another floor pack's parts into out (72 of them), its ground
+ * images into texture_block; false if the pack wasn't there.
+ */
+bool TEIGILoadPartBank(const char *map_name, CDungeonParts *out, int texture_block);
+
 /**
  * Directory prefix applied to resource names in the item definition file.
  */

@@ -11,12 +11,14 @@
 #include <string_view>
 #include <vector>
 
+#include "battlemenu.hpp"
 #include "btactstatus.hpp"
 #include "btitem.hpp"
 #include "dngstatusdata.hpp"
 #include "dun/gameloop.hpp"
 #include "framevu1.hpp"
 #include "gamepad.hpp"
+#include "gear.hpp"
 #include "itemdata.hpp"
 #include "motionmodel.hpp"
 #include "platform/input.hpp"
@@ -24,6 +26,7 @@
 #include "menu_inventory.hpp"
 #include "menu_misc.hpp"
 #include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/target_hud.hpp"
 #include "savedata.hpp"
 
 namespace dc::game {}
@@ -476,4 +479,214 @@ return {}
         << (logs.empty() ? std::string("no log") : logs.back());
 
     runtime.Stop();
+}
+
+TEST(MoonModItemsApi, GearPageOpensWithEachKindsIconAndCloses) {
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *page = moonmod::FindApiOperation("items.gear_page_set");
+    ASSERT_NE(page, nullptr);
+    const auto call = [&](moonmod::Json args) { return config.api_handler("test.moonmod.gear-page", *page, std::move(args)); };
+    const moonmod::Json icons = {{"hat", "gear_hat"}, {"tunic", "gear_tunic"}, {"gloves", "gear_gloves"}, {"boots", "gear_boots"}};
+
+    const moonmod::ApiCallResult opened = call(moonmod::Json::array({{{"icons", icons}}}));
+    ASSERT_EQ(opened.status, moonmod::ApiCallStatus::Ok) << opened.message;
+    EXPECT_TRUE(GearPageOpen());
+    EXPECT_EQ(GearKindIcon(GEAR_TUNIC), "icons/gear_tunic.png");
+    EXPECT_TRUE(GearKindIcon(GEAR_POUCH).empty()); // no pouch named, no pouch slot
+
+    // The pouch is the mod's to name; then its slot shows, and a page of four after it hides it again.
+    moonmod::Json with_pouch = icons;
+    with_pouch["pouch"] = "gear_pouch";
+    ASSERT_EQ(call(moonmod::Json::array({{{"icons", with_pouch}}})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(GearKindIcon(GEAR_POUCH), "icons/gear_pouch.png");
+    ASSERT_EQ(call(moonmod::Json::array({{{"icons", icons}}})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_TRUE(GearKindIcon(GEAR_POUCH).empty());
+
+    // The first four kinds, each a bare stem.
+    moonmod::Json missing = icons;
+    missing.erase("boots");
+    EXPECT_EQ(call(moonmod::Json::array({{{"icons", missing}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    moonmod::Json pathed = icons;
+    pathed["hat"] = "../gear_hat";
+    EXPECT_EQ(call(moonmod::Json::array({{{"icons", pathed}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(moonmod::Json::array({{{"tabs", 4}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(GearKindIcon(GEAR_HAT), "icons/gear_hat.png"); // a refused call changes nothing
+
+    const moonmod::ApiCallResult closed = call(moonmod::Json::array({moonmod::Json::object()}));
+    ASSERT_EQ(closed.status, moonmod::ApiCallStatus::Ok) << closed.message;
+    EXPECT_FALSE(GearPageOpen());
+}
+
+TEST(MoonModItemsApi, GearStockSetsAShopsGoodsPricedAndTakesThemAway) {
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *stock = moonmod::FindApiOperation("items.gear_stock_set");
+    ASSERT_NE(stock, nullptr);
+    const auto call = [&](moonmod::Json args) { return config.api_handler("test.moonmod.gear-stock", *stock, std::move(args)); };
+    ClearGearStock();
+    const moonmod::Json cap = {{"kind", "hat"}, {"name", "Shop Cap"}, {"rarity", 1}, {"value", 60}, {"price", 150},
+                               {"effects", {{"guard", {{"poison", 20}}}}}};
+    const moonmod::Json boots = {{"kind", "boots"}, {"name", "Shop Boots"}, {"value", 40}};
+
+    const moonmod::ApiCallResult set = call(moonmod::Json::array({{{"shop", 3}, {"goods", {cap, boots}}}}));
+    ASSERT_EQ(set.status, moonmod::ApiCallStatus::Ok) << set.message;
+    EXPECT_EQ(set.value["goods"], 2);
+    std::vector<GearGood> *goods = GearStock(3);
+    ASSERT_NE(goods, nullptr);
+    ASSERT_EQ(goods->size(), 2u);
+    EXPECT_EQ((*goods)[0].piece.name, "Shop Cap");
+    EXPECT_EQ((*goods)[0].price, 150);
+    EXPECT_EQ((*goods)[0].piece.effects.guard[GearGuardFromName("poison")], 20);
+    EXPECT_EQ((*goods)[1].price, 40); // no price: its value
+    EXPECT_EQ(GearStock(4), nullptr);
+
+    // A good is a piece as gear_give takes it, with a price; a bad one changes nothing.
+    moonmod::Json dear = cap;
+    dear["price"] = 70000;
+    EXPECT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", {dear}}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    moonmod::Json odd = boots;
+    odd["kind"] = "ring";
+    EXPECT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", {odd}}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", moonmod::Json::array({boots, boots, boots, boots, boots, boots, boots, boots, boots, boots, boots})}}})).status,
+              moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(GearStock(3)->size(), 2u);
+    // The Gauntlet's five rarities: 4 is legendary, and there is no sixth.
+    moonmod::Json legendary = cap;
+    legendary["rarity"] = 4;
+    moonmod::Json beyond = cap;
+    beyond["rarity"] = 5;
+    EXPECT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", {beyond}}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    ASSERT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", {legendary}}}})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(GearStock(3)->front().piece.rarity, 4);
+
+    ASSERT_EQ(call(moonmod::Json::array({{{"shop", 3}, {"goods", moonmod::Json::array()}}})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(GearStock(3), nullptr);
+}
+
+TEST(MoonModItemsApi, StatLabelsTakeAnIconPerStatAndGiveTheGamesBack) {
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *labels = moonmod::FindApiOperation("weapons.stat_label_set");
+    ASSERT_NE(labels, nullptr);
+    const auto call = [&](moonmod::Json args) { return config.api_handler("test.moonmod.stat-labels", *labels, std::move(args)); };
+
+    const moonmod::ApiCallResult set = call(moonmod::Json::array({{{"speed", "label_lightness"}}}));
+    ASSERT_EQ(set.status, moonmod::ApiCallStatus::Ok) << set.message;
+    EXPECT_EQ(set.value["labels"]["speed"], "icons/label_lightness.png");
+    EXPECT_EQ(WeaponStatLabel(WEAPON_STAT_SPEED), "icons/label_lightness.png");
+    EXPECT_TRUE(WeaponStatLabel(WEAPON_STAT_ATTACK).empty());
+
+    // A stat the cards don't show, or a path for a stem, changes nothing.
+    EXPECT_EQ(call(moonmod::Json::array({{{"weight", "x"}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(moonmod::Json::array({{{"magic", "icons/x.png"}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(WeaponStatLabel(WEAPON_STAT_SPEED), "icons/label_lightness.png");
+
+    ASSERT_EQ(call(moonmod::Json::array({moonmod::Json::object()})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_TRUE(WeaponStatLabel(WEAPON_STAT_SPEED).empty());
+}
+
+TEST(MoonModItemsApi, GearPageTakesEachHerosPartsAndForgetsThemClosed) {
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *page = moonmod::FindApiOperation("items.gear_page_set");
+    ASSERT_NE(page, nullptr);
+    const auto call = [&](moonmod::Json args) { return config.api_handler("test.moonmod.gear-parts", *page, std::move(args)); };
+    using moonmod::Json;
+    const Json icons = {{"hat", "gear_hat"}, {"tunic", "gear_tunic"}, {"gloves", "gear_gloves"}, {"boots", "gear_boots"}};
+    const auto names = [](std::initializer_list<const char *> list) {
+        Json out = Json::array();
+        for (const char *name : list) out.push_back(name);
+        return out;
+    };
+    const auto hero = [](Json kinds) {
+        Json out = Json::object();
+        out[CharaIdName(0)] = std::move(kinds);
+        return out;
+    };
+    Json tunic = Json::object();
+    tunic["draw"] = names({"skin", "beruto"});
+    tunic["fit"] = names({"beruto"});
+    tunic["turn"] = 90;
+    tunic["tilt"] = -45;
+    tunic["bare"] = names({"cloth2", "cloth3"});
+    tunic["below"] = names({"l_f"});
+    Json kinds = Json::object();
+    kinds["hat"] = names({"boushi"});
+    kinds["tunic"] = tunic;
+
+    const moonmod::ApiCallResult opened = call(Json::array({Json{{"icons", icons}, {"parts", hero(kinds)}}}));
+    ASSERT_EQ(opened.status, moonmod::ApiCallStatus::Ok) << opened.message;
+    EXPECT_EQ(GearPartsFor(0, GEAR_HAT).draw, std::vector<std::string>{"boushi"});
+    EXPECT_TRUE(GearPartsFor(0, GEAR_HAT).fit.empty());
+    EXPECT_EQ(GearPartsFor(0, GEAR_TUNIC).draw, (std::vector<std::string>{"skin", "beruto"}));
+    EXPECT_EQ(GearPartsFor(0, GEAR_TUNIC).fit, std::vector<std::string>{"beruto"});
+    EXPECT_NEAR(GearPartsFor(0, GEAR_TUNIC).turn, 1.5708f, 0.001f);
+    EXPECT_NEAR(GearPartsFor(0, GEAR_TUNIC).tilt, -0.7854f, 0.001f);
+    EXPECT_EQ(GearPartsFor(0, GEAR_TUNIC).bare, (std::vector<std::string>{"cloth2", "cloth3"}));
+    EXPECT_EQ(GearPartsFor(0, GEAR_TUNIC).below, std::vector<std::string>{"l_f"});
+    EXPECT_TRUE(GearPartsFor(0, GEAR_HAT).bare.empty()); // nothing left out unless named
+    EXPECT_TRUE(GearPartsFor(0, GEAR_BOOTS).draw.empty()); // a kind left out keeps its icon
+    EXPECT_TRUE(GearPartsFor(1, GEAR_HAT).draw.empty());   // as does a hero left out
+
+    // Names, kinds and fields as the page takes them; a refused call changes nothing.
+    std::vector<Json> bad;
+    bad.push_back(Json{{"cape", names({"boushi"})}});
+    bad.push_back(Json{{"hat", Json::array()}});
+    bad.push_back(Json{{"hat", Json::array({std::string(32, 'a')})}});
+    bad.push_back(Json{{"hat", Json{{"fit", names({"boushi"})}}}});
+    bad.push_back(Json{{"hat", Json{{"draw", names({"boushi"})}, {"turn", 200}}}});
+    bad.push_back(Json{{"hat", Json{{"draw", names({"boushi"})}, {"tilt", 100}}}});
+    bad.push_back(Json{{"hat", Json{{"draw", names({"boushi"})}, {"spin", 1}}}});
+    bad.push_back(Json{{"hat", Json{{"draw", names({"boushi"})}, {"bare", "boushi"}}}});
+    bad.push_back(Json{{"hat", Json{{"draw", names({"boushi"})}, {"below", Json::array()}}}});
+    bad.push_back(Json{{"hat", "boushi"}});
+
+    for (const Json &kind : bad) {
+        EXPECT_EQ(call(Json::array({Json{{"icons", icons}, {"parts", hero(kind)}}})).status, moonmod::ApiCallStatus::InvalidArgument) << kind.dump();
+    }
+    EXPECT_EQ(call(Json::array({Json{{"icons", icons}, {"parts", Json{{CharaIdName(0), "boushi"}}}}})).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(GearPartsFor(0, GEAR_HAT).draw, std::vector<std::string>{"boushi"});
+
+    ASSERT_EQ(call(Json::array({Json::object()})).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_TRUE(GearPartsFor(0, GEAR_HAT).draw.empty());
+}
+
+TEST(MoonModItemsApi, TargetBarTurnsOnAndItsMeterChecksTheMonster) {
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *bar = moonmod::FindApiOperation("render.target_bar_set");
+    const moonmod::ApiOperationSpec *meter = moonmod::FindApiOperation("render.target_meter_set");
+    ASSERT_NE(bar, nullptr);
+    ASSERT_NE(meter, nullptr);
+    using moonmod::Json;
+    const auto call = [&](const moonmod::ApiOperationSpec &op, Json spec) {
+        return config.api_handler("test.moonmod.target-bar", op, Json::array({std::move(spec)}));
+    };
+
+    const moonmod::ApiCallResult on = call(*bar, {{"on", true}});
+    ASSERT_EQ(on.status, moonmod::ApiCallStatus::Ok) << on.message;
+    EXPECT_TRUE(MoonModTargetBarOn());
+    EXPECT_EQ(call(*bar, {{"on", 1}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(*bar, Json::object()).status, moonmod::ApiCallStatus::InvalidArgument);
+
+    // With no life on the gauge there is nothing to draw, so the game's gauge keeps its turn.
+    EnemyLifeGage.life_max = 0;
+    EXPECT_FALSE(MoonModTargetBarDraw(0));
+
+    // The meter takes a monster handle, a fill of 0..1, a colour and seconds, and nothing else.
+    EXPECT_EQ(call(*meter, {{"entity", "chronicle:player:0"}, {"fill", 0.5}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(*meter, {{"entity", "chronicle:monster:0:1"}, {"fill", 1.5}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(*meter, {{"entity", "chronicle:monster:0:1"}, {"fill", 0.5}, {"why", 1}}).status,
+              moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(*meter, {{"entity", "chronicle:monster:0:1"}, {"fill", 0.5}, {"seconds", 900}}).status,
+              moonmod::ApiCallStatus::InvalidArgument);
+    // A handle from another generation is a monster that has gone.
+    EXPECT_NE(call(*meter, {{"entity", "chronicle:monster:0:4000000"}, {"fill", 0.5}}).status, moonmod::ApiCallStatus::Ok);
+
+    ASSERT_EQ(call(*bar, {{"on", false}}).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_FALSE(MoonModTargetBarOn());
+    EnemyLifeGage.life_max = 100;
+    EXPECT_FALSE(MoonModTargetBarDraw(0));
+    EnemyLifeGage.life_max = 0;
 }

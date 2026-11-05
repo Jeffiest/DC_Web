@@ -257,6 +257,9 @@ public:
  * The game's one texture registry.
  */
 extern CTextureManager TexManager;
+// MoonMod (part banks, moonmod/dungeonmap_layout.hpp): while a model loads, the block its textures are looked up in
+// first (-1: none), so a texture name two dungeons share binds to the bank's own.
+extern int TexPreferBlock;
 
 /**
  * MoonMod (O2 C1): moves the texture manager from world `from` to world `to`: TexManager's state is kept for

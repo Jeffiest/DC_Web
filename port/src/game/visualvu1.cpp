@@ -703,7 +703,8 @@ int CVisualVu1::CreateVUdataFromMDT(u_int *block, u_int *data, int /*unknown0*/,
 
         if (material != -1) {
             MDT_MATERIAL &entry = view.materials[material];
-            int           handle = TexManager.GetTextureHandle(entry.texture, -1);
+            int           handle = TexPreferBlock >= 0 ? TexManager.GetTextureHandle(entry.texture, TexPreferBlock) : -1;
+            if (handle < 0) handle = TexManager.GetTextureHandle(entry.texture, -1);
             current.texture = handle;
             current.texture_name = handle >= 0 ? TexManager.GetTexture(handle)->name : "";
             current.tex0 = TexManager.GetTexture(handle)->tex0;

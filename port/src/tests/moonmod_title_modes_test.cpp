@@ -12,6 +12,7 @@
 #include "mainselect.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/title_modes.hpp"
+#include "moonmod/sky_screen.hpp"
 #include "savedata.hpp"
 
 namespace dc::game {}
@@ -402,4 +403,48 @@ TEST(MoonModTitleModes, SkyPageValidatesAndMovesByDirection) {
     EXPECT_FALSE(moonmod::OpenTitleModeScreenMode()->sky.has_value());
     ASSERT_EQ(api("mod.a", "title.mode_set", SkyPage()).status, moonmod::ApiCallStatus::Ok);
     EXPECT_EQ(moonmod::HandleTitleModeInput(TitleModeInput::Back), TitleModeOutcome::Stay);
+}
+
+TEST(MoonModTitleModes, SkyPageOpensInPlayAndKeepsItsCursor) {
+    SavedGameState saved;
+    dc::game::MoonModSkyReset();
+    Api api;
+    moonmod::Json page = {{"id", "shrine"}, {"title", "VIGIL SKY"}, {"sky", SkyPage()["sky"]}};
+    // Only in a dungeon.
+    mode = GAME_MODE_TITLE;
+    EXPECT_EQ(api("mod.a", "ui.sky_open", page).status, moonmod::ApiCallStatus::Failed);
+    mode = GAME_MODE_DUNGEON;
+    const auto opened = api("mod.a", "ui.sky_open", page);
+    ASSERT_EQ(opened.status, moonmod::ApiCallStatus::Ok) << opened.message;
+    EXPECT_EQ(opened.value["nodes"], 4);
+    EXPECT_TRUE(dc::game::MoonModSkyWaiting());
+    // A sky checked as the title's is: a bad link is refused, and the open page stays.
+    moonmod::Json bad = page;
+    bad["sky"]["nodes"][1]["links"] = {"nowhere"};
+    EXPECT_EQ(api("mod.a", "ui.sky_open", bad).status, moonmod::ApiCallStatus::InvalidArgument);
+    moonmod::Json stray = page;
+    stray["lines"] = {"x"};
+    EXPECT_EQ(api("mod.a", "ui.sky_open", stray).status, moonmod::ApiCallStatus::InvalidArgument);
+    // Another mod waits its turn.
+    EXPECT_EQ(api("mod.b", "ui.sky_open", page).status, moonmod::ApiCallStatus::Failed);
+
+    // The pad moves the cursor; the mod's answer (the page again) keeps it on the node it was on.
+    EXPECT_FALSE(dc::game::MoonModSkyInput(moonmod::TitleModeInput::Right));
+    EXPECT_EQ(dc::game::MoonModSkyPage()->sky->cursor, 2u);
+    EXPECT_FALSE(dc::game::MoonModSkyInput(moonmod::TitleModeInput::Confirm)); // ui.sky_selected, buy
+    page["sky"]["nodes"][2]["state"] = "owned";
+    ASSERT_EQ(api("mod.a", "ui.sky_open", page).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(dc::game::MoonModSkyPage()->sky->cursor, 2u);
+    EXPECT_EQ(dc::game::MoonModSkyPage()->sky->nodes[2].state, 2);
+    EXPECT_FALSE(dc::game::MoonModSkyInput(moonmod::TitleModeInput::Map));
+    EXPECT_TRUE(dc::game::MoonModSkyPage()->sky->map);
+
+    // Circle closes it; ui.sky_close takes it back too.
+    EXPECT_TRUE(dc::game::MoonModSkyInput(moonmod::TitleModeInput::Back));
+    EXPECT_FALSE(dc::game::MoonModSkyUp());
+    ASSERT_EQ(api("mod.a", "ui.sky_open", page).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(dc::game::MoonModSkyPage()->sky->cursor, 0u); // a new page starts at the first node
+    ASSERT_EQ(api("mod.a", "ui.sky_close", nullptr).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_FALSE(dc::game::MoonModSkyUp());
+    dc::game::MoonModSkyReset();
 }

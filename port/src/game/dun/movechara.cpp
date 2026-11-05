@@ -31,6 +31,7 @@
 #include "dispctrl.hpp"
 #include "dngmessageman.hpp"
 #include "dngstatusdata.hpp"
+#include "dodge_run.hpp"
 #include "dranmapfield.hpp"
 #include "dungeoneventman.hpp"
 #include "dungeonmap.hpp"
@@ -92,6 +93,7 @@
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/choice_panel.hpp"
 #include "moonmod/map_screen.hpp"
+#include "moonmod/sky_screen.hpp"
 #include "moonmod/run_menu.hpp"
 
 #pragma clang diagnostic ignored "-Wwritable-strings"
@@ -219,6 +221,10 @@ void DunMoveChara() {
                 // MoonMod: a mod's map screen (ui.map_open) pauses play the same way, until it closes.
                 MoonModMapStep();
                 gameTask = GAME_TASK_MOD_CHOICE;
+            } else if (MoonModSkyWaiting()) {
+                // MoonMod: a mod's sky page (ui.sky_open) too.
+                MoonModSkyStep();
+                gameTask = GAME_TASK_MOD_CHOICE;
             } else if (MoonModMenuWaiting() || (GamePad.Down(PAD_START) != 0 && MoonModMenuAvailable())) {
                 // MoonMod: a mod's run menu takes the pause's place.
                 MoonModMenuBegin();
@@ -275,7 +281,7 @@ void DunMoveChara() {
                     NowCamera__3->SetSpeed(8.0f);
                     defCameraWait = 0;
 
-                    if (BtBySpeedFlag != 0) {
+                    if (BtBySpeedFlag != 0 || PlayerDodgeRun.running) { // MoonMod dodge_run: the run is the dash
                         run_speed = 3.0f;
                     } else {
                         run_speed = 1.45f;
@@ -438,6 +444,8 @@ void DunMoveChara() {
                             }
 
                             if (GamePad.Down(PadInput_NO) != 0) {
+                                MoonModLockOnInvaderPick();
+
                                 if (lockOnTargetNo == -1) {
                                     sceVu0FMATRIX look;
 
@@ -466,15 +474,16 @@ void DunMoveChara() {
                                 }
                             }
 
+                            MoonModLockOnExtras();
+
                             if (SetBattleStyle(selectMapNo, 0) <= 60.0f && move_x == 0.0f && move_z == 0.0f) {
                                 BtActStatus.motion_no = 0x12;
                             }
 
                             if (lockOnTargetFlag != 0) {
-                                CCharacter   *locked = &NowMonstorUnit->chara[lockOnTargetNo][0];
                                 sceVu0FVECTOR target;
 
-                                locked->GetPosition(target);
+                                MoonModLockedPosition(target); // MoonMod: a monster's, or an invader's
                                 float face = atan2f(target[0] - pos[0], target[2] - pos[2]);
 
                                 if (BtActStatus.stick_strength > 0.0f) {
@@ -534,7 +543,10 @@ void DunMoveChara() {
                                 CharaFrame->SetRotation(0.0f, unitRotation(CharaFrame, atan2f(move_x, move_z)), 0.0f);
                             }
 
-                            if (GamePad.On(PAD_R1) != 0 && lockOnTargetFlag != 0 && BtActStatus.movement_locked == 0 && BtActStatus.in_water == 0 && BtActStatus.action_on == 0) {
+                            // MoonMod guard_rules_set without_lock: R1 guards with no lock-on target too.
+                            const bool guard_lock = lockOnTargetFlag != 0 || moonmod::ChroniclePlayerGuardWithoutLock();
+
+                            if (GamePad.On(PAD_R1) != 0 && guard_lock && BtActStatus.movement_locked == 0 && BtActStatus.in_water == 0 && BtActStatus.action_on == 0) {
                                 BtActStatus.action_on = 6;
                                 BtActStatus.action_no = 8;
                                 driveNoInterpolate = 1;
@@ -543,7 +555,7 @@ void DunMoveChara() {
                             if (BtActStatus.action_on == 6) {
                                 float end = 0.0f;
 
-                                if (lockOnTargetFlag == 0) {
+                                if (!guard_lock) {
                                     BtActStatus.action_on = 0;
                                     BtActStatus.action_no = 0x12;
                                 }
@@ -874,7 +886,14 @@ void DunMoveChara() {
 
                                                     run_play = true;
                                                 } else {
-                                                    if (!moonmod::ChroniclePlayerMoveOnAttack()) switch (CombatChara(UserStatus->cur_chara)) {
+                                                    // MoonMod gauge_rules_set: the first swing needs and costs gauge.
+                                                    moonmod::ChronicleWallStruck(); // an illusory wall in reach opens
+                                                    moonmod::ChroniclePlayerChainToAttack(); // a heavy's recovery cut into the swing
+                                                    const bool swing_idle = BtActStatus.action_on == 0;
+                                                    const bool native_swing = !moonmod::ChroniclePlayerMoveOnAttack() &&
+                                                                              moonmod::ChroniclePlayerSwingAllowed(swing_idle);
+                                                    if (native_swing && swing_idle) moonmod::ChronicleSoftLockTurn();
+                                                    if (native_swing) switch (CombatChara(UserStatus->cur_chara)) {
                                                         case CHARA_TOAN:
                                                             ToanKey_On();
                                                             break;
@@ -906,6 +925,10 @@ void DunMoveChara() {
                                                             break;
                                                         default:
                                                             break;
+                                                    }
+
+                                                    if (native_swing) {
+                                                        moonmod::ChroniclePlayerSwingStarted(swing_idle);
                                                     }
 
                                                     run_play = true;
@@ -959,7 +982,9 @@ void DunMoveChara() {
                                                     if (BtActStatus.action_on == 0 && gameTask != GAME_TASK_UNK_F0 && BtActStatus.can_act != 0) {
                                                         s16 *slots = UserStatus->active_item;
 
-                                                        if (activeItem.CheckStatusType() == ACTIVE_ITEM_FEATHER && slots[itemNowSel + 3] > 0) {
+                                                        // MoonMod dodge_run: with the run the Feather is a charm, not a boost.
+                                                        if (activeItem.CheckStatusType() == ACTIVE_ITEM_FEATHER && slots[itemNowSel + 3] > 0 &&
+                                                            moonmod::ChroniclePlayerDodgeRun() <= 0.0f) {
                                                             // A boosting running item is spent each frame the button is held.
                                                             BtBySpeedFlag = 1;
                                                             int slot = itemNowSel - 1;
@@ -1338,7 +1363,8 @@ void DunMoveChara() {
                                                                             int          parts_no = cmap->cells[x + z * DNG_GRID]
                                                                                                         .parts_no;
 
-                                                                            collision = parts_no == -1 ? nullptr : NowDngMap->parts[parts_no].collision;
+                                                                            CDungeonParts *cell_part = parts_no == -1 ? nullptr : DngCellPart(NowDngMap, x + z * DNG_GRID);
+                                                                            collision = cell_part == nullptr ? nullptr : cell_part->collision;
                                                                             MAP_CELL *cell = &NowDngMap->cells[x + z * DNG_GRID];
 
                                                                             if (selectMapNo == DUNGEON_GALLERY_OF_TIME && parts_no >= 0x28 && parts_no < 0x2C) {
@@ -1347,7 +1373,7 @@ void DunMoveChara() {
 
                                                                             if (collision != nullptr && cell->camera_dist <= 240.0f) {
                                                                                 int dir = NowDngMap->cells[x + z * DNG_GRID].direction;
-                                                                                int base = parts_no == -1 ? 0 : NowDngMap->parts[parts_no].collision_turn;
+                                                                                int base = cell_part == nullptr ? 0 : cell_part->collision_turn;
 
                                                                                 int turn = dir;
                                                                                 turn += base;
@@ -1364,8 +1390,10 @@ void DunMoveChara() {
 
                                                                                 collision->SetRotation(0.0f, rot, 0.0f);
                                                                                 collision->SetPosition(160.0f * x, 0.0f, 160.0f * z);
-                                                                                colPolyNum += collision
-                                                                                                  ->PickUpNearPoly(&polys[colPolyNum], bound);
+                                                                                CBoxVu0 cell_bound = bound;
+                                                                                DngLiftCellFrame(NowDngMap, collision, x, z, &cell_bound);
+                                                                                colPolyNum += collision->PickUpNearPoly(&polys[colPolyNum], cell_bound);
+                                                                                DngRestoreCellFrame(collision);
                                                                             }
                                                                         }
                                                                     }
@@ -1441,7 +1469,8 @@ void DunMoveChara() {
                                                                 }
                                                             }
 
-                                                            if (pos[1] <= -30.0f && selectMapNo == DUNGEON_DIVINE_BEAST_CAVE) {
+                                                            // MoonMod: measured from the floor's height there (height steps, moonmod/dungeonmap_layout.hpp)
+                                                            if (pos[1] - DngFloorHeight(NowDngMap, pos[0], pos[2]) <= -30.0f && selectMapNo == DUNGEON_DIVINE_BEAST_CAVE) {
                                                                 UserStatus->AddNowLife(UserStatus->cur_chara, -0x28, 10.0f);
                                                                 setUnitAmbientAnime(120.0f, 1.0f, 255.0f, 0.0f, 0.0f);
                                                                 ResetStatusInfo();
@@ -1515,7 +1544,8 @@ void DunMoveChara() {
                                                                 NowCamera__3->AddAngle(0.04f * -turn);
 
                                                                 if (lockOnTargetFlag == 0) {
-                                                                    if (GamePad.On(PAD_R1) != 0) {
+                                                                    // MoonMod: R1 guards instead (without_lock).
+                                                                    if (GamePad.On(PAD_R1) != 0 && !moonmod::ChroniclePlayerGuardWithoutLock()) {
                                                                         NowCamera__3->AddAngle(-0.034906585f);
                                                                     }
 
@@ -1524,7 +1554,8 @@ void DunMoveChara() {
                                                                     }
                                                                 }
 
-                                                                if (GamePad.On(PAD_L2) != 0) {
+                                                                // MoonMod dodge_run: L2 runs, so it no longer swings the camera behind.
+                                                                if (GamePad.On(PAD_L2) != 0 && moonmod::ChroniclePlayerDodgeRun() <= 0.0f) {
                                                                     sceVu0FMATRIX look;
 
                                                                     CharaFrame->GetLWMatrix(look);
@@ -1562,7 +1593,7 @@ void DunMoveChara() {
                                                                 } else {
                                                                     sceVu0FVECTOR follow;
 
-                                                                    if (pos[1] < -100.0f) {
+                                                                    if (pos[1] - DngFloorHeight(NowDngMap, pos[0], pos[2]) < -100.0f) {
                                                                         pos[1] += 200.0f;
                                                                     }
 
@@ -1574,12 +1605,10 @@ void DunMoveChara() {
                                                                     NowCamera__3->SetFollow(follow[0], follow[1], follow[2]);
 
                                                                     if (lockOnTargetFlag != 0) {
-                                                                        CCharacter   *locked = &NowMonstorUnit
-                                                                                                    ->chara[lockOnTargetNo][0];
                                                                         sceVu0FVECTOR to_target;
                                                                         sceVu0FVECTOR target;
 
-                                                                        locked->GetPosition(target);
+                                                                        MoonModLockedPosition(target);
                                                                         float dist = DistVector(target, pos);
                                                                         to_target[0] = target[0] - pos[0];
                                                                         to_target[1] = target[1] - pos[1];
@@ -1625,7 +1654,7 @@ void DunMoveChara() {
             if (EdFadeOutCheck() != 0) {
                 CSHOT_EFFECT *effects = NowShotEffect->effect;
 
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < SHOT_EFFECT_PACK_MAX; i++) {
                     effects[i].Initialize();
                 }
 
@@ -1674,7 +1703,7 @@ void DunMoveChara() {
                 TexManager.CleanUpTextureList();
                 CSHOT_EFFECT *effects = NowShotEffect->effect;
 
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < SHOT_EFFECT_PACK_MAX; i++) {
                     effects[i].Initialize();
                 }
 
@@ -2062,6 +2091,8 @@ void DunMoveChara() {
         case GAME_TASK_MOD_CHOICE:
             if (MoonModMapPaused()) {
                 if (MoonModMapStep()) gameTask = GAME_TASK_PLAY;
+            } else if (MoonModSkyPaused()) {
+                if (MoonModSkyStep()) gameTask = GAME_TASK_PLAY;
             } else if (MoonModChoiceStep()) {
                 gameTask = MoonModChoiceResumeTask(GAME_TASK_PLAY);
             }

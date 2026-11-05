@@ -14,6 +14,7 @@
 #include "dngstatusdata.hpp"
 #include "editpartsinfo.hpp"
 #include "gamepad.hpp"
+#include "gear.hpp"
 #include "itemdata.hpp"
 #include "memcard.hpp"
 #include "menu_draw.hpp"
@@ -22,6 +23,7 @@
 #include "menu_misc.hpp"
 #include "menu_save.hpp"
 #include "moonmod/manager_ui.hpp"
+#include "moonmod/run_menu.hpp"
 #include "options/menu_option.hpp"
 #include "platform/input.hpp"
 #include "save/save_slots.hpp"
@@ -267,6 +269,9 @@ constexpr int kDiscardPlateY = 0xE8;
 
 bool HoldingItem() { return BtlHaveItemPt != nullptr && BtlHaveItemPt->item_no >= ITEM_ATTACH_START; }
 
+// A gear piece in hand on the item page (gear.hpp): set down on empty ground it goes back to the bag, as Circle does.
+bool HoldingGear() { return HeldGear() != 0; }
+
 void AskToDiscard() {
     if (IsEnableTrushThrow(BtlHaveItemPt->item_no) == 0) {
         ComMenuSePlay(MENU_SOUND_REFUSE);
@@ -478,9 +483,16 @@ const Rect kItemPageLeft = {322, 38, 356, 72};
 const Rect kItemPageRight = {552, 38, 586, 72};
 
 Rect ItemPageTab(int page) {
+    // MoonMod: four narrower tabs while the Equipment tab is shown (GearTabsDraw).
+    if (GearTabShown()) {
+        int left = 0x160 + page * 0x38;
+        return Rect{left, 72, left + 0x38, 120};
+    }
     int left = 0x154 + 0xE + page * 0x44;
     return Rect{left, 72, left + 0x44, 120};
 }
+
+int ItemPageTabs() { return GearTabShown() ? 4 : 3; }
 
 bool ItemPanelMode(int mode) {
     return mode == ITEM_MENU_QUICK_SLOTS || mode == ITEM_MENU_CHARA || mode == ITEM_MENU_WEAPON ||
@@ -521,18 +533,26 @@ void ItemMouse(const MenuPointerTake &take) {
     int area = board.cursor_area;
     int tab = -1;
     int arrow = 0;
+    bool drag = false;
+    const float quick_shift = static_cast<float>(MoonModActiveItemShift());
     for (int i = 0; i < 3; ++i) {
-        if (kItemQuickSlot[i].Contains(x, y)) {
+        if (kItemQuickSlot[i].Contains(x - quick_shift, y)) {
             mode = ITEM_MENU_QUICK_SLOTS;
             cursor = i;
         }
     }
-    if (kItemWeapon.Contains(x, y)) {
+    if (MoonModHeroPageShown()) {
+        // The hero page's slots in place of the card's.
+        MoonModHeroSlotAt(x, y, mode, cursor, drag);
+    } else if (kItemWeapon.Contains(x, y)) {
         mode = ITEM_MENU_WEAPON;
     } else if (kItemDefense.Contains(x, y)) {
         mode = ITEM_MENU_DEFENSE;
     } else if (kItemChara.Contains(x, y)) {
         mode = ITEM_MENU_CHARA;
+    }
+    if (mode >= 0) {
+        // Over the panel.
     } else if (kItemBoard.Contains(x, y)) {
         int column = static_cast<int>((x - kItemBoard.left) / 40);
         int row = static_cast<int>((y - kItemBoard.top) / 40);
@@ -546,15 +566,18 @@ void ItemMouse(const MenuPointerTake &take) {
         mode = ITEM_MENU_BOARD;
         area = PERSONAL_BOARD_AREA_TRASH;
     }
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < ItemPageTabs(); ++i) {
         if (ItemPageTab(i).Contains(x, y)) {
             tab = i;
         }
     }
     if (PartyCount(*BtlMenuStatusPt) > 1 && ItemPanelMode(ItemMenuMode.mode)) {
-        if (kItemPartyLeft.Contains(x, y)) {
+        // The hero page's arrows sit close either side of its name.
+        const Rect party_left = MoonModHeroPageShown() ? Rect{108, 150, 142, 184} : kItemPartyLeft;
+        const Rect party_right = MoonModHeroPageShown() ? Rect{260, 150, 294, 184} : kItemPartyRight;
+        if (party_left.Contains(x, y)) {
             arrow = -1;
-        } else if (kItemPartyRight.Contains(x, y)) {
+        } else if (party_right.Contains(x, y)) {
             arrow = 1;
         }
     }
@@ -592,12 +615,16 @@ void ItemMouse(const MenuPointerTake &take) {
     // over empty ground and the question about throwing it away comes up, over the same place and it stays held.
     if ((take.released & 1) != 0 && g_item_dragging) {
         g_item_dragging = false;
-        if (HoldingItem()) {
+        if (HoldingItem() || HoldingGear()) {
             bool same = mode == g_item_drag_mode && cursor == g_item_drag_cursor && area == g_item_drag_area;
             if (mode >= 0 && !same) {
                 MenuPointerPress(kInputCross);
             } else if (mode < 0 && tab < 0 && arrow == 0 && !kScrollTrack.Contains(x, y)) {
-                AskToDiscard();
+                if (HoldingGear()) {
+                    MenuPointerPress(kInputCircle);
+                } else {
+                    AskToDiscard();
+                }
             }
         }
         return;
@@ -605,13 +632,16 @@ void ItemMouse(const MenuPointerTake &take) {
 
     if (clicked) {
         if (mode >= 0) {
-            if (!HoldingItem() && mode == ITEM_MENU_BOARD) {
+            if (!HoldingItem() && !HoldingGear() && (mode == ITEM_MENU_BOARD || drag)) {
                 g_item_dragging = true;
                 g_item_drag_mode = mode;
                 g_item_drag_cursor = cursor;
                 g_item_drag_area = area;
             }
             MenuPointerPress(kInputCross);
+        } else if (HoldingGear() && tab < 0 && arrow == 0) {
+            // A gear piece set down on empty ground goes back to the bag.
+            MenuPointerPress(kInputCircle);
         } else if (HoldingItem() && tab < 0 && arrow == 0) {
             // Set down on empty ground.
             AskToDiscard();
@@ -624,8 +654,10 @@ void ItemMouse(const MenuPointerTake &take) {
             }
             int steps = arrow;
             if (steps == 0) {
-                int forward = (tab - board.page + 3) % 3;
-                steps = forward == 2 ? -1 : forward;
+                // MoonMod: round the four tabs as well as the game's three; the near way about.
+                const int tabs = ItemPageTabs();
+                int       forward = (tab - board.page + tabs) % tabs;
+                steps = forward > tabs / 2 ? forward - tabs : forward;
             }
             if (steps > 0) {
                 MenuPointerPress(kInputR1);

@@ -20,6 +20,7 @@
 #include "battlemenu.hpp"
 #include "btactstatus.hpp"
 #include "btmisc.hpp"
+#include "charm_slots.hpp"
 #include "camera.hpp"
 #include "clsmes.hpp"
 #include "dataalloc.hpp"
@@ -2299,6 +2300,23 @@ int DngActiveItemTextureCopy() {
                     int v = (icon >> 3) * 32;
                     setItemToReserved(source, u, v, "itempack", i * 32 + 32, 0);
                 }
+            }
+        }
+    }
+
+    // MoonMod: the active character's charms beside them, for the HUD (charm_slots.hpp).
+    const int chara = UserStatus->cur_chara;
+    if (chara >= 0 && chara < CHARA_MAX && TexManager.GetTexture(source, -1) != nullptr &&
+        TexManager.GetTexture(const_cast<char *>("itempack"), -1) != nullptr) {
+        for (int i = 0; i < CHARM_SLOT_COUNT; i++) {
+            const COM_ITEM_INFO *info = GetCommonItemInfo(CharmSlotAt(chara, i).item_no);
+            if (CharmSlotAt(chara, i).item_no >= 0 && info != nullptr && info->icon_index >= 0 && info->icon_index <= 256) {
+                constexpr int kMargin = (32 - CHARM_HUD_ICON_SIZE) / 2;
+                int           cell_u = 0;
+                int           cell_v = 0;
+                CharmHudCell(i, cell_u, cell_v);
+                setItemToReserved(source, (info->icon_index % 8) * 32 + kMargin, (info->icon_index >> 3) * 32 + kMargin,
+                                  const_cast<char *>("itempack"), cell_u, cell_v, CHARM_HUD_ICON_SIZE);
             }
         }
     }

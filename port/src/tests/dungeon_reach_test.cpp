@@ -320,6 +320,114 @@ TEST(DungeonReach, SetSeedBuildsTheSameFloorAgain) {
     SaveData = previous_save;
 }
 
+// A shortcut door opened on an earlier visit (dungeons.set_shortcuts open) is built open when its floor is built
+// again from its seed; the other doors stay locked, and its key chest is still placed, so chest numbers hold.
+// Rooms that shut (dungeons.room_seal): a built floor records each room and its doorways, each with a gate facing the
+// corridor, and each doorway is inside its room's border.
+TEST(DungeonReach, RoomSealsRecordEveryRoomsDoorways) {
+    auto save = std::make_unique<CSaveData>();
+    save->Initialize();
+    CSaveData *previous_save = SaveData;
+    CUserStatus *previous_user = UserStatus;
+    SaveData = save.get();
+    CDngStatusData *status = save->GetDngStatus();
+    UserStatus = status;
+    status->res_limit_zone_current = -1;
+    status->party_size = 6;
+    const int previous_select = selectMapNo;
+    selectMapNo = 0;
+    status->cur_floor = 3;
+    auto map = std::make_unique<CDungeonMap>();
+    DngNextSeed = 4242;
+    map->buildRandomMap(6, 1);
+    EXPECT_EQ(DngSealRoomSeed, map->map_seed);
+    EXPECT_GT(DngSealRoomCount, 1);
+    EXPECT_GT(DngSealDoorCount, 0);
+    for (int d = 0; d < DngSealDoorCount; ++d) {
+        const DNG_SEAL_DOOR &door = DngSealDoorTable[d];
+        ASSERT_GE(door.room, 0);
+        ASSERT_LT(door.room, DngSealRoomCount);
+        const DNG_SEAL_ROOM &room = DngSealRoomTable[door.room];
+        EXPECT_TRUE(door.x >= room.x - 1 && door.x <= room.x + room.w && door.y >= room.y - 1 && door.y <= room.y + room.h);
+        EXPECT_TRUE(door.gate_part >= MAP_PARTS_ROOM_GATE_NORTH && door.gate_part <= MAP_PARTS_ROOM_GATE_WEST);
+        EXPECT_EQ(map->cells[door.x + door.y * DNG_GRID].parts_no, door.open_part); // built open
+    }
+    selectMapNo = previous_select;
+    SaveData = previous_save;
+    UserStatus = previous_user;
+}
+
+TEST(DungeonReach, ShortcutDoorsOpenedBeforeAreBuiltOpen) {
+    auto save = std::make_unique<CSaveData>();
+    save->Initialize();
+    CSaveData *previous_save = SaveData;
+    CUserStatus *previous_user = UserStatus;
+    SaveData = save.get();
+    CDngStatusData *status = save->GetDngStatus();
+    UserStatus = status;
+    status->res_limit_zone_current = -1;
+    status->party_size = 6;
+    const int previous_select = selectMapNo;
+    selectMapNo = 0;
+    status->cur_floor = 3;
+    DngShortcutDoors = 3;
+    auto map = std::make_unique<CDungeonMap>();
+    int seed = -1;
+    for (int tries = 1; tries <= 40 && seed < 0; ++tries) {
+        DngNextSeed = 1000 + tries;
+        map->buildRandomMap(6, 1);
+        if (DngShortcutDoorCount >= 2) seed = map->map_seed;
+    }
+    ASSERT_GE(seed, 0) << "no floor with two shortcut doors";
+    std::vector<DNG_SHORTCUT_DOOR> doors(DngShortcutDoorTable, DngShortcutDoorTable + DngShortcutDoorCount);
+    for (const auto &door : doors) {
+        EXPECT_EQ(door.locked, 1);
+        EXPECT_EQ(map->cells[door.x + door.y * DNG_GRID].parts_no, door.gate_part);
+    }
+
+    DngShortcutOpenKeys = 1 << (doors[0].key_item - ITEM_BONE_KEY);
+    DngNextSeed = seed;
+    map->buildRandomMap(6, 1);
+    ASSERT_EQ(DngShortcutDoorCount, static_cast<int>(doors.size()));
+    EXPECT_EQ(DngShortcutDoorTable[0].locked, 0);
+    EXPECT_EQ(map->cells[doors[0].x + doors[0].y * DNG_GRID].parts_no, doors[0].open_part);
+    EXPECT_EQ(DngShortcutDoorTable[1].locked, 1);
+    EXPECT_EQ(map->cells[doors[1].x + doors[1].y * DNG_GRID].parts_no, doors[1].gate_part);
+
+    DngShortcutOpenKeys = 0;
+
+    // An illusory wall is one more doorway, drawn as the room's plain wall on that side, with no key and no chest.
+    DngShortcutDoors = 1;
+    DngIllusoryWalls = 1;
+    int wall_seed = -1;
+    for (int tries = 1; tries <= 60 && wall_seed < 0; ++tries) {
+        DngNextSeed = 2000 + tries;
+        map->buildRandomMap(6, 1);
+        if (DngShortcutDoorCount == 2 && DngShortcutDoorTable[1].key_item == 0) wall_seed = map->map_seed;
+    }
+    ASSERT_GE(wall_seed, 0) << "no floor with a door and an illusory wall";
+    const DNG_SHORTCUT_DOOR wall = DngShortcutDoorTable[1];
+    EXPECT_GT(DngShortcutDoorTable[0].key_item, 0);
+    EXPECT_EQ(wall.gate_part, wall.open_part - (MAP_PARTS_ROOM_DOOR_NORTH - MAP_PARTS_ROOM_WALL_NORTH));
+    EXPECT_GE(wall.gate_part, MAP_PARTS_ROOM_WALL_NORTH);
+    EXPECT_LE(wall.gate_part, MAP_PARTS_ROOM_WALL_WEST);
+    EXPECT_EQ(map->cells[wall.x + wall.y * DNG_GRID].parts_no, wall.gate_part);
+    EXPECT_EQ(map->cells[wall.x + wall.y * DNG_GRID].direction, wall.open_direction);
+    DngIllusoryOpen = 1; // wall 0, opened on an earlier visit
+    DngNextSeed = wall_seed;
+    map->buildRandomMap(6, 1);
+    EXPECT_EQ(DngShortcutDoorTable[1].locked, 0);
+    EXPECT_EQ(map->cells[wall.x + wall.y * DNG_GRID].parts_no, wall.open_part);
+    EXPECT_EQ(DngShortcutDoorTable[0].locked, 1);
+
+    DngIllusoryWalls = 0;
+    DngIllusoryOpen = 0;
+    DngShortcutDoors = 0;
+    selectMapNo = previous_select;
+    UserStatus = previous_user;
+    SaveData = previous_save;
+}
+
 // A rest floor (dungeons.set_rest_room) is its two rooms: the hall with the spring against its top wall, the
 // antechamber with the back floor's stairs in its top wall, the way in and the exit on the corridor between them,
 // nothing else, and the exit reachable.

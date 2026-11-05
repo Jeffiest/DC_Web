@@ -471,8 +471,26 @@ TEST(MoonModDungeonsApi, ShortcutDoorRequestsCombineByOwnerAndUnload) {
     for (const moonmod::Json &bad : {moonmod::Json{{"count", 8}}, moonmod::Json{{"count", -1}}, moonmod::Json{{"doors", 1}}}) {
         EXPECT_EQ(call("test.a", "dungeons.set_shortcuts", bad).status, moonmod::ApiCallStatus::InvalidArgument) << bad.dump();
     }
+    // open: the key items of doors a floor built again builds open; owners' lists join, and go with the owner.
+    ASSERT_EQ(call("test.b", "dungeons.set_shortcuts", {{"count", 3}, {"open", {ITEM_BONE_KEY, ITEM_BONE_KEY + 2}}}).status,
+              moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(DngShortcutOpenKeys, 0b101);
+    for (const moonmod::Json &bad : {moonmod::Json{{"count", 2}, {"open", {ITEM_BONE_KEY - 1}}},
+                                     moonmod::Json{{"count", 2}, {"open", {ITEM_BONE_KEY + 7}}}, moonmod::Json{{"count", 2}, {"open", 3}}}) {
+        EXPECT_EQ(call("test.a", "dungeons.set_shortcuts", bad).status, moonmod::ApiCallStatus::InvalidArgument) << bad.dump();
+    }
+    // illusory: up to 3 walls a blow opens; open_walls builds those numbers open.
+    ASSERT_EQ(call("test.b", "dungeons.set_shortcuts", {{"count", 3}, {"illusory", 2}, {"open_walls", {1}}}).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(DngIllusoryWalls, 2);
+    EXPECT_EQ(DngIllusoryOpen, 0b10);
+    for (const moonmod::Json &bad : {moonmod::Json{{"count", 2}, {"illusory", 4}}, moonmod::Json{{"count", 2}, {"illusory", 1}, {"open_walls", {7}}}}) {
+        EXPECT_EQ(call("test.a", "dungeons.set_shortcuts", bad).status, moonmod::ApiCallStatus::InvalidArgument) << bad.dump();
+    }
     config.api_owner_unloaded("test.b");
     EXPECT_EQ(DngShortcutDoors, 2);
+    EXPECT_EQ(DngShortcutOpenKeys, 0);
+    EXPECT_EQ(DngIllusoryWalls, 0);
+    EXPECT_EQ(DngIllusoryOpen, 0);
     EXPECT_EQ(call("test.a", "dungeons.set_shortcuts", {{"count", 0}}).value["effective"], 0);
     EXPECT_EQ(DngShortcutDoors, 0);
 
@@ -621,6 +639,83 @@ TEST(MoonModDungeonsApi, SetZonesAsksForAChainOfZones) {
     ASSERT_EQ(call("a", {{"zones", moonmod::Json::array({zone(5), zone(5)})}}).status, moonmod::ApiCallStatus::Ok);
     EXPECT_EQ(DngZoneSanctuary, 0);
     ASSERT_EQ(call("a", moonmod::Json::object()).status, moonmod::ApiCallStatus::Ok);
+
+    // a whole run on one map: 25 zones, each zone quiet, healing or an arena, and no way down to the back side
+    moonmod::Json run = moonmod::Json::array();
+    for (int z = 0; z < 25; ++z) run.push_back(zone(3));
+    run[3]["quiet"] = true;
+    run[3]["arena"] = true;
+    run[4]["quiet"] = true;
+    run[4]["heal"] = true;
+    EXPECT_EQ(call("a", {{"zones", moonmod::Json::array({{{"rooms", 3}, {"arena", 1}}, zone(3)})}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("a", {{"zones", moonmod::Json::array({zone(3), zone(3)})}, {"vaults", "no"}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    const moonmod::ApiCallResult whole = call("a", {{"zones", run}, {"vaults", false}});
+    ASSERT_EQ(whole.status, moonmod::ApiCallStatus::Ok) << whole.message;
+    EXPECT_EQ(DngZoneCount, 25);
+    EXPECT_EQ(DngZoneQuietMask, (1 << 3) | (1 << 4));
+    EXPECT_EQ(DngZoneHealMask, 1 << 4);
+    EXPECT_EQ(DngZoneArenaMask, 1 << 3);
+    EXPECT_EQ(DngZoneVaults, 0);
+    EXPECT_EQ(whole.value.at("arena"), moonmod::Json::array({3}));
+    EXPECT_FALSE(whole.value.at("vaults").get<bool>());
+    ASSERT_EQ(call("a", moonmod::Json::object()).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(DngZoneQuietMask | DngZoneHealMask | DngZoneArenaMask, 0);
+    EXPECT_EQ(DngZoneVaults, 1);
+    moonmod::Json too_many = moonmod::Json::array();
+    for (int z = 0; z <= DNG_ZONE_MAX; ++z) too_many.push_back(zone(2));
+    EXPECT_EQ(call("a", {{"zones", too_many}}).status, moonmod::ApiCallStatus::InvalidArgument);
+}
+
+TEST(MoonModDungeonsApi, AZoneOfAnotherDungeonIsBuiltFromItsParts) {
+    struct Restore {
+        ~Restore() {
+            DngZoneCount = 0;
+            DngZoneFloorCount = 0;
+            std::fill(std::begin(DngZoneSourceDungeon), std::end(DngZoneSourceDungeon), -1);
+            std::fill(std::begin(DngZoneFloorDungeon), std::end(DngZoneFloorDungeon), -1);
+        }
+    } restore;
+    moonmod::RuntimeConfig config;
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *op = moonmod::FindApiOperation("dungeons.set_zones");
+    ASSERT_NE(op, nullptr);
+    const auto call = [&](const moonmod::Json &request) { return config.api_handler("a", *op, moonmod::Json::array({request})); };
+    const auto zone = [](int rooms, int dungeon) {
+        moonmod::Json z = {{"rooms", rooms}};
+        if (dungeon >= 0) z["source_dungeon"] = dungeon;
+        return z;
+    };
+    // a dungeon from 0 to 6
+    EXPECT_EQ(call({{"zones", moonmod::Json::array({zone(4, -1), zone(4, 7)})}}).status, moonmod::ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call({{"zones", moonmod::Json::array({zone(4, -1), {{"rooms", 4}, {"source_dungeon", "forest"}}})}}).status,
+              moonmod::ApiCallStatus::InvalidArgument);
+    const moonmod::ApiCallResult set = call({{"zones", moonmod::Json::array({zone(4, -1), zone(4, 1), zone(4, 2), zone(4, 0)})}});
+    ASSERT_EQ(set.status, moonmod::ApiCallStatus::Ok) << set.message;
+    EXPECT_EQ(set.value.at("source_dungeons"), moonmod::Json::array({-1, 1, 2, 0}));
+    // banks for the other dungeons only: a zone of the floor's own dungeon needs none
+    EXPECT_EQ(DngPartBanksWanted(0), (1 << 1) | (1 << 2));
+    EXPECT_EQ(DngPartBanksWanted(1), (1 << 0) | (1 << 2));
+
+    // With no bank loaded every cell is the map's own part, as before.
+    CDungeonMap &map = MainDungeonMap;
+    const int    saved_seed = map.map_seed;
+    const MAP_CELL saved_cell = map.cells[0];
+    const unsigned char saved_zone = DngZoneOfCell[0];
+    map.cells[0].parts_no = MAP_PARTS_ROOM_FLOOR;
+    DngZoneOfCell[0] = 1;
+    DngZoneFloorCount = 4;
+    DngZoneFloorSeed = map.map_seed;
+    DngZoneFloorDungeon[1] = 1;
+    EXPECT_EQ(DngPartBankCount, 0);
+    EXPECT_EQ(DngCellPart(&map, 0), &map.parts[MAP_PARTS_ROOM_FLOOR]);
+    EXPECT_FALSE(DngZoneDungeonsShown(map.map_seed));
+    map.cells[0] = saved_cell;
+    DngZoneOfCell[0] = saved_zone;
+    map.map_seed = saved_seed;
+
+    ASSERT_EQ(call(moonmod::Json::object()).status, moonmod::ApiCallStatus::Ok);
+    EXPECT_EQ(DngPartBanksWanted(0), 0);
+    EXPECT_EQ(DngZoneSourceDungeon[1], -1);
 }
 
 TEST(MoonModDungeonsApi, NpcModelsMarksAndEventsSayWhatTheyTake) {

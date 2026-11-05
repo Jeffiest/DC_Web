@@ -109,6 +109,9 @@ void RemoveTitleModesByOwner(std::string_view owner);
 const std::vector<TitleMode> &TitleModes();
 const TitleMode *FindTitleMode(std::string_view qualified_or_local, std::string_view owner = {});
 Json TitleModeJson(const TitleMode &mode);
+// A sky as title.mode_set's `sky` takes it, checked whole (ui.sky_open reads its page the same way). `previous` keeps
+// the cursor on the node it was on.
+ApiCallResult ReadTitleSky(const Json &request, const std::optional<TitleSky> &previous, std::optional<TitleSky> &out);
 
 // The mode screen, driven by the title loop.
 enum class TitleModeInput { None, Up, Down, Confirm, Back, Left, Right, Square, L1, R1, Map, L2, R2 };

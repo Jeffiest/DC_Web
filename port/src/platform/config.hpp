@@ -76,6 +76,18 @@ struct Config : HostSettings {
     ConfigGameOptions options;
     bool              fit_dungeon_map = true;    /**< game.fit_dungeon_map: fit the dungeon map to the screen. */
     bool              dungeon_aerial_map = true; /**< game.dungeon_aerial_map: show the aerial dungeon map. */
+    // game.aerial_map: the dungeon map is the live floor seen from above instead of the tiles.
+    bool              aerial_map = true;
+    // World units above the player's feet where the aerial map cuts the ceiling away.
+    float             aerial_map_ceiling = 400.0f;
+    // Aerial map magnification over retail's 16 pixels per cell; 1 shows the whole floor as retail does.
+    float             aerial_map_zoom = 1.0f;
+    // Size of monsters, chests and the player on the aerial map relative to the floor.
+    float             aerial_map_model_scale = 8.0f;
+    // Scale of the native Dungeon Map size choices; 1.4 keeps their standard sizes.
+    float             aerial_map_size = 1.4f;
+    // Coloured dots for distant monsters (red), chests (gold) and atla (blue).
+    bool              aerial_map_markers = false;
     bool              discord_rich_presence = true;
     /**
      * game.language: 0 asks at start-up, as retail does; 2 to 6 is the language to start in

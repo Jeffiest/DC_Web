@@ -1,9 +1,11 @@
 #include "doorway_view.hpp"
+#include "moonmod/messages_moonmod.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/symlinks.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/choice_panel.hpp"
 #include "moonmod/map_screen.hpp"
+#include "moonmod/sky_screen.hpp"
 #include "moonmod/run_menu.hpp"
 #include "game/dungeoneventman.hpp"
 #include "game/mod_atla.hpp"
@@ -14,10 +16,12 @@
 #include "hitmark.hpp"
 #include "itembombeffect.hpp"
 #include "moonmod/companion.hpp"
+#include "moonmod/ghost.hpp"
 #include "moonmod/audio_api.hpp"
 #include "moonmod/combat_formula.hpp"
 #include "moonmod/native_resource_overrides.hpp"
 #include "moonmod/runtime.hpp"
+#include "moonmod/target_hud.hpp"
 #include "moonmod/title_modes.hpp"
 
 #include <algorithm>
@@ -25,6 +29,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <sstream>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -40,6 +45,10 @@
 #include <vector>
 
 #include "itemdata.hpp"
+#include "charm_slots.hpp"
+#include "gear.hpp"
+#include "dodge_run.hpp"
+#include "gauge_rules.hpp"
 #include "item_icon_override.hpp"
 #include "data/data_read.hpp"
 #include "userstatus.hpp"
@@ -73,6 +82,7 @@
 #include "weaponelement.hpp"
 #include "camerafollow.hpp"
 #include "collisiondata.hpp"
+#include "gamepad.hpp"
 #include "motionmodel.hpp"
 #include "weaponeffect.hpp"
 #include "platform/input.hpp"
@@ -97,6 +107,8 @@ namespace moonmod {
 void StartTeleportLight(); // a teleport arrival's light; ChronicleZoneGatesTick plays it
 extern int g_teleport_in;
 int ChronicleNativeMonsterModelId(dc::game::CMonstorUnit *unit, int slot);
+ApiCallResult SetHitFeel(std::string_view owner, const Json &args); // combat.feel_set, below
+ApiCallResult ClearHitFeel(std::string_view owner);
 namespace {
 
 ApiCallResult Invalid(std::string message);
@@ -136,11 +148,26 @@ void RefreshPlayerTuning() {
         combined.swap_delay *= tuning.swap_delay;
         combined.dodge_power = std::max(combined.dodge_power, tuning.dodge_power);
         combined.dodge_invincible_frames = std::max(combined.dodge_invincible_frames, tuning.dodge_invincible_frames);
+        combined.dodge_gauge = std::max(combined.dodge_gauge, tuning.dodge_gauge);
         combined.dodge_hop = combined.dodge_hop || tuning.dodge_hop;
+        combined.dodge_run = std::max(combined.dodge_run, tuning.dodge_run);
+        combined.lightness = combined.lightness || tuning.lightness;
+        for (std::size_t c = 0; c < combined.stamina.size(); ++c) {
+            combined.stamina[c] = std::max(combined.stamina[c], tuning.stamina[c]);
+        }
         combined.extra_shots = std::min(2, combined.extra_shots + tuning.extra_shots);
         combined.shots_pierce = combined.shots_pierce || tuning.shots_pierce;
         combined.reach_scale *= tuning.reach_scale;
         combined.no_first_person = combined.no_first_person || tuning.no_first_person;
+        combined.item_heal_lock = std::max(combined.item_heal_lock, tuning.item_heal_lock);
+        combined.lock_flick = combined.lock_flick || tuning.lock_flick;
+        combined.lock_sight = combined.lock_sight || tuning.lock_sight;
+        combined.lock_camera = combined.lock_camera || tuning.lock_camera;
+        combined.soft_lock = std::max(combined.soft_lock, tuning.soft_lock);
+        combined.input_buffer = std::max(combined.input_buffer, tuning.input_buffer);
+        // The earliest chain point any mod asks for (0, off, counts only when none asks).
+        combined.chain_cancel = combined.chain_cancel == 0 || tuning.chain_cancel == 0 ? std::max(combined.chain_cancel, tuning.chain_cancel)
+                                                                                      : std::min(combined.chain_cancel, tuning.chain_cancel);
     }
     combined.swap_delay = std::clamp(combined.swap_delay, 0.0f, 4.0f);
     // The combination stays inside the range one call may ask for.
@@ -614,6 +641,7 @@ struct ChronicleDebugOverlay {
     std::string text;
     bool render_layer = false;
     bool render_bar = false;
+    bool boss_bar = false;
     std::string label;
     double current = 0.0;
     double maximum = 1.0;
@@ -5097,6 +5125,48 @@ ApiCallResult GetCombat(const Json &args) {
             {}};
 }
 
+// combat.status_add haste: the steps each monster slot's haste has left (counted down as the monster runs).
+std::array<int, MONSTOR_SLOT_MAX> g_monster_haste{};
+constexpr float kHasteScale = 1.4f;
+
+// combat.strike_player: a mod's own attack (a boss's new move, a trap): one native hit in the game's collision list
+// that only the player can be struck by, at {x, y, z} with that reach. The game's own hit test takes it next frame, so
+// a guard, a parry, a dodge's invincibility and poise all work on it, and game.player.hit reports it (no entity).
+// kind: light (a flinch) or heavy (a knock-back; with guard rules on, a guard must be held). The player's defence comes
+// off the damage, as from any hit.
+ApiCallResult StrikePlayer(const Json &args) {
+    const char *usage = "expected {x, y, z, radius = 2..120, damage = 0..9999, kind = optional light|heavy}";
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(usage);
+    const Json &request = args[0];
+    for (auto field = request.begin(); field != request.end(); ++field) {
+        if (field.key() != "x" && field.key() != "y" && field.key() != "z" && field.key() != "radius" && field.key() != "damage" &&
+            field.key() != "kind") {
+            return Invalid("combat.strike_player received an unsupported field: " + field.key());
+        }
+    }
+    float at[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const char *axes[3] = {"x", "y", "z"};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!request.contains(axes[axis]) || !request[axes[axis]].is_number()) return Invalid(usage);
+        at[axis] = request[axes[axis]].get<float>();
+        if (!std::isfinite(at[axis]) || std::fabs(at[axis]) > 100000.0f) return Invalid(usage);
+    }
+    if (!request.contains("radius") || !request["radius"].is_number()) return Invalid(usage);
+    const float radius = request["radius"].get<float>();
+    if (!(radius >= 2.0f && radius <= 120.0f)) return Invalid(usage);
+    int damage = 0;
+    if (!ReadBoundedInt(request, "damage", 0, 9999, damage)) return Invalid(usage);
+    int kind = 2;
+    if (request.contains("kind")) {
+        if (request["kind"] == "heavy") kind = 3;
+        else if (request["kind"] != "light") return Invalid(usage);
+    }
+    if (mode != GAME_MODE_DUNGEON || NowColData == nullptr || CharaMain.frame == nullptr) return Failed("not in a dungeon");
+    const int slot = NowColData->Set(at, damage, 2, radius, 0.0f, 1, kind, 0, 0);
+    if (slot < 0) return Failed("the hit list is full");
+    return {ApiCallStatus::Ok, {{"struck", true}}, {}};
+}
+
 ApiCallResult AddMonsterStatus(const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 3 ||
         !args[0].contains("entity") || !args[0].contains("status") || !args[0].contains("duration_frames") ||
@@ -5112,8 +5182,8 @@ ApiCallResult AddMonsterStatus(const Json &args) {
         return Invalid("entity must be a Chronicle monster handle and duration_frames must be 1..32767");
     }
     const std::string status_name = args[0]["status"].get<std::string>();
-    if (status_name != "slow" && status_name != "stop") {
-        return Invalid("Chronicle enemy status must be 'slow' or 'stop'");
+    if (status_name != "slow" && status_name != "stop" && status_name != "haste") {
+        return Invalid("Chronicle enemy status must be 'slow', 'stop' or 'haste'");
     }
     CDngStatusData *status = CurrentStatus();
     CMonstorUnit *unit = NowMonstorUnit;
@@ -5127,6 +5197,15 @@ ApiCallResult AddMonsterStatus(const Json &args) {
     MONSTOR &monster = unit->monster[slot];
     if (monster.state != 2 || monster.hp <= 0 || monster.revealed == 0) {
         return Failed("the selected entity is not a live, revealed enemy");
+    }
+    if (status_name == "haste") {
+        // Not a native status: the monster's scripted motions and moves play at kHasteScale until it runs out.
+        const int before = g_monster_haste[slot];
+        g_monster_haste[slot] = std::max(before, duration);
+        const int now = g_monster_haste[slot];
+        return {ApiCallStatus::Ok,
+                {{"entity", handle}, {"status", status_name}, {"duration_frames", now}, {"previous_frames", before}, {"changed", now != before}},
+                {}};
     }
     int &timer = status_name == "slow" ? monster.slow_timer : monster.stop_timer;
     const int before = timer;
@@ -5411,6 +5490,7 @@ void RestoreMonsterScalesByOwner(std::string_view owner) {
 void AdvanceMonsterHandleGeneration(int slot) {
     if (slot < 0 || slot >= static_cast<int>(g_monster_handle_generations.size())) return;
     RestoreMonsterScale(slot);
+    MoonModTargetMeterClear(slot); // the meter was the monster's, not the slot's
     if (++g_monster_handle_generations[slot] == 0) ++g_monster_handle_generations[slot];
     g_monster_handle_records[slot] = {};
 }
@@ -6196,6 +6276,475 @@ ApiCallResult GetQuickItemSlots(const Json &args) {
         slots.push_back({{"slot", index + 1}, {"item_no", item_no}, {"id", ItemStableId(item_no)}, {"count", count}});
     }
     return {ApiCallStatus::Ok, std::move(slots), {}};
+}
+
+// items.charm_slots: each character's charm slots (charm_slots.hpp), as {open, characters = {[id] = {{slot, item_no,
+// id, uses}}}} for the slots shown.
+Json CharmSlotsState() {
+    Json characters = Json::object();
+    for (int chara = 0; chara < CharaCount(); ++chara) {
+        Json slots = Json::array();
+        for (int position = 0; position < CharmSlotsShown(chara); ++position) {
+            const int        index = CharmSlotIndex(chara, position);
+            const CharmSlot &slot = CharmSlotAt(chara, index);
+            const char      *kind = index == CHARM_FEATHER_SLOT ? "feather" : "amulet";
+            if (slot.item_no < 0) {
+                slots.push_back({{"slot", position + 1}, {"kind", kind}, {"item_no", nullptr}, {"id", nullptr}, {"uses", 0}});
+            } else {
+                slots.push_back({{"slot", position + 1}, {"kind", kind}, {"item_no", slot.item_no}, {"id", ItemStableId(slot.item_no)},
+                                 {"uses", slot.uses}});
+            }
+        }
+        characters[kCharacterIds[chara]] = std::move(slots);
+    }
+    return {{"open", CharmSlotsOpen()}, {"feather", CharmFeatherOpen()}, {"characters", std::move(characters)}};
+}
+
+ApiCallResult GetCharmSlots(const Json &args) {
+    if (!args.is_array() || !args.empty()) return Invalid("items.charm_slots takes no arguments");
+    return {ApiCallStatus::Ok, CharmSlotsState(), {}};
+}
+
+// items.charm_slots_set: open count amulet slots on the item page, and with feather = true the Feather's slot after
+// them; none is the game's own page.
+ApiCallResult SetCharmSlots(const Json &args) {
+    int count = 0;
+    const bool has_feather = args.is_array() && args.size() == 1 && args[0].is_object() && args[0].contains("feather");
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != (has_feather ? 2u : 1u) ||
+        !ReadBoundedInt(args[0], "count", 0, CHARM_SLOT_MAX, count) || (has_feather && !args[0]["feather"].is_boolean())) {
+        return Invalid("expected {count = 0.." + std::to_string(CHARM_SLOT_MAX) + ", feather = optional boolean}");
+    }
+    SetCharmSlotsOpen(count);
+    SetCharmFeatherOpen(has_feather && args[0]["feather"].get<bool>());
+    return {ApiCallStatus::Ok, CharmSlotsState(), {}};
+}
+
+// items.gear*: the pieces each character wears in their four gear slots (gear.hpp), and the bag of those not worn.
+Json GearEffectsJson(const GearEffects &effects) {
+    Json out = Json::object();
+    Json guard = Json::object();
+    for (int g = 0; g < GEAR_GUARD_COUNT; ++g) {
+        if (effects.guard[g] > 0) guard[GearGuardName(g)] = effects.guard[g];
+    }
+    if (!guard.empty()) out["guard"] = std::move(guard);
+    if (effects.stamina > 0) out["stamina"] = effects.stamina;
+    if (effects.lightness > 0) out["lightness"] = effects.lightness;
+    if (effects.defence > 0) out["defence"] = effects.defence;
+    if (effects.run_cost > 0) out["run_cost"] = effects.run_cost;
+    if (effects.poise > 0) out["poise"] = effects.poise;
+    if (effects.bag > 0) out["bag"] = effects.bag;
+    return out;
+}
+
+Json GearPieceJson(const GearPiece &piece) {
+    Json out = {{"uid", piece.uid},     {"kind", GearKindName(piece.kind)}, {"rarity", piece.rarity},
+                {"name", piece.name},   {"value", piece.value},             {"effects", GearEffectsJson(piece.effects)},
+                {"worn_by", nullptr}};
+    if (!piece.worn_by.empty()) out["worn_by"] = piece.worn_by;
+    out["icon"] = piece.icon.empty() ? Json(nullptr) : Json(piece.icon);
+    out["color"] = {{"r", piece.color >> 16 & 0xFF}, {"g", piece.color >> 8 & 0xFF}, {"b", piece.color & 0xFF}};
+    return out;
+}
+
+// An icon stem, as items.register takes one: icons/<stem>.png, 1-48 bytes with no path or extension.
+bool ReadIconStem(const Json &value, std::string &game_path) {
+    if (!value.is_string() || value.get_ref<const std::string &>().empty() || value.get_ref<const std::string &>().size() > 48 ||
+        value.get_ref<const std::string &>().find_first_of("/\\.") != std::string::npos) {
+        return false;
+    }
+    game_path = "icons/" + value.get<std::string>() + ".png";
+    return true;
+}
+
+// {r, g, b}, each 0 to 255, as 0xRRGGBB.
+bool ReadRgb(const Json &value, u32 &rgb) {
+    if (!value.is_object() || value.size() != 3) return false;
+    int r = 0, g = 0, b = 0;
+    if (!ReadBoundedInt(value, "r", 0, 255, r) || !ReadBoundedInt(value, "g", 0, 255, g) || !ReadBoundedInt(value, "b", 0, 255, b)) {
+        return false;
+    }
+    rgb = static_cast<u32>(r << 16 | g << 8 | b);
+    return true;
+}
+
+// The item bag's size after a pouch goes on or comes off (GearSyncBag).
+void SyncGearBag() {
+    if (CDngStatusData *status = CurrentStatus()) GearSyncBag(status->item_pack);
+}
+
+Json GearState() {
+    Json pieces = Json::array();
+    for (const GearPiece &piece : GearPieces()) pieces.push_back(GearPieceJson(piece));
+    Json worn = Json::object();
+    for (int chara = 0; chara < CharaCount(); ++chara) {
+        Json slots = Json::object();
+        for (int kind = 0; kind < GEAR_KIND_COUNT; ++kind) {
+            const GearPiece *piece = WornGear(chara, kind);
+            slots[GearKindName(kind)] = piece != nullptr ? Json(piece->uid) : Json(nullptr);
+        }
+        worn[kCharacterIds[chara]] = {{"slots", std::move(slots)}, {"effects", GearEffectsJson(GearWornEffects(chara))}};
+    }
+    return {{"pieces", std::move(pieces)}, {"bag", GearBagCount()}, {"bag_max", GEAR_BAG_MAX}, {"worn", std::move(worn)},
+            {"page", GearPageOpen()}, {"bag_slots", GearBagAdded()}};
+}
+
+// "active" (or nothing) is the active character; otherwise a character id.
+bool ReadGearCharacter(const Json &object, int &chara) {
+    const auto found = object.find("character");
+    if (found == object.end() || (found->is_string() && found->get<std::string>() == "active")) {
+        if (UserStatus == nullptr) return false;
+        chara = UserStatus->cur_chara;
+        return chara >= 0 && chara < CharaCount();
+    }
+    if (!found->is_string()) return false;
+    for (int c = 0; c < CharaCount(); ++c) {
+        if (found->get<std::string>() == kCharacterIds[c]) {
+            chara = c;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ReadGearUid(const Json &object, u32 &uid) {
+    const auto found = object.find("uid");
+    if (found == object.end() || !found->is_number_integer() || found->get<std::int64_t>() < 1 ||
+        found->get<std::int64_t>() > 0xFFFFFFFF) {
+        return false;
+    }
+    uid = found->get<u32>();
+    return FindGear(uid) != nullptr;
+}
+
+ApiCallResult GetGear(const Json &args) {
+    if (!args.is_array() || !args.empty()) return Invalid("items.gear takes no arguments");
+    return {ApiCallStatus::Ok, GearState(), {}};
+}
+
+// items.gear_give({kind, name, rarity?, value?, effects?}): a new piece in the bag.
+// A gear piece as items.gear_give takes it (and each of items.gear_stock_set's goods, which may add `price`): false and
+// why when it isn't one.
+bool ReadGearPiece(const Json &spec, GearPiece &piece, std::string &error, std::string_view op, bool priced) {
+    const auto fail = [&error](std::string why) {
+        error = std::move(why);
+        return false;
+    };
+    for (const auto &[key, value] : spec.items()) {
+        if (key != "kind" && key != "name" && key != "rarity" && key != "value" && key != "effects" && key != "icon" &&
+            key != "color" && !(priced && key == "price")) {
+            return fail(std::string(op) + " does not take " + key);
+        }
+    }
+    piece.kind = spec.contains("kind") && spec["kind"].is_string() ? GearKindFromName(spec["kind"].get<std::string>()) : -1;
+    if (piece.kind < 0) return fail("kind must be hat, tunic, gloves, boots or pouch");
+    if (!spec.contains("name") || !spec["name"].is_string() || spec["name"].get<std::string>().empty() ||
+        spec["name"].get<std::string>().size() > GEAR_NAME_MAX) {
+        return fail("name must be 1 to " + std::to_string(GEAR_NAME_MAX) + " bytes");
+    }
+    piece.name = spec["name"].get<std::string>();
+    if (spec.contains("rarity") && !ReadBoundedInt(spec, "rarity", 0, GEAR_RARITY_COUNT - 1, piece.rarity)) {
+        return fail("rarity must be 0 (common) to 4 (legendary)");
+    }
+    if (spec.contains("value") && !ReadBoundedInt(spec, "value", 0, 65535, piece.value)) {
+        return fail("value must be 0 to 65535 gilda");
+    }
+    if (spec.contains("icon") && !ReadIconStem(spec["icon"], piece.icon)) {
+        return fail("icon must be the stem of icons/<stem>.png (1-48 bytes, no path or extension)");
+    }
+    if (spec.contains("color") && !ReadRgb(spec["color"], piece.color)) return fail("color must be {r, g, b}, each 0 to 255");
+    if (spec.contains("effects")) {
+        const Json &effects = spec["effects"];
+        if (!effects.is_object()) return fail("effects must be {guard = {poison = %}, stamina, lightness, defence, run_cost, poise, bag}");
+        struct Field {
+            const char *key;
+            int        *out;
+            int         cap;
+        };
+        const std::array<Field, 6> fields = {{{"stamina", &piece.effects.stamina, GEAR_STAMINA_CAP},
+                                              {"lightness", &piece.effects.lightness, GEAR_LIGHTNESS_CAP},
+                                              {"defence", &piece.effects.defence, GEAR_DEFENCE_CAP},
+                                              {"run_cost", &piece.effects.run_cost, GEAR_RUN_COST_CAP},
+                                              {"poise", &piece.effects.poise, GEAR_POISE_CAP},
+                                              {"bag", &piece.effects.bag, GEAR_BAG_SLOTS_CAP}}};
+        for (const auto &[key, value] : effects.items()) {
+            if (key == "guard") {
+                if (!value.is_object()) return fail("effects.guard must be {freeze, poison, curse, goo = percent}");
+                for (const auto &[ailment, chance] : value.items()) {
+                    const int g = GearGuardFromName(ailment);
+                    if (g < 0) return fail("effects.guard names no ailment: " + ailment + " (freeze, poison, curse, goo)");
+                    if (!ReadBoundedInt(value, ailment.c_str(), 0, GEAR_GUARD_CAP, piece.effects.guard[g])) {
+                        return fail("effects.guard." + ailment + " must be 0 to " + std::to_string(GEAR_GUARD_CAP));
+                    }
+                }
+                continue;
+            }
+            const auto field = std::ranges::find_if(fields, [&key](const Field &f) { return key == f.key; });
+            if (field == fields.end()) return fail("effects does not take " + key);
+            if (!ReadBoundedInt(effects, field->key, 0, field->cap, *field->out)) {
+                return fail("effects." + key + " must be 0 to " + std::to_string(field->cap));
+            }
+        }
+    }
+    return true;
+}
+
+ApiCallResult GiveGear(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) {
+        return Invalid("expected {kind, name, rarity = 0..4, value = gilda, icon = stem, color = {r, g, b}, effects = {guard = {poison = %}, "
+                       "stamina, lightness, defence, run_cost, poise, bag}}");
+    }
+    if (CurrentStatus() == nullptr) return Failed("the game has no active save");
+    GearPiece piece;
+    if (std::string error; !ReadGearPiece(args[0], piece, error, "items.gear_give", false)) return Invalid(error);
+    const u32 uid = AddGear(std::move(piece));
+    if (uid == 0) return Failed("the gear bag is full (" + std::to_string(GEAR_BAG_MAX) + " pieces)");
+    return {ApiCallStatus::Ok, GearPieceJson(*FindGear(uid)), {}};
+}
+
+// items.gear_stock_set({shop, goods}): the gear a shop sells beside its own goods, each a piece as gear_give takes it
+// with a `price` (its value when left out); {shop, goods = {}} takes them away.
+ApiCallResult StockGear(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("shop") || !args[0].contains("goods") ||
+        args[0].size() != 2) {
+        return Invalid("expected {shop = shop number, goods = {{kind, name, rarity, value, icon, color, effects, price?}, ...}}");
+    }
+    int shop = 0;
+    if (!ReadBoundedInt(args[0], "shop", 0, 255, shop)) return Invalid("shop must be a shop's number, 0 to 255");
+    const Json &list = args[0]["goods"];
+    if (!(list.is_array() || (list.is_object() && list.empty())) || list.size() > GEAR_STOCK_MAX) {
+        return Invalid("goods must be a list of at most " + std::to_string(GEAR_STOCK_MAX) + " pieces");
+    }
+    std::vector<GearGood> goods;
+    for (size_t k = 0; k < list.size() && list.is_array(); k++) {
+        if (!list[k].is_object()) return Invalid("goods[" + std::to_string(k + 1) + "] must be a piece");
+        GearGood good;
+        if (std::string error; !ReadGearPiece(list[k], good.piece, error, "items.gear_stock_set", true)) {
+            return Invalid("goods[" + std::to_string(k + 1) + "]: " + error);
+        }
+        good.price = good.piece.value;
+        if (list[k].contains("price") && !ReadBoundedInt(list[k], "price", 0, GEAR_PRICE_MAX, good.price)) {
+            return Invalid("goods[" + std::to_string(k + 1) + "].price must be 0 to " + std::to_string(GEAR_PRICE_MAX) + " gilda");
+        }
+        goods.push_back(std::move(good));
+    }
+    const int count = static_cast<int>(goods.size());
+    SetGearStock(shop, std::move(goods));
+    return {ApiCallStatus::Ok, {{"shop", shop}, {"goods", count}}, {}};
+}
+
+// A list of 1 to 8 frame names of a menu model, each 1 to 31 bytes.
+bool ReadFrameNames(const Json &value, std::vector<std::string> &names) {
+    if (!value.is_array() || value.empty() || value.size() > 8) return false;
+    for (const Json &name : value) {
+        if (!name.is_string() || name.get_ref<const std::string &>().empty() || name.get_ref<const std::string &>().size() > 31) {
+            return false;
+        }
+        names.push_back(name.get<std::string>());
+    }
+    return true;
+}
+
+// parts = {<character id> = {<kind> = {frame names} or {draw = {frame names}, fit = {frame names}, bare = {frame names},
+// below = {frame names}, turn = degrees, tilt = degrees}}}.
+bool ReadGearParts(const Json &value, std::map<std::string, GearCharaParts> &parts, std::string &error) {
+    if (!value.is_object()) {
+        error = "parts must be {<character id> = {hat, tunic, gloves, boots, pouch = frame names}}";
+        return false;
+    }
+    for (const auto &[id, kinds] : value.items()) {
+        if (id.empty() || id.size() > 32 || !kinds.is_object()) {
+            error = "parts." + id + " must be {hat, tunic, gloves, boots, pouch = frame names}";
+            return false;
+        }
+        GearCharaParts &chara = parts[id];
+        for (const auto &[kind_name, entry] : kinds.items()) {
+            const int kind = GearKindFromName(kind_name);
+            const std::string where = "parts." + id + "." + kind_name;
+            if (kind < 0) {
+                error = where + ": the kinds are hat, tunic, gloves, boots and pouch";
+                return false;
+            }
+            GearKindParts &kind_parts = chara[kind];
+            const bool split = entry.is_object();
+            bool       ok = split ? entry.contains("draw") && ReadFrameNames(entry["draw"], kind_parts.draw)
+                                  : ReadFrameNames(entry, kind_parts.draw);
+            static const Json no_fields = Json::object();
+            for (const auto &[key, field] : (split ? entry : no_fields).items()) {
+                if (key == "fit") {
+                    ok = ok && ReadFrameNames(field, kind_parts.fit);
+                } else if (key == "bare") {
+                    ok = ok && ReadFrameNames(field, kind_parts.bare);
+                } else if (key == "below") {
+                    ok = ok && ReadFrameNames(field, kind_parts.below);
+                } else if (key == "turn") {
+                    ok = ok && field.is_number() && field.get<double>() >= -180.0 && field.get<double>() <= 180.0;
+                    kind_parts.turn = ok ? static_cast<float>(field.get<double>() * 3.14159265358979 / 180.0) : 0.0f;
+                } else if (key == "tilt") {
+                    ok = ok && field.is_number() && field.get<double>() >= -90.0 && field.get<double>() <= 90.0;
+                    kind_parts.tilt = ok ? static_cast<float>(field.get<double>() * 3.14159265358979 / 180.0) : 0.0f;
+                } else if (key != "draw") {
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                error = where + " must be 1 to 8 frame names, or {draw = names, fit = names?, bare = names?, below = names?, turn = -180 to 180 degrees?, tilt = -90 to 90 degrees?}";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// items.gear_page_set({icons = {hat, tunic, gloves, boots, pouch?}, parts?}): opens the item board's Equipment tab and the
+// gear slots on the character page, each kind's empty slot showing its icon blacked out; {} closes them. The pouch's slot
+// shows only with its icon named. parts names, for each character, the frames of their menu model that show each kind in
+// its slot in place of the icon.
+// weapons.stat_label_set({attack?, endurance?, speed?, magic?}): each named stat's label on the weapon cards becomes
+// icons/<stem>.png; a stat left out has the game's two letters again, and {} gives them all back.
+// render.target_bar_set({on}): the locked target's wider bar (moonmod/target_hud.hpp) in place of the game's gauge.
+ApiCallResult SetTargetBar(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 1 || !args[0].contains("on") ||
+        !args[0]["on"].is_boolean()) {
+        return Invalid("expected {on = true or false}");
+    }
+    MoonModTargetBarSet(args[0]["on"].get<bool>());
+    return {ApiCallStatus::Ok, {{"on", MoonModTargetBarOn()}}, {}};
+}
+
+// render.target_meter_set({entity, fill = 0..1, color = {r, g, b}?, seconds?}): the meter under that monster's bar while
+// it is the target, gone after seconds without another set (0, the default, keeps it); {entity} alone takes it away.
+ApiCallResult SetTargetMeter(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("entity") || !args[0]["entity"].is_string()) {
+        return Invalid("expected {entity = monster handle, fill = 0..1, color = {r, g, b}?, seconds?}");
+    }
+    const Json &spec = args[0];
+    for (const auto &[key, value] : spec.items()) {
+        if (key != "entity" && key != "fill" && key != "color" && key != "seconds") return Invalid("render.target_meter_set does not take " + key);
+    }
+    int slot = -1;
+    std::uint32_t generation = 0;
+    if (!ReadMonsterHandle(spec["entity"].get<std::string>(), slot, generation) || slot < 0 ||
+        slot >= static_cast<int>(g_monster_handle_generations.size())) {
+        return Invalid("entity must be a monster handle (chronicle:monster:<slot>:<generation>)");
+    }
+    if (spec.contains("fill") && (!spec["fill"].is_number() || spec["fill"].get<double>() < 0.0 || spec["fill"].get<double>() > 1.0)) {
+        return Invalid("fill must be a number from 0 to 1");
+    }
+    u32 rgb = 0xF0C040;
+    if (spec.contains("color") && !ReadRgb(spec["color"], rgb)) return Invalid("color must be {r, g, b}, each 0 to 255");
+    double seconds = 0.0;
+    if (spec.contains("seconds")) {
+        if (!spec["seconds"].is_number() || spec["seconds"].get<double>() < 0.0 || spec["seconds"].get<double>() > 600.0) {
+            return Invalid("seconds must be 0 to 600");
+        }
+        seconds = spec["seconds"].get<double>();
+    }
+    if (generation != g_monster_handle_generations[slot]) return Failed("that monster is gone");
+    if (!spec.contains("fill")) {
+        MoonModTargetMeterClear(slot);
+        return {ApiCallStatus::Ok, {{"entity", spec["entity"]}, {"meter", false}}, {}};
+    }
+    MoonModTargetMeterSet(slot, static_cast<float>(spec["fill"].get<double>()), rgb, static_cast<float>(seconds));
+    return {ApiCallStatus::Ok, {{"entity", spec["entity"]}, {"meter", true}}, {}};
+}
+
+ApiCallResult SetWeaponStatLabels(const Json &args) {
+    static constexpr std::array<std::string_view, WEAPON_STAT_COUNT> names = {"attack", "endurance", "speed", "magic"};
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) {
+        return Invalid("expected {attack?, endurance?, speed?, magic? = icon stem}");
+    }
+    std::array<std::string, WEAPON_STAT_COUNT> paths;
+    for (const auto &[key, value] : args[0].items()) {
+        const auto found = std::ranges::find(names, key);
+        if (found == names.end()) return Invalid("weapons.stat_label_set does not take " + key + " (attack, endurance, speed, magic)");
+        if (!ReadIconStem(value, paths[found - names.begin()])) return Invalid(key + " must be the stem of icons/<stem>.png");
+    }
+    Json set = Json::object();
+    for (int stat = 0; stat < WEAPON_STAT_COUNT; ++stat) {
+        if (!paths[stat].empty()) set[std::string(names[stat])] = paths[stat];
+        SetWeaponStatLabel(stat, std::move(paths[stat]));
+    }
+    return {ApiCallStatus::Ok, {{"labels", std::move(set)}}, {}};
+}
+
+ApiCallResult SetGearPage(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() > 2 ||
+        (!args[0].empty() && !args[0].contains("icons")) || (args[0].size() == 2 && !args[0].contains("parts"))) {
+        return Invalid("expected {icons = {hat, tunic, gloves, boots, pouch? = icon stems}, parts = optional frame names}, or {} to close the page");
+    }
+    if (args[0].empty()) {
+        SetGearPageOpen(false);
+        SetGearParts({});
+        return {ApiCallStatus::Ok, {{"page", false}}, {}};
+    }
+    std::map<std::string, GearCharaParts> parts;
+    if (std::string error; args[0].contains("parts") && !ReadGearParts(args[0]["parts"], parts, error)) return Invalid(error);
+    const Json &icons = args[0]["icons"];
+    std::array<std::string, GEAR_KIND_COUNT> paths;
+    const bool pouch = icons.is_object() && icons.contains(GearKindName(GEAR_POUCH));
+    if (!icons.is_object() || icons.size() != (pouch ? GEAR_KIND_COUNT : GEAR_POUCH)) {
+        return Invalid("icons must name hat, tunic, gloves and boots, and may name pouch");
+    }
+    for (int kind = 0; kind < (pouch ? GEAR_KIND_COUNT : GEAR_POUCH); ++kind) {
+        if (!icons.contains(GearKindName(kind)) || !ReadIconStem(icons[GearKindName(kind)], paths[kind])) {
+            return Invalid(std::string("icons.") + GearKindName(kind) + " must be the stem of icons/<stem>.png");
+        }
+    }
+    for (int kind = 0; kind < GEAR_KIND_COUNT; ++kind) SetGearKindIcon(kind, std::move(paths[kind]));
+    SetGearParts(std::move(parts));
+    SetGearPageOpen(true);
+    return {ApiCallStatus::Ok, {{"page", true}}, {}};
+}
+
+// items.gear_equip({uid, character?}): puts it on, what was in that slot going to the bag.
+ApiCallResult EquipGearPiece(const Json &args) {
+    u32 uid = 0;
+    int chara = -1;
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !ReadGearUid(args[0], uid) ||
+        !ReadGearCharacter(args[0], chara)) {
+        return Invalid("expected {uid = a piece's uid, character = optional id or \"active\"}");
+    }
+    EquipGear(chara, uid);
+    SyncGearBag();
+    return {ApiCallStatus::Ok, GearState(), {}};
+}
+
+// items.gear_unequip({kind, character?}): takes the piece in that slot off into the bag.
+ApiCallResult UnequipGearPiece(const Json &args) {
+    int chara = -1;
+    const int kind = args.is_array() && args.size() == 1 && args[0].is_object() && args[0].contains("kind") &&
+                             args[0]["kind"].is_string()
+                         ? GearKindFromName(args[0]["kind"].get<std::string>())
+                         : -1;
+    if (kind < 0 || !ReadGearCharacter(args[0], chara)) {
+        return Invalid("expected {kind = hat, tunic, gloves, boots or pouch, character = optional id or \"active\"}");
+    }
+    if (WornGear(chara, kind) == nullptr) return Failed("nothing is worn there");
+    if (!UnequipGear(chara, kind)) return Failed("the gear bag is full");
+    SyncGearBag();
+    return {ApiCallStatus::Ok, GearState(), {}};
+}
+
+// items.gear_remove({uid, sell?}): takes the piece away; with sell = true its value goes into the wallet.
+ApiCallResult RemoveGearPiece(const Json &args) {
+    u32 uid = 0;
+    const bool has_sell = args.is_array() && args.size() == 1 && args[0].is_object() && args[0].contains("sell");
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != (has_sell ? 2u : 1u) ||
+        !ReadGearUid(args[0], uid) || (has_sell && !args[0]["sell"].is_boolean())) {
+        return Invalid("expected {uid = a piece's uid, sell = optional boolean}");
+    }
+    const bool sell = has_sell && args[0]["sell"].get<bool>();
+    CDngStatusData *status = CurrentStatus();
+    if (sell && status == nullptr) return Failed("the game has no active save");
+    int money = 0;
+    if (sell) {
+        const int before = status->money;
+        status->money = static_cast<u16>(std::min(before + FindGear(uid)->value, 65535));
+        money = status->money - before;
+    }
+    RemoveGear(uid);
+    SyncGearBag();
+    return {ApiCallStatus::Ok, {{"uid", uid}, {"money", money}}, {}};
 }
 
 ApiCallResult SelectQuickItemSlot(const Json &args) {
@@ -7012,6 +7561,8 @@ ApiCallResult RemoveItems(const Json &args) {
             {}};
 }
 
+bool g_mod_item_use = false;
+
 ApiCallResult UseItem(const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object()) {
         return Invalid("expected {id = Chronicle item id, character = optional 'active' or a joined character id}");
@@ -7080,7 +7631,9 @@ ApiCallResult UseItem(const Json &args) {
     const int hp_before = status->hp[character_id];
     const float water_before = status->water_now[character_id];
     const int ailments_before = status->ailments[character_id];
+    g_mod_item_use = true; // a mod's own use is not the item menu's: item_heal_lock leaves it be
     const int used = ItemUseFunc(status, item_no, character_id, ITEM_USE_ON_CHARA, nullptr);
+    g_mod_item_use = false;
     if (used != 1) return Failed("the native item rules refused this use");
     DeleteItemAfterUseItem(static_cast<short>(item_no), &status->item_pack);
     const int remaining = GetNowItemNum(static_cast<short>(item_no), &status->item_pack);
@@ -7474,6 +8027,7 @@ struct NativeArgs {
     std::array<RS_STACKDATA, 17> stack{};
     std::array<RS_STACKDATA, 16> outs{};
     std::array<int, 16>          out_kind{}; // 0 none, 1 int, 2 float
+    std::array<std::array<char, 32>, 16> texts{}; // frame names (SET_SHOT's 'dcol0')
     int                          count = 0;
 
     std::string Read(const Json &request) {
@@ -7493,6 +8047,17 @@ struct NativeArgs {
             } else if (value.is_boolean()) {
                 stack[i].type = RS_INT;
                 stack[i].i = value.get<bool>() ? 1 : 0;
+            } else if (value.is_string()) {
+                // A model frame's name: letters, digits and _, at most 31.
+                const std::string &text = value.get_ref<const std::string &>();
+                if (text.empty() || text.size() > 31 ||
+                    !std::ranges::all_of(text, [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; })) {
+                    return "a text arg is a frame name: 1-31 letters, digits or _";
+                }
+                std::ranges::copy(text, texts[i].begin());
+                texts[i][text.size()] = '\0';
+                stack[i].type = RS_STR;
+                stack[i].s = texts[i].data();
             } else if (value.is_object() && value.size() == 1 && value.contains("out") && value["out"].is_string() &&
                        (value["out"] == "int" || value["out"] == "float")) {
                 out_kind[i] = value["out"] == "int" ? 1 : 2;
@@ -7500,7 +8065,7 @@ struct NativeArgs {
                 stack[i].type = RS_PTR;
                 stack[i].p = &outs[i];
             } else {
-                return "each arg must be a number, a boolean or {out = \"int\"|\"float\"}";
+                return "each arg must be a number, a boolean, a frame name or {out = \"int\"|\"float\"}";
             }
         }
         count = static_cast<int>(values.size());
@@ -7823,7 +8388,7 @@ ApiCallResult ListMonsterNatives(const Json &args) {
 }
 
 // Runs one native as if the monster's own script had called it. Arguments are numbers (whole
-// numbers go in as ints, others as floats), booleans, or {out = "int"|"float"} for a value the
+// numbers go in as ints, others as floats), booleans, frame names (strings), or {out = "int"|"float"} for a value the
 // native writes back; those come back in order in "out".
 ApiCallResult CallMonsterNative(const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("entity") ||
@@ -7968,6 +8533,15 @@ Json StatusImmuneJson(int mask) {
     return names;
 }
 
+// The characters given their own refill, by id.
+Json StaminaJson(const std::array<float, 16> &stamina) {
+    Json out = Json::object();
+    for (int c = 0; c < CharaCount() && c < static_cast<int>(stamina.size()); ++c) {
+        if (stamina[c] > 0.0f) out[CharaIdName(c)] = stamina[c];
+    }
+    return out;
+}
+
 Json PlayerTuningJson(const ChroniclePlayerTuning &tuning) {
     return {{"run_speed", tuning.run_speed},
             {"attack_anim_speed", tuning.attack_anim_speed},
@@ -7985,11 +8559,22 @@ Json PlayerTuningJson(const ChroniclePlayerTuning &tuning) {
             {"swap_delay", tuning.swap_delay},
             {"dodge_power", tuning.dodge_power},
             {"dodge_invincible_frames", tuning.dodge_invincible_frames},
+            {"dodge_gauge", tuning.dodge_gauge},
             {"dodge_hop", tuning.dodge_hop},
+            {"dodge_run", tuning.dodge_run},
+            {"lightness", tuning.lightness},
+            {"stamina", StaminaJson(tuning.stamina)},
             {"extra_shots", tuning.extra_shots},
             {"shots_pierce", tuning.shots_pierce},
             {"reach_scale", tuning.reach_scale},
-            {"first_person", !tuning.no_first_person}};
+            {"first_person", !tuning.no_first_person},
+            {"item_heal_lock", tuning.item_heal_lock},
+            {"lock_flick", tuning.lock_flick},
+            {"lock_sight", tuning.lock_sight},
+            {"lock_camera", tuning.lock_camera},
+            {"soft_lock", tuning.soft_lock},
+            {"input_buffer", tuning.input_buffer},
+            {"chain_cancel", tuning.chain_cancel}};
 }
 
 // player.tuning_set: one owner-scoped request; fields left out mean retail for that owner.
@@ -7998,8 +8583,12 @@ ApiCallResult SetPlayerTuning(std::string_view owner, const Json &args) {
         return Invalid("expected a tuning object: run_speed, attack_anim_speed, recoil_scale, gauge_refill, thirst_drain, "
                        "durability_wear, status_duration (0.25 to 4), swap_delay (0 to 4), invincible_bonus_frames (0 to 120), "
                        "map_reveal, monster_reveal, map_hidden, map_window, dodge_hop (booleans), status_immune (a list of ailment names), "
-                       "dodge_power (0 or 0.25 to 4), dodge_invincible_frames (0 to 60), extra_shots (0 to 2), shots_pierce (boolean), "
-                       "reach_scale (0.25 to 4), first_person (boolean: false turns off R2's first-person view)");
+                       "dodge_power (0 or 0.25 to 4), dodge_invincible_frames (0 to 60), dodge_gauge (0 to 100), dodge_run (0 to 200), lightness (boolean), "
+                       "stamina ({character id = gauge a second, 0 to 600}), extra_shots (0 to 2), shots_pierce (boolean), "
+                       "reach_scale (0.25 to 4), first_person (boolean: false turns off R2's first-person view), "
+                       "item_heal_lock (0 to 400: no HP-healing items within that distance of an enemy), lock_flick, lock_sight, lock_camera "
+                       "(booleans), soft_lock (0 to 90 degrees), input_buffer (0 to 20 steps a refused roll or R2 is kept), "
+                       "chain_cancel (0 to 30 steps after an attack's last blow when R2 or attack cuts into the next)");
     }
     const Json &definition = args[0];
     ChroniclePlayerTuning tuning;
@@ -8047,12 +8636,81 @@ ApiCallResult SetPlayerTuning(std::string_view owner, const Json &args) {
             tuning.dodge_power = power;
             continue;
         }
+        if (key == "dodge_run") {
+            const float drain = value.is_number() ? value.get<float>() : -1.0f;
+            if (!std::isfinite(drain) || drain < 0.0f || drain > 200.0f) {
+                return Invalid("dodge_run must be a number from 0 to 200 (gauge a second; 0 = no run)");
+            }
+            tuning.dodge_run = drain;
+            continue;
+        }
+        if (key == "lightness") {
+            if (!value.is_boolean()) return Invalid("lightness must be a boolean");
+            tuning.lightness = value.get<bool>();
+            continue;
+        }
+        if (key == "stamina") {
+            if (!value.is_object()) return Invalid("stamina must be {character id = gauge a second, 0 to 600}");
+            for (auto entry = value.begin(); entry != value.end(); ++entry) {
+                int chara = -1;
+                for (int c = 0; c < CharaCount() && c < static_cast<int>(tuning.stamina.size()); ++c) {
+                    if (entry.key() == CharaIdName(c)) chara = c;
+                }
+                if (chara < 0) return Invalid("stamina names an unknown character: " + entry.key());
+                const float rate = entry.value().is_number() ? entry.value().get<float>() : -1.0f;
+                if (!std::isfinite(rate) || rate < 0.0f || rate > 600.0f) {
+                    return Invalid("stamina." + entry.key() + " must be a number from 0 to 600 (gauge a second; 0 = the game's)");
+                }
+                tuning.stamina[chara] = rate;
+            }
+            continue;
+        }
+        if (key == "dodge_gauge") {
+            int gauge = 0;
+            if (!ReadBoundedInt(definition, "dodge_gauge", 0, 100, gauge)) return Invalid("dodge_gauge must be an integer from 0 to 100");
+            tuning.dodge_gauge = gauge;
+            continue;
+        }
         if (key == "dodge_invincible_frames") {
             int frames = 0;
             if (!ReadBoundedInt(definition, "dodge_invincible_frames", 0, 60, frames)) {
                 return Invalid("dodge_invincible_frames must be an integer from 0 to 60");
             }
             tuning.dodge_invincible_frames = frames;
+            continue;
+        }
+        if (key == "lock_camera") {
+            if (!value.is_boolean()) return Invalid("lock_camera must be a boolean");
+            tuning.lock_camera = value.get<bool>();
+            continue;
+        }
+        if (key == "lock_flick" || key == "lock_sight") {
+            if (!value.is_boolean()) return Invalid(key + " must be a boolean");
+            (key == "lock_flick" ? tuning.lock_flick : tuning.lock_sight) = value.get<bool>();
+            continue;
+        }
+        if (key == "chain_cancel") {
+            int steps = 0;
+            if (!ReadBoundedInt(definition, "chain_cancel", 0, 30, steps)) return Invalid("chain_cancel must be an integer from 0 to 30 steps");
+            tuning.chain_cancel = steps;
+            continue;
+        }
+        if (key == "input_buffer") {
+            int frames = 0;
+            if (!ReadBoundedInt(definition, "input_buffer", 0, 20, frames)) return Invalid("input_buffer must be an integer from 0 to 20 steps");
+            tuning.input_buffer = frames;
+            continue;
+        }
+        if (key == "soft_lock") {
+            int degrees = 0;
+            if (!ReadBoundedInt(definition, "soft_lock", 0, 90, degrees)) return Invalid("soft_lock must be an integer from 0 to 90 degrees");
+            tuning.soft_lock = degrees;
+            continue;
+        }
+        if (key == "item_heal_lock") {
+            int distance = 0;
+            if (!ReadBoundedInt(definition, "item_heal_lock", 0, 400, distance)) return Invalid("item_heal_lock must be an integer from 0 to 400");
+            tuning.item_heal_lock = distance;
             continue;
         }
         if (key == "extra_shots") {
@@ -8128,7 +8786,8 @@ ApiCallResult SetCompanion(std::string_view owner, const Json &args) {
     }
     const Json &request = args[0];
     for (auto field = request.begin(); field != request.end(); ++field) {
-        if (field.key() != "character" && field.key() != "stance" && field.key() != "damage_scale" && field.key() != "shot") {
+        if (field.key() != "character" && field.key() != "stance" && field.key() != "damage_scale" && field.key() != "shot" &&
+            field.key() != "hostile") {
             return Invalid("party.companion_set received an unsupported field: " + field.key());
         }
     }
@@ -8173,6 +8832,27 @@ ApiCallResult SetCompanion(std::string_view owner, const Json &args) {
         const int slot = UserStatus->equipped_weapon_slot[character];
         if (slot >= 0 && slot < 11) weapon = UserStatus->chara_weapons[character][slot].item_no;
     }
+    // hostile: an invader. {hp = 1..9999, damage = 1..999, defense = optional 0..999, tint = optional {r, g, b}}
+    int   hostile_hp = 0, hostile_damage = 10, hostile_defense = 0;
+    float tint[3] = {-1.0f, -1.0f, -1.0f};
+    if (request.contains("hostile") && !request["hostile"].is_null()) {
+        const Json &hostile = request["hostile"];
+        const char *shape = "hostile is {hp = 1..9999, damage = 1..999, defense = optional 0..999, tint = optional {r, g, b}}";
+        if (!hostile.is_object() || !ReadBoundedInt(hostile, "hp", 1, 9999, hostile_hp) ||
+            !ReadBoundedInt(hostile, "damage", 1, 999, hostile_damage)) {
+            return Invalid(shape);
+        }
+        if (hostile.contains("defense") && !ReadBoundedInt(hostile, "defense", 0, 999, hostile_defense)) return Invalid(shape);
+        if (hostile.contains("tint")) {
+            u32 rgb = 0;
+            if (!ReadRgb(hostile["tint"], rgb)) return Invalid(shape);
+            tint[0] = static_cast<float>((rgb >> 16) & 0xFF) / 2.0f; // the ambient runs 0..128
+            tint[1] = static_cast<float>((rgb >> 8) & 0xFF) / 2.0f;
+            tint[2] = static_cast<float>(rgb & 0xFF) / 2.0f;
+        }
+        if (character < 0) return Invalid("a hostile companion needs a character");
+    }
+    dc::game::MoonModCompanionHostile(character >= 0 ? hostile_hp : 0, hostile_damage, hostile_defense, tint);
     dc::game::MoonModCompanionRequest(character, weapon, stance, scale, shot_cell, shot_size);
     g_companion_owner = character >= 0 ? std::string(owner) : std::string();
     return {ApiCallStatus::Ok,
@@ -8219,22 +8899,70 @@ ApiCallResult SetBuiltinItemIcon(std::string_view owner, const Json &args) {
 
 // dungeons.set_shortcuts: shortcut doors per floor, by owner (the most any owner asks for is used).
 std::map<std::string, int, std::less<>> g_shortcut_requests;
+std::map<std::string, int, std::less<>> g_shortcut_open; // owner -> the open keys' bits
+std::map<std::string, std::pair<int, int>, std::less<>> g_illusory_requests; // owner -> (walls, open walls' bits)
 void RefreshShortcutRequests() {
     int most = 0;
     for (const auto &[owner, count] : g_shortcut_requests) most = std::max(most, count);
     DngShortcutDoors = most;
+    int open = 0;
+    for (const auto &[owner, keys] : g_shortcut_open) open |= keys;
+    DngShortcutOpenKeys = open;
+    int walls = 0, open_walls = 0;
+    for (const auto &[owner, request] : g_illusory_requests) {
+        walls = std::max(walls, request.first);
+        open_walls |= request.second;
+    }
+    DngIllusoryWalls = walls;
+    DngIllusoryOpen = open_walls;
 }
 ApiCallResult SetShortcutDoors(std::string_view owner, const Json &args) {
-    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid("expected {count = 0..7}");
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid("expected {count = 0..7, open?}");
     for (auto field = args[0].begin(); field != args[0].end(); ++field) {
-        if (field.key() != "count") return Invalid("dungeons.set_shortcuts received an unsupported field: " + field.key());
+        if (field.key() != "count" && field.key() != "open" && field.key() != "illusory" && field.key() != "open_walls") {
+            return Invalid("dungeons.set_shortcuts received an unsupported field: " + field.key());
+        }
     }
     int count = 0;
     if (!ReadBoundedInt(args[0], "count", 0, DNG_SHORTCUT_MAX, count)) return Invalid("count must be an integer from 0 to 7");
-    if (count == 0) g_shortcut_requests.erase(std::string(owner));
-    else g_shortcut_requests[std::string(owner)] = count;
+    // open: the key items (216-222) of doors a floor built again from its seed builds open, as zone gates' open does.
+    int open = 0;
+    if (args[0].contains("open")) {
+        const Json &keys = args[0]["open"];
+        if (!keys.is_array() || keys.size() > DNG_SHORTCUT_MAX) return Invalid("open must be a list of up to 7 key items (216-222)");
+        for (const Json &key : keys) {
+            if (!key.is_number_integer() || key.get<int>() < ITEM_BONE_KEY || key.get<int>() >= ITEM_BONE_KEY + DNG_SHORTCUT_MAX) {
+                return Invalid("open must be a list of up to 7 key items (216-222)");
+            }
+            open |= 1 << (key.get<int>() - ITEM_BONE_KEY);
+        }
+    }
+    // illusory: up to 3 more doorways drawn as plain wall, opened by a blow; open_walls: their numbers (0-6) built open.
+    int illusory = 0, open_walls = 0;
+    if (args[0].contains("illusory") && !ReadBoundedInt(args[0], "illusory", 0, 3, illusory)) {
+        return Invalid("illusory must be an integer from 0 to 3");
+    }
+    if (args[0].contains("open_walls")) {
+        const Json &walls = args[0]["open_walls"];
+        if (!walls.is_array() || walls.size() > DNG_SHORTCUT_MAX) return Invalid("open_walls must be a list of up to 7 wall numbers (0-6)");
+        for (const Json &wall : walls) {
+            if (!wall.is_number_integer() || wall.get<int>() < 0 || wall.get<int>() >= DNG_SHORTCUT_MAX) {
+                return Invalid("open_walls must be a list of up to 7 wall numbers (0-6)");
+            }
+            open_walls |= 1 << wall.get<int>();
+        }
+    }
+    if (count == 0) {
+        g_shortcut_requests.erase(std::string(owner));
+        g_shortcut_open.erase(std::string(owner));
+    } else {
+        g_shortcut_requests[std::string(owner)] = count;
+        g_shortcut_open[std::string(owner)] = open;
+    }
+    if (illusory == 0) g_illusory_requests.erase(std::string(owner));
+    else g_illusory_requests[std::string(owner)] = {illusory, open_walls};
     RefreshShortcutRequests();
-    return {ApiCallStatus::Ok, {{"count", count}, {"effective", DngShortcutDoors}}, {}};
+    return {ApiCallStatus::Ok, {{"count", count}, {"effective", DngShortcutDoors}, {"illusory", DngIllusoryWalls}}, {}};
 }
 
 // ui.choice_open: a choice panel that pauses the dungeon until the player picks (moonmod/choice_panel.hpp).
@@ -8265,8 +8993,8 @@ ApiCallResult OpenChoicePanel(std::string_view owner, const Json &args) {
         if (!request["cancel"].is_boolean()) return Invalid("cancel must be a boolean");
         choice.cancel = request["cancel"].get<bool>();
     }
-    if (!request.contains("options") || !request["options"].is_array() || request["options"].empty() || request["options"].size() > 4) {
-        return Invalid("options must list 1-4 options");
+    if (!request.contains("options") || !request["options"].is_array() || request["options"].empty() || request["options"].size() > 6) {
+        return Invalid("options must list 1-6 options");
     }
     for (const Json &entry : request["options"]) {
         if (!entry.is_object()) return Invalid("each option must be {title, subtitle?, lines?}");
@@ -8410,6 +9138,42 @@ ApiCallResult SetWaypoint(const Json &args) {
     DngWaypointY = y;
     DngWaypointSeed = MainDungeonMap.map_seed;
     return {ApiCallStatus::Ok, {{"waypoint", true}, {"x", x}, {"y", y}}, {}};
+}
+
+// ui.sky_open: a node sky over the paused dungeon (moonmod/sky_screen.hpp), read as title.mode_set reads its sky.
+ApiCallResult OpenSkyScreen(std::string_view owner, const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid("expected {id, title, hint?, sky}");
+    const Json &request = args[0];
+    for (auto field = request.begin(); field != request.end(); ++field) {
+        const std::string &key = field.key();
+        if (key != "id" && key != "title" && key != "hint" && key != "sky") return Invalid("ui.sky_open received an unsupported field: " + key);
+    }
+    if (!request.contains("id") || !request["id"].is_string() || request["id"].get<std::string>().empty() ||
+        request["id"].get<std::string>().size() > 64) {
+        return Invalid("id must be 1-64 bytes");
+    }
+    if (!request.contains("title") || !request["title"].is_string() || request["title"].get<std::string>().empty() ||
+        request["title"].get<std::string>().size() > 32) {
+        return Invalid("title must be 1-32 bytes");
+    }
+    if (request.contains("hint") && (!request["hint"].is_string() || request["hint"].get<std::string>().size() > 160)) {
+        return Invalid("hint must be at most 160 bytes");
+    }
+    if (!request.contains("sky")) return Invalid("expected a sky");
+    if (mode != GAME_MODE_DUNGEON) return Failed("a sky page opens during dungeon play");
+    moonmod::TitleMode page;
+    page.owner = std::string(owner);
+    page.local_id = request["id"].get<std::string>();
+    page.id = page.owner + ":" + page.local_id;
+    page.title = request["title"].get<std::string>();
+    if (request.contains("hint")) page.hint = request["hint"].get<std::string>();
+    const moonmod::TitleMode *open = dc::game::MoonModSkyPage();
+    std::optional<moonmod::TitleSky> previous;
+    if (open != nullptr && open->owner == owner && open->local_id == page.local_id) previous = open->sky;
+    if (ApiCallResult read = moonmod::ReadTitleSky(request["sky"], previous, page.sky); read.status != ApiCallStatus::Ok) return read;
+    const std::size_t nodes = page.sky ? page.sky->nodes.size() : 0;
+    if (!dc::game::MoonModSkyOpen(std::move(page))) return Failed("another mod's sky page is open");
+    return {ApiCallStatus::Ok, {{"id", request["id"]}, {"nodes", nodes}}, {}};
 }
 
 // ui.map_open: the map screen (moonmod/map_screen.hpp), of the floor the player is on or of one the mod kept.
@@ -9667,6 +10431,23 @@ struct PlayerMove {
     int cancel_after = 2;
     std::vector<MoveHit> hits;
     std::vector<MoveCue> cues;
+    // critical (trigger 9): 1 a backstab (the attack button behind an enemy, within `critical_arc` degrees of its
+    // back), 2 a riposte (on the enemy player.critical_set armed). He is drawn in to `critical_gap` of a target within
+    // `critical_reach`, facing it; the target is turned (to him for a riposte, away for a backstab), plays its pair's
+    // motion and is held `critical_hold` steps (0: the length of that motion).
+    int critical = 0;
+    // art (trigger 11): R2 while guarding, with one of `weapons` (native item numbers; empty: any) equipped at
+    // `min_level` or higher. The first of the character's arts that fits plays.
+    std::vector<int> weapons;
+    int min_level = 1;
+    float critical_reach = 24.0f, critical_gap = 12.0f, critical_arc = 90.0f;
+    int critical_hold = 0;
+    struct CriticalPair {
+        int model = 0;
+        std::string owner, id; // the monster motion (animations.monster_register)
+        float speed = 0.5f;
+    };
+    std::vector<CriticalPair> pairs;
 };
 std::vector<PlayerMove> g_player_moves;
 
@@ -9703,7 +10484,7 @@ std::string ReadMove(const Json &entry, PlayerMove &move) {
     if (!entry.is_object()) return "each move is a table";
     static const char *const kFields[] = {"id", "character", "trigger", "run_frames", "min_charge", "max_charge", "motion", "from", "to",
                                           "speed", "lunge", "lunge_decay", "lunge_angle", "spin", "spin_from", "spin_to", "invincible", "gauge", "wear", "cooldown", "hits", "cues", "animation", "cancel", "cancel_after",
-                                          "chain", "direction", "variants", "blend_in", "camera"};
+                                          "chain", "direction", "variants", "blend_in", "camera", "critical", "reach", "gap", "arc", "hold", "pairs", "weapons", "min_level"};
     for (auto field = entry.begin(); field != entry.end(); ++field) {
         if (std::find_if(std::begin(kFields), std::end(kFields), [&](const char *k) { return field.key() == k; }) == std::end(kFields)) {
             return "a move received an unsupported field: " + field.key();
@@ -9725,8 +10506,11 @@ std::string ReadMove(const Json &entry, PlayerMove &move) {
     else if (trigger == "combo_finisher") move.trigger = 6;
     else if (trigger == "lock_attack") move.trigger = 7;
     else if (trigger == "evade_attack") move.trigger = 8;
+    else if (trigger == "critical") move.trigger = 9;
+    else if (trigger == "played") move.trigger = 10; // no button: only player.move_play starts it
+    else if (trigger == "art") move.trigger = 11;
     else {
-        return move.id + ": trigger is run_attack, guard_attack, dodge, dodge_back, heavy, combo_finisher, lock_attack, evade_attack, or charge_release (Toan)";
+        return move.id + ": trigger is run_attack, guard_attack, dodge, dodge_back, heavy, combo_finisher, lock_attack, evade_attack, critical, played, art, or charge_release (Toan)";
     }
     if (move.trigger == 6) {
         if (!entry.contains("chain") || !entry["chain"].is_number_integer() || entry["chain"].get<int>() < 1 || entry["chain"].get<int>() > 6) {
@@ -9751,6 +10535,59 @@ std::string ReadMove(const Json &entry, PlayerMove &move) {
         else return move.id + ": a dodge's direction is any, toward, away, left or right (the stick, from the target, locked on)";
     } else if (entry.contains("direction")) {
         return move.id + ": direction is for a lock_attack or a dodge";
+    }
+    if (move.trigger == 9) {
+        const std::string critical = entry.value("critical", std::string());
+        if (critical == "backstab") move.critical = 1;
+        else if (critical == "riposte") move.critical = 2;
+        else return move.id + ": a critical is a backstab (behind an enemy) or a riposte (on the enemy player.critical_set armed)";
+        float hold = 0.0f;
+        if (!MoveNumber(entry, "reach", 4, 60, move.critical_reach) || !MoveNumber(entry, "gap", 2, 40, move.critical_gap) ||
+            !MoveNumber(entry, "arc", 20, 180, move.critical_arc) || !MoveNumber(entry, "hold", 0, 600, hold)) {
+            return move.id + ": a critical has reach 4..60, gap 2..40, arc 20..180 degrees and hold 0..600 steps";
+        }
+        move.critical_hold = static_cast<int>(hold);
+        if (entry.contains("pairs") && !(entry["pairs"].is_object() && entry["pairs"].empty())) {
+            if (!entry["pairs"].is_array() || entry["pairs"].size() > 32) return move.id + ": pairs is up to 32 {model, animation, speed?}";
+            for (const Json &p : entry["pairs"]) {
+                PlayerMove::CriticalPair pair;
+                if (!p.is_object() || !p.contains("model") || !p["model"].is_number_integer() || p["model"].get<int>() < 0 ||
+                    p["model"].get<int>() > 255 || !p.contains("animation") || !p["animation"].is_string() ||
+                    p["animation"].get<std::string>().empty() || p["animation"].get<std::string>().size() > 104) {
+                    return move.id + ": a pair is {model = a native model id, animation = a monster motion (animations.monster_register), speed?}";
+                }
+                for (auto field = p.begin(); field != p.end(); ++field) {
+                    if (field.key() != "model" && field.key() != "animation" && field.key() != "speed") return move.id + ": a pair received an unsupported field: " + field.key();
+                }
+                pair.model = p["model"].get<int>();
+                const std::string animation = p["animation"].get<std::string>();
+                const std::size_t colon = animation.find(':');
+                pair.owner = colon == std::string::npos ? move.owner : animation.substr(0, colon);
+                pair.id = colon == std::string::npos ? animation : animation.substr(colon + 1);
+                if (!MoveNumber(p, "speed", 0.05f, 4, pair.speed)) return move.id + ": a pair's speed is 0.05..4";
+                move.pairs.push_back(std::move(pair));
+            }
+        }
+    } else {
+        for (const char *key : {"critical", "reach", "gap", "arc", "hold", "pairs"}) {
+            if (entry.contains(key)) return move.id + ": critical, reach, gap, arc, hold and pairs are for a critical";
+        }
+    }
+    if (move.trigger == 11) {
+        if (entry.contains("weapons") && !(entry["weapons"].is_object() && entry["weapons"].empty())) {
+            if (!entry["weapons"].is_array() || entry["weapons"].size() > 64) return move.id + ": weapons is up to 64 native weapon item numbers";
+            for (const Json &w : entry["weapons"]) {
+                if (!w.is_number_integer() || w.get<int>() < ITEM_WEAPON_SLOT_EMPTY || w.get<int>() > 511) {
+                    return move.id + ": weapons is up to 64 native weapon item numbers (257 and up)";
+                }
+                move.weapons.push_back(w.get<int>());
+            }
+        }
+        float level = 1.0f;
+        if (!MoveNumber(entry, "min_level", 1, 99, level)) return move.id + ": min_level is 1..99";
+        move.min_level = static_cast<int>(level);
+    } else if (entry.contains("weapons") || entry.contains("min_level")) {
+        return move.id + ": weapons and min_level are for an art";
     }
     float blend_in = 0.0f;
     if (!MoveNumber(entry, "blend_in", 1, 30, blend_in)) return move.id + ": blend_in is 1..30 frames";
@@ -9924,8 +10761,8 @@ ApiCallResult SetPlayerMoves(std::string_view owner, const Json &args) {
         move.owner = std::string(owner);
         if (const std::string error = ReadMove(entry, move); !error.empty()) return Invalid(error);
         for (const PlayerMove &other : g_player_moves) {
-            if (other.owner != owner && other.chara == move.chara && other.trigger == move.trigger && other.chain == move.chain &&
-                other.direction == move.direction) {
+            if (move.trigger != 10 && move.trigger != 11 && other.owner != owner && other.chara == move.chara && other.trigger == move.trigger && other.chain == move.chain &&
+                other.direction == move.direction && other.critical == move.critical) {
                 return Failed(move.id + ": another mod already gives this character a move on that trigger");
             }
         }
@@ -10078,25 +10915,34 @@ ApiCallResult SetWardenRoom(std::string_view owner, const Json &args) {
 // (moonmod/dungeonmap_layout.hpp). One mod at a time; {} or unloading it turns zones off.
 std::string g_zones_owner;
 Json ZonesRequestJson() {
-    Json rooms = Json::array(), open = Json::array(), sources = Json::array();
+    Json rooms = Json::array(), open = Json::array(), sources = Json::array(), dungeons = Json::array();
     for (int z = 0; z < DngZoneCount; ++z) {
         rooms.push_back(DngZoneRooms[z]);
         sources.push_back(DngZoneSourceFloor[z]);
+        dungeons.push_back(DngZoneSourceDungeon[z]);
         if (z > 0 && (DngZoneOpenMask & (1 << z)) != 0) open.push_back(z);
+    }
+    Json quiet = Json::array(), heal = Json::array(), arena = Json::array();
+    for (int z = 0; z < DngZoneCount; ++z) {
+        if ((DngZoneQuietMask & (1 << z)) != 0) quiet.push_back(z);
+        if ((DngZoneHealMask & (1 << z)) != 0) heal.push_back(z);
+        if ((DngZoneArenaMask & (1 << z)) != 0) arena.push_back(z);
     }
     Json smoke = Json::array();
     for (int z = 1; z < DngZoneCount; ++z) {
         if ((DngZoneSmokeMask & (1 << z)) != 0) smoke.push_back(z);
     }
-    return {{"zones", DngZoneCount}, {"rooms", rooms}, {"open", open}, {"shrines", DngZoneShrines != 0}, {"source_floors", sources},
+    return {{"zones", DngZoneCount}, {"rooms", rooms}, {"open", open}, {"shrines", DngZoneShrines != 0}, {"source_floors", sources}, {"source_dungeons", dungeons},
             {"exit_floor", DngZoneExitFloor}, {"smoke", smoke}, {"shrine_heal", DngZoneShrineHeal != 0},
-            {"sanctuary", DngZoneSanctuary != 0}};
+            {"sanctuary", DngZoneSanctuary != 0}, {"descent", DngZoneDescent}, {"quiet", quiet}, {"heal", heal}, {"arena", arena}, {"vaults", DngZoneVaults != 0}};
 }
 ApiCallResult SetZones(std::string_view owner, const Json &args) {
     const std::string usage = "expected {zones = {{rooms = 5}, {rooms = 5}}, open = {1}} with 2-" + std::to_string(DNG_ZONE_MAX) +
                               " zones of 2-12 rooms (open: gates already opened, 1 = the gate into the second zone; shrines = true: "
                               "a spring in each zone's shrine room; shrine_heal = false: those springs refill water only; sanctuary = true: "
-                              "no monster steps near a shrine; smoke: gates that are smoke, opened by no key), or {}";
+                              "no monster steps near a shrine; smoke: gates that are smoke, opened by no key; descent: units each zone lies below "
+                              "the one before, a ramp down outside each gate; per zone, quiet = true: none of the floor's monsters, "
+                              "heal = true: its spring heals, arena = true: 6x6 rooms; vaults = false: no way down to the back side), or {}";
     if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(usage);
     if (!g_zones_owner.empty() && g_zones_owner != owner) return Failed("another mod already lays floors out in zones");
     const Json &request = args[0];
@@ -10108,19 +10954,29 @@ ApiCallResult SetZones(std::string_view owner, const Json &args) {
         DngZoneShrineHeal = 1;
         DngZoneSanctuary = 0;
         DngZoneSmokeMask = 0;
+        DngZoneDescent = 0;
         DngZoneExitFloor = -1;
+        DngZoneQuietMask = DngZoneHealMask = DngZoneArenaMask = 0;
+        DngZoneVaults = 1;
         std::fill(std::begin(DngZoneSourceFloor), std::end(DngZoneSourceFloor), -1);
+        std::fill(std::begin(DngZoneSourceDungeon), std::end(DngZoneSourceDungeon), -1);
         return {ApiCallStatus::Ok, ZonesRequestJson(), {}};
     }
     for (auto field = request.begin(); field != request.end(); ++field) {
         if (field.key() != "zones" && field.key() != "open" && field.key() != "shrines" && field.key() != "exit_floor" &&
-            field.key() != "smoke" && field.key() != "shrine_heal" && field.key() != "sanctuary") {
+            field.key() != "smoke" && field.key() != "shrine_heal" && field.key() != "sanctuary" && field.key() != "descent" &&
+            field.key() != "vaults") {
             return Invalid("dungeons.set_zones received an unsupported field: " + field.key());
         }
     }
     if (request.contains("shrines") && !request["shrines"].is_boolean()) return Invalid("shrines is true or false");
     if (request.contains("shrine_heal") && !request["shrine_heal"].is_boolean()) return Invalid("shrine_heal is true or false");
     if (request.contains("sanctuary") && !request["sanctuary"].is_boolean()) return Invalid("sanctuary is true or false");
+    if (request.contains("vaults") && !request["vaults"].is_boolean()) return Invalid("vaults is true or false");
+    int descent = 0;
+    if (request.contains("descent") && !ReadBoundedInt(request, "descent", 0, 120, descent)) {
+        return Invalid("descent is how far (0-120 units) each zone lies below the one before; 0 keeps the floor level");
+    }
     int exit_floor = -1;
     if (request.contains("exit_floor") && !ReadBoundedInt(request, "exit_floor", 0, 99, exit_floor)) {
         return Invalid("exit_floor is the floor (from 0) the exit gate leads to");
@@ -10130,17 +10986,31 @@ ApiCallResult SetZones(std::string_view owner, const Json &args) {
     }
     int rooms[DNG_ZONE_MAX] = {};
     int sources[DNG_ZONE_MAX];
+    int source_dungeons[DNG_ZONE_MAX];
     std::fill(std::begin(sources), std::end(sources), -1);
-    int total = 0;
+    std::fill(std::begin(source_dungeons), std::end(source_dungeons), -1);
+    int total = 0, quiet = 0, heal = 0, arena = 0;
     const int count = static_cast<int>(request["zones"].size());
     for (int z = 0; z < count; ++z) {
         const Json &zone = request["zones"][z];
         if (!zone.is_object() || !ReadBoundedInt(zone, "rooms", 2, 12, rooms[z])) return Invalid(usage);
         for (auto field = zone.begin(); field != zone.end(); ++field) {
-            if (field.key() != "rooms" && field.key() != "source_floor") return Invalid("a zone takes rooms and source_floor, not " + field.key());
+            if (field.key() != "rooms" && field.key() != "source_floor" && field.key() != "source_dungeon" && field.key() != "quiet" &&
+                field.key() != "heal" && field.key() != "arena") {
+                return Invalid("a zone takes rooms, source_floor, source_dungeon, quiet, heal and arena, not " + field.key());
+            }
         }
+        for (const char *flag : {"quiet", "heal", "arena"}) {
+            if (zone.contains(flag) && !zone[flag].is_boolean()) return Invalid(std::string(flag) + " is true or false");
+        }
+        if (zone.value("quiet", false)) quiet |= 1 << z;
+        if (zone.value("heal", false)) heal |= 1 << z;
+        if (zone.value("arena", false)) arena |= 1 << z;
         if (zone.contains("source_floor") && !ReadBoundedInt(zone, "source_floor", 0, 99, sources[z])) {
             return Invalid("source_floor is a floor of the dungeon (from 0) whose monsters, atla and chest items the zone takes");
+        }
+        if (zone.contains("source_dungeon") && !ReadBoundedInt(zone, "source_dungeon", 0, 6, source_dungeons[z])) {
+            return Invalid("source_dungeon is a dungeon (0-6) whose rooms, corridors and monsters the zone is built from");
         }
         total += rooms[z];
     }
@@ -10168,12 +11038,18 @@ ApiCallResult SetZones(std::string_view owner, const Json &args) {
     for (int z = 0; z < DNG_ZONE_MAX; ++z) {
         DngZoneRooms[z] = z < count ? rooms[z] : 0;
         DngZoneSourceFloor[z] = z < count ? sources[z] : -1;
+        DngZoneSourceDungeon[z] = z < count ? source_dungeons[z] : -1;
     }
     DngZoneOpenMask = open;
+    DngZoneQuietMask = quiet;
+    DngZoneHealMask = heal;
+    DngZoneArenaMask = arena;
+    DngZoneVaults = request.value("vaults", true) ? 1 : 0;
     DngZoneShrines = request.value("shrines", false) ? 1 : 0;
     DngZoneShrineHeal = request.value("shrine_heal", true) ? 1 : 0;
     DngZoneSanctuary = request.value("sanctuary", false) ? 1 : 0;
     DngZoneSmokeMask = smoke;
+    DngZoneDescent = descent;
     DngZoneExitFloor = exit_floor;
     return {ApiCallStatus::Ok, ZonesRequestJson(), {}};
 }
@@ -10186,6 +11062,31 @@ int ZoneAt(const float *at) {
 }
 bool ZonedFloorShown() {
     return mode == GAME_MODE_DUNGEON && NowDngMap == &MainDungeonMap && DngZoneFloorCount > 0 && DngZoneFloorSeed == NowDngMap->map_seed;
+}
+// dungeons.zone_gate_open: the zones' mod opens the gate into a zone (a Warden's way on, once it falls), keyed or smoke.
+ApiCallResult OpenZoneGate(std::string_view owner, const Json &args) {
+    int zone = -1;
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 1 ||
+        !ReadBoundedInt(args[0], "zone", 1, DNG_ZONE_MAX - 1, zone)) {
+        return Invalid("dungeons.zone_gate_open takes {zone = 1-" + std::to_string(DNG_ZONE_MAX - 1) + "}: the zone the gate leads into");
+    }
+    // (the floor keeps its zones after its mod lets the request go: only another mod's request stands in the way)
+    if (!g_zones_owner.empty() && g_zones_owner != owner) return Failed("another mod lays floors out in zones");
+    if (!ZonedFloorShown()) return Failed("the player is not on a floor built in zones");
+    for (int g = 0; g < DngZoneGateCount; ++g) {
+        DNG_ZONE_GATE &gate = DngZoneGateTable[g];
+        if (gate.zone != zone) continue;
+        if (!gate.locked) return {ApiCallStatus::Ok, {{"opened", false}}, {}};
+        gate.locked = 0;
+        MAP_CELL &cell = NowDngMap->cells[gate.x + gate.y * DNG_GRID];
+        cell.parts_no = gate.open_part;
+        cell.direction = gate.open_direction;
+        SndSePlay(SE_ITEM_GET, -1, 0);
+        SharedRuntime().QueueEvent("game.dungeon.zone_gate_opened", {{"zone", gate.zone}, {"key", nullptr}, {"x", gate.x}, {"y", gate.y},
+                                                                     {"frame", SharedRuntime().Frame()}});
+        return {ApiCallStatus::Ok, {{"opened", true}, {"x", gate.x}, {"y", gate.y}}, {}};
+    }
+    return Failed("no gate leads into that zone");
 }
 // dungeons.zones_get: the zones of the floor the player is on, its gates, and the zone the player stands in.
 ApiCallResult GetZones() {
@@ -10219,6 +11120,30 @@ ApiCallResult GetZones() {
         Json floors = Json::array();
         for (int z = 0; z < DngZoneFloorCount; ++z) floors.push_back(DngZoneFloorSource[z] >= 0 ? DngZoneFloorSource[z] : UserStatus->cur_floor);
         result["zone_floors"] = floors;
+        Json zone_dungeons = Json::array();
+        for (int z = 0; z < DngZoneFloorCount; ++z) {
+            zone_dungeons.push_back(DngZoneFloorDungeon[z] >= 0 && DngZoneDungeonsShown(NowDngMap->map_seed) ? DngZoneFloorDungeon[z] : selectMapNo);
+        }
+        result["zone_dungeons"] = zone_dungeons;
+        // Height steps (set_zones descent): each zone's floor height and the ramp cells down into it.
+        if (DngHeightsOn(NowDngMap)) {
+            Json heights = Json::array(), ramps = Json::array();
+            for (int z = 0; z < DngZoneFloorCount; ++z) {
+                float y = 0.0f;
+                for (int cell = 0; cell < DNG_CELLS; ++cell) {
+                    if (DngZoneOfCell[cell] == z && DngCellRamp[cell] == 0) {
+                        y = DngCellY0[cell];
+                        break;
+                    }
+                }
+                heights.push_back(y);
+            }
+            for (int cell = 0; cell < DNG_CELLS; ++cell) {
+                if (DngCellRamp[cell] != 0) ramps.push_back({{"x", cell % DNG_GRID}, {"y", cell / DNG_GRID}, {"from", DngCellY0[cell]}, {"to", DngCellY1[cell]}});
+            }
+            result["heights"] = heights;
+            result["ramps"] = ramps;
+        }
         if (CharaMain.frame != nullptr) {
             float at[4];
             CharaMain.GetPosition(at);
@@ -10366,7 +11291,8 @@ ApiCallResult EnterFloor(const Json &args) {
 // dungeons.set_arrival: the next main floor built starts the player at cell x, y, or in front of zone `zone`'s shrine
 // (just inside its gate on a floor without shrines). Called from game.dungeon.generating; {} takes it back.
 ApiCallResult SetArrival(const Json &args) {
-    const std::string usage = "expected {zone = 0-23} or {x = column, y = row} (each with teleport = true or not), or {}";
+    const std::string usage = "expected {zone = 0-" + std::to_string(DNG_ZONE_MAX - 1) +
+                              "} or {x = column, y = row} (each with teleport = true or not), or {}";
     if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(usage);
     const Json &request = args[0];
     if (request.empty()) {
@@ -10387,6 +11313,71 @@ ApiCallResult SetArrival(const Json &args) {
     }
     g_arrival = arrival;
     return {ApiCallStatus::Ok, {{"arrival", true}}, {}};
+}
+
+// dungeons.room_seal: the room the player stands in (past its edge cells, so no doorway is under them) has its
+// doorways shut by gates; dungeons.room_release opens them. One shut room at a time; a new floor forgets it.
+std::string g_sealed_owner;
+int         g_sealed_room = -1, g_sealed_seed = -1;
+void SetSealedDoors(int room, bool shut) {
+    for (int d = 0; d < DngSealDoorCount; ++d) {
+        const DNG_SEAL_DOOR &door = DngSealDoorTable[d];
+        if (door.room != room) continue;
+        MAP_CELL &cell = MainDungeonMap.cells[door.x + door.y * DNG_GRID];
+        if (shut && cell.parts_no == door.open_part) {
+            cell.parts_no = door.gate_part;
+            cell.direction = 0;
+        } else if (!shut && cell.parts_no == door.gate_part) {
+            cell.parts_no = door.open_part;
+            cell.direction = door.open_direction;
+        }
+    }
+}
+ApiCallResult SealRoom(std::string_view owner, const Json &args) {
+    if (!args.is_array() || args.size() > 1 || (args.size() == 1 && !(args[0].is_object() && args[0].empty()))) {
+        return Invalid("dungeons.room_seal takes {}");
+    }
+    if (mode != GAME_MODE_DUNGEON || NowDngMap != &MainDungeonMap || CharaMain.frame == nullptr || BtUraDongeon != 0 ||
+        DngSealRoomSeed != MainDungeonMap.map_seed) {
+        return Failed("not on a built dungeon floor");
+    }
+    if (g_sealed_room >= 0 && g_sealed_seed == MainDungeonMap.map_seed) return Failed("a room is already shut");
+    float at[4];
+    CharaMain.GetPosition(at);
+    const float col = at[0] / 160.0f, row = at[2] / 160.0f;
+    int room = -1;
+    for (int r = 0; r < DngSealRoomCount && room < 0; ++r) {
+        const DNG_SEAL_ROOM &info = DngSealRoomTable[r];
+        if (DngWardenRoomState != DNG_WARDEN_NONE && info.x == DngWardenRoomX && info.y == DngWardenRoomY) continue;
+        const float margin = (info.w > 2 && info.h > 2) ? 0.6f : 0.2f;
+        if (col >= info.x - 0.5f + margin && col <= info.x + info.w - 0.5f - margin && row >= info.y - 0.5f + margin &&
+            row <= info.y + info.h - 0.5f - margin) {
+            room = r;
+        }
+    }
+    if (room < 0) return {ApiCallStatus::Ok, {{"sealed", false}}, {}};
+    int doors = 0;
+    for (int d = 0; d < DngSealDoorCount; ++d) doors += DngSealDoorTable[d].room == room ? 1 : 0;
+    if (doors == 0) return {ApiCallStatus::Ok, {{"sealed", false}}, {}};
+    SetSealedDoors(room, true);
+    g_sealed_owner = std::string(owner);
+    g_sealed_room = room;
+    g_sealed_seed = MainDungeonMap.map_seed;
+    SndSePlay(SE_ITEM_GET, -1, 0);
+    const DNG_SEAL_ROOM &info = DngSealRoomTable[room];
+    return {ApiCallStatus::Ok,
+            {{"sealed", true}, {"doors", doors}, {"room", {{"x", info.x}, {"y", info.y}, {"w", info.w}, {"h", info.h}}}},
+            {}};
+}
+ApiCallResult ReleaseRoom(std::string_view owner) {
+    if (g_sealed_room < 0 || g_sealed_owner != owner) return {ApiCallStatus::Ok, {{"released", false}}, {}};
+    if (g_sealed_seed == MainDungeonMap.map_seed && NowDngMap == &MainDungeonMap) {
+        SetSealedDoors(g_sealed_room, false);
+        SndSePlay(SE_ITEM_GET, -1, 0);
+    }
+    g_sealed_room = -1;
+    g_sealed_owner.clear();
+    return {ApiCallStatus::Ok, {{"released", true}}, {}};
 }
 
 // dungeons.warden_room_release: the doors that closed behind the player open again (the Warden is down).
@@ -10528,6 +11519,196 @@ ApiCallResult SetPlayerInvincible(const Json &args) {
     const int previous = BtActStatus.invincible_frames;
     if (BtActStatus.invincible_frames < static_cast<int>(frames)) BtActStatus.invincible_frames = static_cast<int>(frames);
     return {ApiCallStatus::Ok, {{"frames", BtActStatus.invincible_frames}, {"previous", previous}}, {}};
+}
+
+// player.guard_rules_set / gauge_rules_set: one owner each, the game's rules again when it clears them or unloads.
+std::string    g_guard_rules_owner;
+GuardRules     g_guard_rules;
+std::string    g_gauge_rules_owner;
+GaugeRules     g_gauge_rules;
+GaugeDelay     g_gauge_delay;
+int            g_guard_frames = 0; // frames the guard has been up (action_on 6)
+PoiseState     g_poise;            // the worn gear's poise spent by recent hits
+int            g_poise_clock = 0;  // dungeon ticks, for when poise is whole again
+
+// A number field of a rules table within [low, high], or its default when left out. False with the message set.
+bool ReadRuleNumber(const Json &table, const char *key, float low, float high, float &out, std::string &error) {
+    const auto field = table.find(key);
+    if (field == table.end()) return true;
+    const float value = field->is_number() ? field->get<float>() : std::nanf("");
+    if (!std::isfinite(value) || value < low || value > high) {
+        std::ostringstream text;
+        text << key << " must be a number from " << low << " to " << high;
+        error = text.str();
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+Json GuardRulesJson() {
+    if (!g_guard_rules.on) return {{"on", false}};
+    return {{"on", true}, {"owner", g_guard_rules_owner}, {"arc", g_guard_rules.arc}, {"cost_base", g_guard_rules.cost_base},
+            {"cost_per_damage", g_guard_rules.cost_per_damage}, {"chip", g_guard_rules.chip},
+            {"break_recoil", g_guard_rules.break_recoil}, {"parry_frames", g_guard_rules.parry_frames},
+            {"without_lock", g_guard_rules.without_lock}};
+}
+
+Json GaugeRulesJson() {
+    if (!g_gauge_rules.on) return {{"on", false}};
+    return {{"on", true}, {"owner", g_gauge_rules_owner}, {"hit_refill", g_gauge_rules.hit_refill},
+            {"first_swing_cost", g_gauge_rules.first_swing_cost}, {"min_to_swing", g_gauge_rules.min_to_swing},
+            {"swing_cost_scale", g_gauge_rules.swing_cost_scale}, {"refill_delay", g_gauge_rules.refill_delay}};
+}
+
+ApiCallResult SetGuardRules(std::string_view owner, const Json &args) {
+    if (owner.empty() || !args.is_array() || args.size() != 1 || !args[0].is_object()) {
+        return Invalid("expected {arc = 0..360, cost_base = 0..100, cost_per_damage = 0..10, chip = 0..1, "
+                       "break_recoil = 0..600, parry_frames = 0..60, without_lock = boolean}");
+    }
+    const Json &table = args[0];
+    for (auto field = table.begin(); field != table.end(); ++field) {
+        static constexpr std::array<std::string_view, 7> kFields{"arc", "cost_base", "cost_per_damage", "chip",
+                                                                 "break_recoil", "parry_frames", "without_lock"};
+        if (std::ranges::find(kFields, field.key()) == kFields.end()) {
+            return Invalid("player.guard_rules_set received an unsupported field: " + field.key());
+        }
+    }
+    if (!g_guard_rules_owner.empty() && g_guard_rules_owner != owner) {
+        return Failed("another mod already sets the guard's rules: " + g_guard_rules_owner);
+    }
+    GuardRules  rules;
+    std::string error;
+    if (!ReadRuleNumber(table, "arc", 0.0f, 360.0f, rules.arc, error) ||
+        !ReadRuleNumber(table, "cost_base", 0.0f, 100.0f, rules.cost_base, error) ||
+        !ReadRuleNumber(table, "cost_per_damage", 0.0f, 10.0f, rules.cost_per_damage, error) ||
+        !ReadRuleNumber(table, "chip", 0.0f, 1.0f, rules.chip, error)) {
+        return Invalid(error);
+    }
+    if (table.contains("break_recoil") && !ReadBoundedInt(table, "break_recoil", 0, 600, rules.break_recoil)) {
+        return Invalid("break_recoil must be an integer from 0 to 600");
+    }
+    if (table.contains("parry_frames") && !ReadBoundedInt(table, "parry_frames", 0, 60, rules.parry_frames)) {
+        return Invalid("parry_frames must be an integer from 0 to 60");
+    }
+    if (table.contains("without_lock")) {
+        if (!table["without_lock"].is_boolean()) return Invalid("without_lock must be a boolean");
+        rules.without_lock = table["without_lock"].get<bool>();
+    }
+    rules.on = true;
+    g_guard_rules = rules;
+    g_guard_rules_owner = std::string(owner);
+    return {ApiCallStatus::Ok, GuardRulesJson(), {}};
+}
+
+ApiCallResult SetGaugeRules(std::string_view owner, const Json &args) {
+    if (owner.empty() || !args.is_array() || args.size() != 1 || !args[0].is_object()) {
+        return Invalid("expected {hit_refill = -100..100, first_swing_cost = 0..100, min_to_swing = 0..100, "
+                       "swing_cost_scale = 0..4, refill_delay = 0..600}");
+    }
+    const Json &table = args[0];
+    for (auto field = table.begin(); field != table.end(); ++field) {
+        static constexpr std::array<std::string_view, 5> kFields{"hit_refill", "first_swing_cost", "min_to_swing",
+                                                                 "swing_cost_scale", "refill_delay"};
+        if (std::ranges::find(kFields, field.key()) == kFields.end()) {
+            return Invalid("player.gauge_rules_set received an unsupported field: " + field.key());
+        }
+    }
+    if (!g_gauge_rules_owner.empty() && g_gauge_rules_owner != owner) {
+        return Failed("another mod already sets the gauge's rules: " + g_gauge_rules_owner);
+    }
+    GaugeRules  rules;
+    std::string error;
+    if (!ReadRuleNumber(table, "hit_refill", -100.0f, 100.0f, rules.hit_refill, error) ||
+        !ReadRuleNumber(table, "first_swing_cost", 0.0f, 100.0f, rules.first_swing_cost, error) ||
+        !ReadRuleNumber(table, "min_to_swing", 0.0f, 100.0f, rules.min_to_swing, error) ||
+        !ReadRuleNumber(table, "swing_cost_scale", 0.0f, 4.0f, rules.swing_cost_scale, error)) {
+        return Invalid(error);
+    }
+    if (table.contains("refill_delay") && !ReadBoundedInt(table, "refill_delay", 0, 600, rules.refill_delay)) {
+        return Invalid("refill_delay must be an integer from 0 to 600");
+    }
+    rules.on = true;
+    g_gauge_rules = rules;
+    g_gauge_rules_owner = std::string(owner);
+    return {ApiCallStatus::Ok, GaugeRulesJson(), {}};
+}
+
+ApiCallResult SetCriticalTarget(std::string_view owner, const Json &args);
+ApiCallResult ClearCriticalTarget(std::string_view owner, const Json &args);
+void ReleaseCriticals(std::string_view owner);
+
+// player.guard_rules_clear / gauge_rules_clear: the caller's rules off; another mod's are left alone.
+ApiCallResult ClearPlayerRules(std::string_view owner, const Json &args, bool guard) {
+    if (!args.is_array() || !args.empty()) return Invalid(guard ? "player.guard_rules_clear takes no arguments"
+                                                                : "player.gauge_rules_clear takes no arguments");
+    std::string &rules_owner = guard ? g_guard_rules_owner : g_gauge_rules_owner;
+    const bool   cleared = !rules_owner.empty() && rules_owner == owner;
+    if (cleared) {
+        rules_owner.clear();
+        if (guard) g_guard_rules = {};
+        else g_gauge_rules = {};
+    }
+    return {ApiCallStatus::Ok, {{"cleared", cleared}, {"rules", guard ? GuardRulesJson() : GaugeRulesJson()}}, {}};
+}
+
+ApiCallResult GetPlayerGauge(const Json &args) {
+    if (!args.is_array() || !args.empty()) return Invalid("player.gauge_get takes no arguments");
+    if (mode != GAME_MODE_DUNGEON) return Failed("player.gauge_get needs an active dungeon");
+    return {ApiCallStatus::Ok,
+            {{"gauge", BtActStatus.action_gauge}, {"max", 100}, {"exhausted", BtActStatus.gauge_exhausted != 0},
+             {"guard_rules", GuardRulesJson()}, {"gauge_rules", GaugeRulesJson()}},
+            {}};
+}
+
+// player.gauge_set: {gauge = 0..100} sets it, {add = -100..100} adds to it.
+ApiCallResult SetPlayerGauge(const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid("expected {gauge = 0..100} or {add = -100..100}");
+    const Json &table = args[0];
+    for (auto field = table.begin(); field != table.end(); ++field) {
+        if (field.key() != "gauge" && field.key() != "add") return Invalid("player.gauge_set received an unsupported field: " + field.key());
+    }
+    if (table.contains("gauge") == table.contains("add")) return Invalid("give one of gauge (0..100) or add (-100..100)");
+    float       value = 0.0f;
+    std::string error;
+    const bool  absolute = table.contains("gauge");
+    if (!ReadRuleNumber(table, absolute ? "gauge" : "add", absolute ? 0.0f : -100.0f, 100.0f, value, error)) return Invalid(error);
+    if (mode != GAME_MODE_DUNGEON) return Failed("player.gauge_set needs an active dungeon");
+    const float previous = BtActStatus.action_gauge;
+    BtActStatus.action_gauge = std::clamp(absolute ? value : previous + value, 0.0f, 100.0f);
+    if (static_cast<int>(BtActStatus.action_gauge) >= 100) BtActStatus.gauge_exhausted = 0;
+    return {ApiCallStatus::Ok, {{"gauge", BtActStatus.action_gauge}, {"previous", previous}}, {}};
+}
+
+// player.state: what the active player is doing this frame, for a HUD or a mod's rules. {active = false} away from a
+// dungeon.
+ApiCallResult GetPlayerState(const Json &args) {
+    if (!args.is_array() || !args.empty()) return Invalid("player.state takes no arguments");
+    if (mode != GAME_MODE_DUNGEON || UserStatus == nullptr) return {ApiCallStatus::Ok, {{"active", false}}, {}};
+    const int chara = UserStatus->cur_chara;
+    const bool guarding = BtActStatus.action_on == 6;
+    Json state = {{"active", true},
+                  {"character", chara >= 0 && chara < CharaCount() ? Json(CharaIdName(chara)) : Json()},
+                  {"hp", UserStatus->hp[chara]},
+                  {"max_hp", UserStatus->max_hp[chara]},
+                  {"action_on", BtActStatus.action_on},
+                  {"action_no", BtActStatus.action_no},
+                  {"motion", BtActStatus.motion_no},
+                  {"attacking", BtActStatus.action_on == 1},
+                  {"guarding", guarding},
+                  {"guard_held", guarding && BtActStatus.action_no == 9},
+                  {"guard_frames", guarding ? g_guard_frames : 0},
+                  {"locked_on", lockOnTargetFlag != 0},
+                  {"recoil_frames", BtActStatus.recoil_frames},
+                  {"invincible_frames", BtActStatus.invincible_frames},
+                  {"running", PlayerDodgeRun.running},
+                  {"in_water", BtActStatus.in_water != 0},
+                  {"gauge", BtActStatus.action_gauge},
+                  {"exhausted", BtActStatus.gauge_exhausted != 0}};
+    if (lockOnTargetFlag != 0 && lockOnTargetNo >= 0 && lockOnTargetNo < static_cast<int>(g_monster_handle_generations.size())) {
+        state["target"] = MonsterHandleId(lockOnTargetNo, g_monster_handle_generations[lockOnTargetNo]);
+    }
+    return {ApiCallStatus::Ok, state, {}};
 }
 
 ApiCallResult UnbindInputAction(std::string_view mod_id, const Json &args) {
@@ -10697,8 +11878,8 @@ ApiCallResult RegisterRenderBar(std::string_view mod_id, const Json &args) {
         return Invalid("expected {id = local_id, label = bar_label, current = number, max = positive_number}");
     }
     for (auto field = args[0].begin(); field != args[0].end(); ++field) {
-        if (field.key() != "id" && field.key() != "label" && field.key() != "current" && field.key() != "max") {
-            return Invalid("render.bar_register accepts only id, label, current, and max");
+        if (field.key() != "id" && field.key() != "label" && field.key() != "current" && field.key() != "max" && field.key() != "boss") {
+            return Invalid("render.bar_register accepts only id, label, current, max, and boss");
         }
     }
     std::string id;
@@ -10721,9 +11902,11 @@ ApiCallResult RegisterRenderBar(std::string_view mod_id, const Json &args) {
     if (existing == g_debug_overlays.end() && g_debug_overlays.size() >= kMaximumDebugOverlays) {
         return Failed("the game supports at most four combined diagnostic overlays, HUD text layers, and HUD bars");
     }
+    if (args[0].contains("boss") && !args[0]["boss"].is_boolean()) return Invalid("boss must be a boolean");
+    const bool boss = args[0].value("boss", false);
     const int percent = static_cast<int>(std::clamp(std::lround((current / maximum) * 100.0), 0L, 100L));
     const std::string text = label + " [" + std::to_string(percent) + "%]";
-    g_debug_overlays[id] = {id, std::string(mod_id), text, false, true, label, current, maximum};
+    g_debug_overlays[id] = {id, std::string(mod_id), text, false, true, boss, label, current, maximum};
     return {ApiCallStatus::Ok,
             {{"id", id}, {"label", label}, {"current", current}, {"max", maximum},
              {"percent", percent}, {"text", text}, {"status", "registered"}},
@@ -12046,6 +13229,9 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "characters.spawn" || operation.path == "entities.spawn") return SpawnCharacter(mod_id, args);
     if (operation.path == "combat.get") return GetCombat(args);
     if (operation.path == "combat.status_add") return AddMonsterStatus(args);
+    if (operation.path == "combat.strike_player") return StrikePlayer(args);
+    if (operation.path == "combat.feel_set") return SetHitFeel(mod_id, args);
+    if (operation.path == "combat.feel_clear") return ClearHitFeel(mod_id);
     if (operation.path == "combat.register_player_formula") return g_player_damage_formulas.Register(mod_id, args);
     if (operation.path == "combat.register_formula") return g_combat_damage_formulas.Register(mod_id, args);
     if (operation.path == "combat.damage") return DamageCombatEnemy(args);
@@ -12115,8 +13301,16 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "dungeons.set_rest_room") return SetRestRoom(mod_id, args);
     if (operation.path == "dungeons.rest_room_get") return {ApiCallStatus::Ok, RestRoomJson(), {}};
     if (operation.path == "dungeons.warden_room_release") return ReleaseWardenRoom(mod_id);
+    if (operation.path == "dungeons.room_seal") return SealRoom(mod_id, args);
+    if (operation.path == "dungeons.room_release") return ReleaseRoom(mod_id);
+    if (operation.path == "dungeons.zone_gate_open") return OpenZoneGate(mod_id, args);
     if (operation.path == "ui.choice_open") return OpenChoicePanel(mod_id, args);
     if (operation.path == "ui.map_open") return OpenMapScreen(mod_id, args);
+    if (operation.path == "ui.sky_open") return OpenSkyScreen(mod_id, args);
+    if (operation.path == "ui.sky_close") {
+        dc::game::MoonModSkyCloseOwner(mod_id);
+        return {ApiCallStatus::Ok, {{"closed", true}}, {}};
+    }
     if (operation.path == "ui.map_close") {
         dc::game::MoonModMapCloseOwner(mod_id);
         return {ApiCallStatus::Ok, {{"closed", true}}, {}};
@@ -12157,6 +13351,94 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         if (!dc::game::MoonModNpcSet(std::string(mod_id), id, model, place == "exit" ? 0 : 1)) return Failed("another mod has a figure on this floor");
         return {ApiCallStatus::Ok, {{"id", id}}, {}};
     }
+    // messages.*: notes players leave for each other through the messages folder (moonmod/messages_moonmod.hpp). The
+    // folder is the player's choice, never a mod's: no call takes a path.
+    if (operation.path.starts_with("messages.")) {
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid("expected one table");
+        const Json &request = args[0];
+        const auto  text_of = [&request](const char *key) -> std::string {
+            return request.contains(key) && request[key].is_string() ? request[key].get<std::string>() : std::string();
+        };
+        const bool  shared = moonmod::messages::FolderFor(save_root).shared;
+        std::string error;
+        if (operation.path == "messages.post") {
+            std::string id;
+            if (!moonmod::messages::ValidPlace(text_of("place")) || !moonmod::messages::ValidText(text_of("text"))) {
+                return Invalid("expected {place, text}: place 1-64 of a-z 0-9 : _ . -, text 1-120 printable ASCII");
+            }
+            if (!moonmod::messages::Post(save_root, mod_id, text_of("place"), text_of("text"), id, error)) return Failed(error);
+            return {ApiCallStatus::Ok, {{"id", id}, {"shared", shared}}, {}};
+        }
+        if (operation.path == "messages.list") {
+            std::vector<std::string> places;
+            if (request.contains("place")) places.push_back(text_of("place"));
+            if (request.contains("places")) {
+                if (!request["places"].is_array() || request["places"].size() > 32) return Invalid("places is a list of 1-32 places");
+                for (const Json &place : request["places"]) {
+                    if (!place.is_string()) return Invalid("places is a list of 1-32 places");
+                    places.push_back(place.get<std::string>());
+                }
+            }
+            if (places.empty()) return Invalid("expected {place} or {places = {...}}");
+            std::vector<moonmod::messages::Message> found;
+            if (!moonmod::messages::List(save_root, mod_id, places, found, error)) return Invalid(error);
+            Json list = Json::array();
+            for (const moonmod::messages::Message &m : found) {
+                list.push_back({{"id", m.id}, {"place", m.place}, {"text", m.text}, {"at", m.at}, {"good", m.good}, {"poor", m.poor},
+                                {"mine", m.mine}, {"rated", m.rated}});
+            }
+            return {ApiCallStatus::Ok, {{"messages", list}, {"shared", shared}}, {}};
+        }
+        if (operation.path == "messages.rate") {
+            if (!request.contains("rating") || !request["rating"].is_number_integer()) return Invalid("expected {id, rating = 1, -1 or 0}");
+            if (!moonmod::messages::Rate(save_root, text_of("id"), request["rating"].get<int>(), error)) return Failed(error);
+            return {ApiCallStatus::Ok, {{"id", text_of("id")}, {"rating", request["rating"]}}, {}};
+        }
+        if (operation.path == "messages.remove") {
+            if (!moonmod::messages::Remove(save_root, text_of("id"), error)) return Failed(error);
+            return {ApiCallStatus::Ok, {{"removed", text_of("id")}}, {}};
+        }
+    }
+    // world.ghost_get: {character, frames = {{x, y, z, heading, motion}, ...}} oldest first, every other frame.
+    if (operation.path == "world.ghost_get") {
+        int  character = -1;
+        Json frames = Json::array();
+        for (const dc::game::MoonModGhostFrame &f : dc::game::MoonModGhostRecorded(character)) {
+            frames.push_back({std::lround(f[0]), std::lround(f[1]), std::lround(f[2]), std::round(f[3] * 1000.0f) / 1000.0f,
+                              static_cast<int>(f[4])});
+        }
+        return {ApiCallStatus::Ok, {{"character", character >= 0 ? Json(kCharacterIds[character]) : Json(nullptr)}, {"frames", frames}}, {}};
+    }
+    // world.ghost_play: {character, frames} as ghost_get gives them (at most 600), or {} to stop.
+    if (operation.path == "world.ghost_play") {
+        const char *usage = "expected {character, frames = {{x, y, z, heading, motion}, ...}} (1-600 frames), or {}";
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(usage);
+        const Json &request = args[0];
+        if (request.empty()) {
+            dc::game::MoonModGhostPlay(-1, {});
+            return {ApiCallStatus::Ok, {{"playing", false}}, {}};
+        }
+        if (!request.contains("character") || !request["character"].is_string() || !request.contains("frames") ||
+            !request["frames"].is_array() || request["frames"].empty() || request["frames"].size() > 600) {
+            return Invalid(usage);
+        }
+        const auto found = std::ranges::find(kCharacterIds, request["character"].get<std::string>());
+        if (found == kCharacterIds.end()) return Invalid("character must be a playable character id");
+        std::vector<dc::game::MoonModGhostFrame> frames;
+        for (const Json &f : request["frames"]) {
+            if (!f.is_array() || f.size() != 5) return Invalid(usage);
+            dc::game::MoonModGhostFrame frame{};
+            for (int i = 0; i < 5; ++i) {
+                if (!f[i].is_number()) return Invalid(usage);
+                frame[i] = f[i].get<float>();
+                if (!std::isfinite(frame[i]) || std::fabs(frame[i]) > 100000.0f) return Invalid(usage);
+            }
+            frames.push_back(frame);
+        }
+        if (mode != GAME_MODE_DUNGEON) return Failed("not in a dungeon");
+        if (!dc::game::MoonModGhostPlay(static_cast<int>(found - kCharacterIds.begin()), frames)) return Failed("could not play the ghost");
+        return {ApiCallStatus::Ok, {{"playing", true}, {"frames", static_cast<int>(frames.size())}}, {}};
+    }
     if (operation.path == "world.dungeon_npc_clear") {
         dc::game::MoonModNpcClear(std::string(mod_id));
         return {ApiCallStatus::Ok, {{"cleared", true}}, {}};
@@ -12186,6 +13468,10 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         Json doors = Json::array();
         for (int d = 0; d < DngShortcutDoorCount; ++d) {
             const DNG_SHORTCUT_DOOR &door = DngShortcutDoorTable[d];
+            if (door.key_item == 0) {
+                doors.push_back({{"x", door.x}, {"y", door.y}, {"illusory", true}, {"locked", door.locked != 0}});
+                continue;
+            }
             doors.push_back({{"x", door.x}, {"y", door.y}, {"key", ItemStableId(door.key_item)}, {"key_item", door.key_item},
                              {"locked", door.locked != 0}});
         }
@@ -12235,12 +13521,27 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "player.moves_clear") return ClearPlayerMoves(mod_id, args);
     if (operation.path == "player.form_set") return SetPlayerForm(mod_id, args);
     if (operation.path == "player.move_play") return PlayPlayerMove(mod_id, args);
+    if (operation.path == "player.critical_set") return SetCriticalTarget(mod_id, args);
+    if (operation.path == "player.critical_clear") return ClearCriticalTarget(mod_id, args);
     if (operation.path == "player.form_clear") return ClearPlayerForm(mod_id, args);
     if (operation.path == "player.fatal_guard") return SetPlayerFatalGuard(args);
+    if (operation.path == "player.guard_rules_set") return SetGuardRules(mod_id, args);
+    if (operation.path == "player.guard_rules_clear") return ClearPlayerRules(mod_id, args, true);
+    if (operation.path == "player.gauge_rules_set") return SetGaugeRules(mod_id, args);
+    if (operation.path == "player.gauge_rules_clear") return ClearPlayerRules(mod_id, args, false);
+    if (operation.path == "player.gauge_get") return GetPlayerGauge(args);
+    if (operation.path == "player.gauge_set") return SetPlayerGauge(args);
+    if (operation.path == "player.state") return GetPlayerState(args);
     if (operation.path == "party.companion_set") return SetCompanion(mod_id, args);
     if (operation.path == "party.companion_get") {
         const int out = dc::game::MoonModCompanionLoaded();
-        return {ApiCallStatus::Ok, {{"character", out >= 0 ? Json(kCharacterIds[out]) : Json(nullptr)}, {"out", out >= 0}}, {}};
+        const dc::game::MoonModCompanionLife life = dc::game::MoonModCompanionLifeGet();
+        Json result = {{"character", out >= 0 ? Json(kCharacterIds[out]) : Json(nullptr)}, {"out", out >= 0}, {"hostile", life.hostile}};
+        if (life.hostile) {
+            result["hp"] = life.hp;
+            result["max_hp"] = life.max_hp;
+        }
+        return {ApiCallStatus::Ok, result, {}};
     }
     if (operation.path == "player.status_add") return AddPlayerStatus(args);
     if (operation.path == "player.status_remove") return RemovePlayerStatus(args);
@@ -12288,6 +13589,7 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "weapons.get") return GetWeapon(args);
     if (operation.path == "weapons.register") return RegisterWeapon(mod_id, save_root, args);
     if (operation.path == "weapons.definition_set") return SetWeaponDefinition(mod_id, args);
+    if (operation.path == "weapons.stat_label_set") return SetWeaponStatLabels(args);
     if (operation.path == "weapons.give") return GiveWeapon(args);
     if (operation.path == "weapons.equip") return EquipWeapon(args);
     if (operation.path == "weapons.remove") return RemoveWeapon(args);
@@ -12316,6 +13618,15 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "items.icon_set") return SetBuiltinItemIcon(mod_id, args);
     if (operation.path == "items.use") return UseItem(args);
     if (operation.path == "items.quick_slots") return GetQuickItemSlots(args);
+    if (operation.path == "items.charm_slots") return GetCharmSlots(args);
+    if (operation.path == "items.charm_slots_set") return SetCharmSlots(args);
+    if (operation.path == "items.gear") return GetGear(args);
+    if (operation.path == "items.gear_give") return GiveGear(args);
+    if (operation.path == "items.gear_stock_set") return StockGear(args);
+    if (operation.path == "items.gear_page_set") return SetGearPage(args);
+    if (operation.path == "items.gear_equip") return EquipGearPiece(args);
+    if (operation.path == "items.gear_unequip") return UnequipGearPiece(args);
+    if (operation.path == "items.gear_remove") return RemoveGearPiece(args);
     if (operation.path == "items.quick_slot_select") return SelectQuickItemSlot(args);
     if (operation.path == "items.quick_slot_use") return UseQuickItemSlot(args);
     if (operation.path == "render.first_person_toggle") return RequestFirstPersonToggle(args);
@@ -12367,6 +13678,8 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "render.layer_remove") return RemoveRenderLayer(mod_id, args);
     if (operation.path == "render.bar_register") return RegisterRenderBar(mod_id, args);
     if (operation.path == "render.bar_remove") return RemoveRenderBar(mod_id, args);
+    if (operation.path == "render.target_bar_set") return SetTargetBar(args);
+    if (operation.path == "render.target_meter_set") return SetTargetMeter(args);
     if (operation.path == "render.hud_icon_set") return SetHudIcon(mod_id, args);
     if (operation.path == "render.hud_icon_remove") return RemoveHudIcon(mod_id, args);
     if (operation.path == "render.floor_label_set") return SetFloorLabel(mod_id, args);
@@ -12471,7 +13784,7 @@ std::vector<ChronicleHudBar> ChronicleHudBars() {
         std::size_t digits = overlay.label.find_last_not_of("0123456789");
         digits = digits == std::string::npos ? 0 : digits + 1;
         if (digits < overlay.label.size() && overlay.label.size() - digits <= 4) number = std::stoi(overlay.label.substr(digits));
-        bars.push_back({overlay.current, overlay.maximum, number});
+        bars.push_back({overlay.current, overlay.maximum, overlay.boss_bar ? -1 : number, overlay.boss_bar, overlay.label});
     }
     return bars;
 }
@@ -13337,6 +14650,8 @@ void EndPlayerMove() {
     g_move_run.active = false;
 }
 
+bool SoftLockHeading(float &heading); // soft_lock, below
+
 bool StartPlayerMove(const PlayerMove &source, bool cancelling = false, bool facing_target = false) {
     if (CharaMain.frame == nullptr || CharaMain.motion_type.motion_info == nullptr || NowWeaponHave == nullptr || NowColData == nullptr) return false;
     PlayerMove move = source;
@@ -13362,7 +14677,8 @@ bool StartPlayerMove(const PlayerMove &source, bool cancelling = false, bool fac
     const MOTION_INFO &info = CharaMain.motion_type.motion_info[move.motion];
     const float begin = static_cast<float>(info.start), end = static_cast<float>(info.end);
     if (!(end > begin)) return false;
-    if (BtActStatus.action_gauge < move.gauge) return false;
+    const float gauge_cost = move.gauge * (move.trigger == 3 || move.trigger == 4 ? 1.0f : ChroniclePlayerSwingCostScale());
+    if (BtActStatus.action_gauge < gauge_cost) return false;
 
     MoveRun run;
     run.active = true;
@@ -13381,6 +14697,7 @@ bool StartPlayerMove(const PlayerMove &source, bool cancelling = false, bool fac
         float target = 0.0f;
         if (LockTargetHeading(target)) run.heading = target;
         else if (move.trigger != 2 && BtActStatus.stick_strength >= 0.3f) run.heading = std::atan2(BtActStatus.move_x, BtActStatus.move_z);
+        if (lockOnTargetFlag == 0) SoftLockHeading(run.heading); // turned to the nearest enemy that way, with soft_lock
     }
     float target_heading = 0.0f;
     if (facing_target && LockTargetHeading(target_heading)) {
@@ -13409,7 +14726,7 @@ bool StartPlayerMove(const PlayerMove &source, bool cancelling = false, bool fac
         g_saved_blend_step = CharaMain.motion_type.state.blend_step;
         CharaMain.motion_type.state.blend_step = 1.0f / static_cast<float>(move.blend_in);
     }
-    BtActStatus.action_gauge = std::max(0.0f, BtActStatus.action_gauge - move.gauge);
+    BtActStatus.action_gauge = std::max(0.0f, BtActStatus.action_gauge - gauge_cost);
     if (move.lunge > 0.0f) {
         const float push = g_move_run.facing_target ? std::atan2(BtActStatus.move_x, BtActStatus.move_z)
                                                     : g_move_run.heading + move.lunge_angle * 0.017453292f;
@@ -13434,7 +14751,7 @@ bool StartPlayerMove(const PlayerMove &source, bool cancelling = false, bool fac
     g_blow_action = -1;
     g_chain = 0; // a move ends the combo; a finisher spends it
     const CharacterIdView &kNames = kCharacterIds;
-    SharedRuntime().QueueEvent("game.player.move", {{"id", move.id}, {"owner", move.owner}, {"character", kNames[move.chara]}, {"cancel", cancelling},
+    SharedRuntime().QueueEvent("game.player.move", {{"id", move.id}, {"owner", move.owner}, {"character", kNames[move.chara]}, {"cancel", cancelling}, {"frames", g_move_run.frames},
                                                      {"variant", variant >= 0 ? Json(variant + 1) : Json(nullptr)}});
     return true;
 }
@@ -13553,6 +14870,208 @@ float MoveProgress() {
     return std::min(1.0f, static_cast<float>(g_move_run.frame + 1) / static_cast<float>(std::max(1, g_move_run.frames)));
 }
 
+// Criticals (player.moves_set trigger critical): the enemy a mod armed for a riposte (player.critical_set), until a
+// step of g_move_clock, and how many more steps each monster slot is held in a critical's pair motion, its script
+// paused (ChronicleMonsterHeld).
+struct CriticalArm {
+    std::string owner;
+    std::string handle;
+    int slot = -1;
+    std::uint32_t generation = 0;
+    int until = 0;
+};
+CriticalArm g_critical_arm;
+std::array<int, MONSTOR_SLOT_MAX> g_critical_hold{};
+
+// The target's motion number for a pair: its model's loaded copy of the monster motion, or -1.
+int CriticalPairMotion(const CMonstorUnit *unit, int slot, const PlayerMove::CriticalPair &pair, int &length) {
+    const int base = unit->monster[slot].base_model;
+    if (base < 0 || base >= static_cast<int>(g_applied_monster_motions.size())) return -1;
+    for (const AppliedMonsterMotions::Entry &entry : g_applied_monster_motions[base].entries) {
+        if (entry.owner == pair.owner && entry.id == pair.id) {
+            length = entry.length;
+            return entry.number;
+        }
+    }
+    return -1;
+}
+
+bool BeginCritical(const PlayerMove &move, CMonstorUnit *unit, int slot) {
+    float target[4]{}, at[4]{};
+    unit->chara[slot][0].GetPosition(target);
+    CharaMain.GetPosition(at);
+    float dx = at[0] - target[0], dz = at[2] - target[2];
+    const float distance = std::hypot(dx, dz);
+    if (distance > 0.01f) {
+        dx /= distance;
+        dz /= distance;
+    } else {
+        dx = 0.0f;
+        dz = 1.0f;
+    }
+    if (!StartPlayerMove(move)) return false;
+    // Drawn in to the gap (never pushed out, which could put him in a wall), facing the target.
+    if (distance > move.critical_gap) {
+        at[0] = target[0] + dx * move.critical_gap;
+        at[2] = target[2] + dz * move.critical_gap;
+        CharaMain.SetPosition(at);
+        CharaMain.frame->SetPosition(at);
+    }
+    g_move_run.heading = std::atan2(-dx, -dz);
+    CharaMain.frame->SetRotation(0.0f, g_move_run.heading, 0.0f);
+    BtActStatus.move_power = 0.0f;
+    // The target stops where it is, turned to him (a riposte) or away from him (a backstab), and plays its half.
+    MONSTOR &monster = unit->monster[slot];
+    monster.movement_speed = 0.0f;
+    monster.knockback[0] = monster.knockback[1] = 0.0f;
+    monster.turn_speed = 0.0f;
+    monster.stop_timer = 0; // a parried or staggered enemy is stopped (frozen, grey): its crumple plays instead
+    float rotation[4]{};
+    unit->chara[slot][0].GetRotation(rotation);
+    rotation[1] = move.critical == 1 ? std::atan2(-dx, -dz) : std::atan2(dx, dz);
+    unit->chara[slot][0].SetRotation(rotation);
+    const int model = ChronicleNativeMonsterModelId(unit, slot);
+    int hold = move.critical_hold;
+    for (const PlayerMove::CriticalPair &pair : move.pairs) {
+        if (pair.model != model) continue;
+        int length = 0;
+        const int number = CriticalPairMotion(unit, slot, pair, length);
+        if (number < 0) break;
+        for (int part = 0; part <= monster.attachment_count; ++part) {
+            if (part > 0 && unit->chara[slot][part].frame == nullptr) continue;
+            unit->chara[slot][part].SetMotion(number, 0);
+            unit->chara[slot][part].SetMotionSpeed(pair.speed);
+        }
+        monster.requested_motion = number;
+        monster.requested_motion_flags = 0;
+        monster.requested_motion_speed = pair.speed;
+        if (hold == 0) hold = static_cast<int>(std::ceil(static_cast<float>(length) / pair.speed));
+        break;
+    }
+    if (hold == 0) hold = g_move_run.frames;
+    g_critical_hold[slot] = hold;
+    if (g_critical_arm.slot == slot) g_critical_arm = {};
+    Json event = {{"id", move.id}, {"owner", move.owner}, {"kind", move.critical == 1 ? "backstab" : "riposte"},
+                  {"entity", MonsterHandleId(slot, g_monster_handle_generations[slot])}, {"hold", hold}};
+    if (model >= 0) event["native_model_id"] = model;
+    SharedRuntime().QueueEvent("game.player.critical", event);
+    ChronicleFeelCritical();
+    return true;
+}
+
+// The attack button at rest: the character's riposte on the armed enemy within its reach, else a backstab on the
+// nearest enemy within reach whose back he stands at (the lock target first).
+bool TryCritical(int chara) {
+    CMonstorUnit *unit = NowMonstorUnit;
+    if (unit == nullptr) return false;
+    PrepareMonsterHandleUnit(unit);
+    float at[4]{};
+    CharaMain.GetPosition(at);
+    const auto live = [&](int slot) {
+        const MONSTOR &m = unit->monster[slot];
+        return m.state == 2 && m.hp > 0 && m.revealed != 0 && g_critical_hold[slot] <= 0;
+    };
+    const auto away = [&](int slot) {
+        float there[4]{};
+        unit->chara[slot][0].GetPosition(there);
+        return std::hypot(at[0] - there[0], at[2] - there[2]);
+    };
+    for (const PlayerMove &move : g_player_moves) {
+        if (move.trigger != 9 || move.chara != chara) continue;
+        int target = -1;
+        if (move.critical == 2) {
+            const CriticalArm &arm = g_critical_arm;
+            if (arm.slot < 0 || arm.owner != move.owner || g_move_clock > arm.until || !live(arm.slot) ||
+                EnsureMonsterHandleGeneration(unit, arm.slot) != arm.generation || away(arm.slot) > move.critical_reach) {
+                continue;
+            }
+            target = arm.slot;
+        } else {
+            float best = move.critical_reach;
+            for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
+                if (!live(slot)) continue;
+                const float d = away(slot);
+                if (d > move.critical_reach) continue;
+                float there[4]{}, rotation[4]{};
+                unit->chara[slot][0].GetPosition(there);
+                unit->chara[slot][0].GetRotation(rotation);
+                // 0 when he stands where it faces, 180 at its back.
+                if (GuardAngle(rotation[1], there[0], there[2], at[0], at[2]) < 180.0f - move.critical_arc * 0.5f) continue;
+                const bool locked = lockOnTargetFlag != 0 && lockOnTargetNo == slot;
+                if (locked || d < best) {
+                    best = locked ? -1.0f : d;
+                    target = slot;
+                }
+            }
+        }
+        if (target >= 0 && BeginCritical(move, unit, target)) return true;
+    }
+    return false;
+}
+
+namespace {
+// player.critical_set({entity, frames?}): that enemy open to this mod's riposte (a critical move) for frames steps
+// (default 120), as after a parry or a stagger. One enemy at a time; a new one replaces it.
+ApiCallResult SetCriticalTarget(std::string_view owner, const Json &args) {
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("entity")) {
+        return Invalid("expected {entity = monster handle, frames = 1..600?}");
+    }
+    for (auto field = args[0].begin(); field != args[0].end(); ++field) {
+        if (field.key() != "entity" && field.key() != "frames") return Invalid("player.critical_set only takes entity and frames");
+    }
+    std::string handle;
+    int slot = -1;
+    std::uint32_t generation = 0;
+    int frames = 120;
+    if (!ReadId(args[0]["entity"], handle) || !ReadMonsterHandle(handle, slot, generation)) {
+        return Invalid("entity must be a generation-checked Chronicle monster handle");
+    }
+    if (args[0].contains("frames") && !ReadBoundedInt(args[0], "frames", 1, 600, frames)) return Invalid("frames is 1..600 steps");
+    CMonstorUnit *unit = NowMonstorUnit;
+    if (mode != GAME_MODE_DUNGEON || unit == nullptr) return Failed("player.critical_set needs an active dungeon");
+    PrepareMonsterHandleUnit(unit);
+    if (EnsureMonsterHandleGeneration(unit, slot) != generation) return Failed("the entity handle is stale because its monster slot was reused");
+    const MONSTOR &monster = unit->monster[slot];
+    if (monster.state != 2 || monster.hp <= 0 || monster.revealed == 0) return Failed("the selected entity is not a live, revealed enemy");
+    g_critical_arm = {std::string(owner), handle, slot, generation, g_move_clock + frames};
+    return {ApiCallStatus::Ok, {{"entity", handle}, {"frames", frames}}, {}};
+}
+
+// player.critical_clear(): this mod's armed enemy, if any, no longer open.
+ApiCallResult ClearCriticalTarget(std::string_view owner, const Json &args) {
+    if (!args.is_array() || !args.empty()) return Invalid("player.critical_clear takes no arguments");
+    const bool cleared = g_critical_arm.slot >= 0 && g_critical_arm.owner == owner;
+    if (cleared) g_critical_arm = {};
+    return {ApiCallStatus::Ok, {{"cleared", cleared}}, {}};
+}
+
+void ReleaseCriticals(std::string_view owner) {
+    if (g_critical_arm.owner == owner) g_critical_arm = {};
+}
+} // namespace
+
+int ChronicleMonsterHeld(CMonstorUnit * /*unit*/, int slot) {
+    if (slot >= 0 && slot < MONSTOR_SLOT_MAX && g_monster_haste[slot] > 0) --g_monster_haste[slot];
+    if (slot < 0 || slot >= MONSTOR_SLOT_MAX || g_critical_hold[slot] <= 0) return 0;
+    return --g_critical_hold[slot] > 0 ? 1 : 2;
+}
+
+bool ChronicleMonsterIsHeld(int slot) { return slot >= 0 && slot < MONSTOR_SLOT_MAX && g_critical_hold[slot] > 0; }
+
+void ChronicleMonsterHoldReset(int slot) {
+    if (slot < 0) {
+        g_critical_hold.fill(0);
+        g_monster_haste.fill(0);
+    } else if (slot < MONSTOR_SLOT_MAX) {
+        g_critical_hold[slot] = 0;
+        g_monster_haste[slot] = 0;
+    }
+}
+
+float ChronicleMonsterSpeedScale(int slot) {
+    return slot >= 0 && slot < MONSTOR_SLOT_MAX && g_monster_haste[slot] > 0 ? kHasteScale : 1.0f;
+}
+
 bool ChroniclePlayerMoveOnAttack() {
     if (mode != GAME_MODE_DUNGEON || PlayerInPresentation() || BtActStatus.jumping != 0 || BtActStatus.in_water != 0) return false;
     const int chara = UserStatus->cur_chara;
@@ -13581,6 +15100,7 @@ bool ChroniclePlayerMoveOnAttack() {
         return false;
     }
     if (BtActStatus.action_on != 0) return false;
+    if (TryCritical(chara)) return true;
     // Locked on with the stick pushed toward the target or away from it.
     float target = 0.0f;
     if (BtActStatus.stick_strength >= 0.5f && LockTargetHeading(target)) {
@@ -13633,14 +15153,46 @@ bool AttackRecoveryCancellable(int after) {
     return act.can_act != 0 || (act.action_no >= 0x24 && act.action_no <= 0x27);
 }
 
+bool ChroniclePlayerChainToAttack() {
+    if (g_player_tuning.chain_cancel <= 0 || BtActStatus.action_no != kModMoveAction || !g_move_run.active || IsEvade(g_move_run.move)) return false;
+    if (!AttackRecoveryCancellable(g_player_tuning.chain_cancel)) return false;
+    EndPlayerMove();
+    return true;
+}
+
 // R2: a combo finisher if the combo has laid enough blows (the longest chain it has reached wins), else the heavy
 // attack. A finisher cuts the attack playing short; the heavy attack starts only from rest.
+namespace {
+ChroniclePressBuffer g_r2_press, g_dodge_press;
+} // namespace
+
+bool ChroniclePlayerMoveOnR2Buffered(bool pressed);
 bool ChroniclePlayerMoveOnR2(bool pressed) {
+    // input_buffer: R2 pressed while it can't start (mid-swing before a finisher may, mid-roll) comes out at the
+    // first step it can.
+    if (!g_r2_press.Wanted(pressed, g_player_tuning.input_buffer)) return false;
+    if (!ChroniclePlayerMoveOnR2Buffered(true)) return false;
+    g_r2_press.Taken();
+    return true;
+}
+bool ChroniclePlayerMoveOnR2Buffered(bool pressed) {
     if (!pressed || mode != GAME_MODE_DUNGEON || PlayerInPresentation() || BtActStatus.jumping != 0 || BtActStatus.in_water != 0 ||
         BtActStatus.movement_locked != 0 || BtActStatus.recoil_frames != 0) {
         return false;
     }
     const int chara = UserStatus->cur_chara;
+    // Guarding: the equipped weapon's art, if it has one at its level.
+    if (BtActStatus.action_on == 6 && BtActStatus.action_no == 9 && BtActStatus.can_act != 0 && g_move_cooldown <= 0 && NowWeaponHave != nullptr) {
+        for (const PlayerMove &move : g_player_moves) {
+            if (move.trigger != 11 || move.chara != chara || NowWeaponHave->level < move.min_level) continue;
+            if (!move.weapons.empty() && std::ranges::find(move.weapons, static_cast<int>(NowWeaponHave->item_no)) == move.weapons.end()) continue;
+            if (StartPlayerMove(move)) {
+                BtActStatus.guard_mode = 0;
+                return true;
+            }
+        }
+        return false;
+    }
     const bool idle = BtActStatus.action_on == 0 && BtActStatus.can_act != 0;
     // Any native attack playing (the chain's own swing past its blow, or the next swing already started by a
     // mashed button), but not Toan's held charge, which has its own release.
@@ -13652,23 +15204,42 @@ bool ChroniclePlayerMoveOnR2(bool pressed) {
         }
         if (best != nullptr && StartPlayerMove(*best, swinging)) return true;
     }
-    if (!idle || g_move_cooldown > 0) return false;
+    // chain_cancel: the heavy cuts short the recovery of the attack playing (a native swing, or one of the mod's own
+    // attack moves, a heavy among them) once its last blow is that many steps past.
+    const bool chaining = !idle && g_player_tuning.chain_cancel > 0 && AttackRecoveryCancellable(g_player_tuning.chain_cancel);
+    if ((!idle && !chaining) || g_move_cooldown > 0) return false;
     for (const PlayerMove &move : g_player_moves) {
-        if (move.trigger == 5 && move.chara == chara && StartPlayerMove(move)) return true;
+        if (move.trigger == 5 && move.chara == chara && StartPlayerMove(move, chaining)) return true;
     }
     return false;
+}
+
+bool ChroniclePlayerHasDodgeMove() {
+    if (UserStatus == nullptr) return false;
+    return std::ranges::any_of(g_player_moves, [](const PlayerMove &move) {
+        return (move.trigger == 3 || move.trigger == 4) && move.chara == UserStatus->cur_chara;
+    });
 }
 
 // Whether the character playing now has an R2 move (which takes R2 from the first-person view).
 bool PlayerHasR2Moves() {
     if (UserStatus == nullptr) return false;
     for (const PlayerMove &move : g_player_moves) {
-        if ((move.trigger == 5 || move.trigger == 6) && move.chara == UserStatus->cur_chara) return true;
+        if ((move.trigger == 5 || move.trigger == 6 || move.trigger == 11) && move.chara == UserStatus->cur_chara) return true;
     }
     return false;
 }
 
+bool ChroniclePlayerMoveOnDodgeBuffered(bool pressed);
 bool ChroniclePlayerMoveOnDodge(bool pressed) {
+    // input_buffer: a roll pressed late in a swing's recovery, mid-roll or in a hit-stop comes out at the first step
+    // it can (the swing's cancel point, the roll's end) instead of being lost.
+    if (!g_dodge_press.Wanted(pressed, g_player_tuning.input_buffer)) return false;
+    if (!ChroniclePlayerMoveOnDodgeBuffered(true)) return false;
+    g_dodge_press.Taken();
+    return true;
+}
+bool ChroniclePlayerMoveOnDodgeBuffered(bool pressed) {
     if (!pressed || mode != GAME_MODE_DUNGEON || PlayerInPresentation() || BtActStatus.jumping != 0 || BtActStatus.in_water != 0 ||
         BtActStatus.movement_locked != 0 || BtActStatus.recoil_frames != 0 || g_dodge_cooldown > 0) {
         return false;
@@ -13771,6 +15342,39 @@ bool ChroniclePlayerMovePlay() {
     return true;
 }
 
+void ChronicleWallStruck() {
+    if (mode != GAME_MODE_DUNGEON || NowDngMap == nullptr || CharaMain.frame == nullptr || DngShortcutDoorCount <= 0 ||
+        DngShortcutDoorSeed != NowDngMap->map_seed) {
+        return;
+    }
+    float at[4];
+    CharaMain.GetPosition(at);
+    const float heading = PlayerHeading();
+    int wall_no = 0;
+    for (int d = 0; d < DngShortcutDoorCount; ++d) {
+        DNG_SHORTCUT_DOOR &door = DngShortcutDoorTable[d];
+        if (door.key_item != 0) continue;
+        const int number = wall_no++;
+        if (!door.locked) continue;
+        // The doorway's wall stands on the cell's edge toward its corridor; the blow is struck from inside the cell.
+        const float dx = 160.0f * door.x - at[0], dz = 160.0f * door.y - at[2];
+        const float dist = std::hypot(dx, dz);
+        if (dist > 150.0f) continue;
+        const int side = door.open_part - MAP_PARTS_ROOM_DOOR_NORTH; // 0 north (-z), 1 east (+x), 2 south (+z), 3 west (-x)
+        const float wx = side == 1 ? 1.0f : (side == 3 ? -1.0f : 0.0f), wz = side == 2 ? 1.0f : (side == 0 ? -1.0f : 0.0f);
+        const float facing_x = std::sin(heading), facing_z = std::cos(heading);
+        if (facing_x * wx + facing_z * wz < 0.5f) continue; // not facing that wall
+        door.locked = 0;
+        MAP_CELL &cell = NowDngMap->cells[door.x + door.y * DNG_GRID];
+        cell.parts_no = door.open_part;
+        cell.direction = door.open_direction;
+        SndSePlay(SE_ITEM_GET, -1, 0);
+        SharedRuntime().QueueEvent("game.dungeon.wall_opened", {{"wall", number}, {"x", door.x}, {"y", door.y},
+                                                                {"frame", SharedRuntime().Frame()}});
+        return;
+    }
+}
+
 // A locked shortcut door opens when the player reaches it holding its key: the key is used up and the cell gets its
 // doorway back. Without the key, mods hear game.dungeon.door_locked once while the player stays at it.
 void ChronicleShortcutDoorsTick() {
@@ -13816,7 +15420,7 @@ void ChronicleShortcutDoorsTick() {
     int near = -1;
     for (int d = 0; d < DngShortcutDoorCount; ++d) {
         const DNG_SHORTCUT_DOOR &door = DngShortcutDoorTable[d];
-        if (!door.locked) continue;
+        if (!door.locked || door.key_item == 0) continue; // an illusory wall opens to a blow (ChronicleWallStruck)
         if (std::hypot(at[0] - 160.0f * door.x, at[2] - 160.0f * door.y) < 130.0f) near = d;
     }
     if (near < 0) {
@@ -14522,15 +16126,273 @@ void ChronicleCompanionStrike(int slot, int amount, int character) {
                                                       {"damage", dealt}, {"killed", killed}, {"reward_exp", monster.exp},
                                                       {"frame", SharedRuntime().Frame()}});
 }
+void ChronicleCompanionStruck(int character, int damage, int hp, int max_hp, bool killed) {
+    if (character < 0 || character >= static_cast<int>(kCharacterIds.size())) return;
+    SharedRuntime().QueueEvent("game.companion.struck", {{"character", kCharacterIds[character]}, {"damage", damage}, {"hp", hp},
+                                                         {"max_hp", max_hp}, {"killed", killed}, {"frame", SharedRuntime().Frame()}});
+}
 void ResetChronicleChargedForTests() { g_charge_clock = 0; g_charged_until = -1; g_goro_held = false; g_goro_last_step = 0; }
 float ChroniclePlayerStatusDuration() { return g_player_tuning.status_duration; }
 int ChroniclePlayerStatusImmune() { return g_player_tuning.status_immune; }
 float ChroniclePlayerSwapDelay() { return g_player_tuning.swap_delay; }
 float ChroniclePlayerDodgePower() { return g_player_tuning.dodge_power; }
 int ChroniclePlayerDodgeInvincibleFrames() { return g_player_tuning.dodge_invincible_frames; }
+int ChroniclePlayerDodgeGauge() { return g_player_tuning.dodge_gauge; }
 bool ChroniclePlayerDodgeHop() { return g_player_tuning.dodge_hop; }
+float ChroniclePlayerDodgeRun() { return g_player_tuning.dodge_run; }
+bool ChroniclePlayerLightness() { return g_player_tuning.lightness; }
+float ChroniclePlayerStamina(int chara) {
+    return chara >= 0 && chara < static_cast<int>(g_player_tuning.stamina.size()) ? g_player_tuning.stamina[chara] : 0.0f;
+}
+float ChroniclePlayerSwingCostScale() {
+    const float gear = UserStatus != nullptr ? GearSwingScale(UserStatus->cur_chara) : 1.0f;
+    const float rules = g_gauge_rules.on ? g_gauge_rules.swing_cost_scale : 1.0f; // gauge_rules_set
+    return rules * gear * (g_player_tuning.lightness && NowWeaponHave != nullptr ? LightnessSwingScale(NowWeaponHave->speed) : 1.0f);
+}
+
+ChroniclePlayerHitResult ChroniclePlayerHitResolve(const ChroniclePlayerHit &hit) {
+    const GuardOutcome guard = ResolveGuard(g_guard_rules, {.guarding = hit.guarding,
+                                                            .held = hit.held,
+                                                            .heavy = hit.kind == 3,
+                                                            .damage = hit.damage,
+                                                            .angle = hit.angle,
+                                                            .gauge = hit.gauge,
+                                                            .guard_frames = g_guard_frames});
+    ChroniclePlayerHitResult result{.blocked = guard.blocked,
+                                    .parried = guard.parried,
+                                    .broke = guard.broke,
+                                    .damage = guard.damage,
+                                    .gauge = GaugeAfterHit(g_gauge_rules, hit.gauge, guard, g_guard_rules.on)};
+    // A light or heavy blow that lands (not a trap, not a broken guard, not the last of the player's life) is the
+    // worn gear's poise's to take.
+    if (!result.blocked && !result.broke && (hit.kind == 2 || hit.kind == 3) && UserStatus != nullptr &&
+        UserStatus->cur_chara >= 0 && UserStatus->cur_chara < CharaCount() &&
+        result.damage < UserStatus->hp[static_cast<int>(UserStatus->cur_chara)]) {
+        result.poised = PoiseTakes(g_poise, GearWornEffects(UserStatus->cur_chara).poise, hit.kind == 3, g_poise_clock);
+    }
+    static constexpr std::array<const char *, 5> kKinds{"other", "other", "light", "heavy", "trap"};
+    Json event = {{"kind", hit.kind >= 0 && hit.kind < 5 ? kKinds[hit.kind] : "other"},
+                  {"damage", result.damage},
+                  {"incoming", hit.damage},
+                  {"blocked", result.blocked},
+                  {"parried", result.parried},
+                  {"broke", result.broke},
+                  {"poised", result.poised},
+                  {"angle", std::lround(hit.angle)},
+                  {"gauge", result.gauge}};
+    if (UserStatus != nullptr && UserStatus->cur_chara >= 0 && UserStatus->cur_chara < CharaCount()) {
+        event["character"] = CharaIdName(UserStatus->cur_chara);
+    }
+    if (hit.monster >= 0 && hit.monster < static_cast<int>(g_monster_handle_generations.size())) {
+        event["entity"] = MonsterHandleId(hit.monster, g_monster_handle_generations[hit.monster]);
+    }
+    SharedRuntime().QueueEvent("game.player.hit", event);
+    return result;
+}
+
+// combat.feel_set: hit-stop (frames the floor holds still), camera shake (its strength) and rumble when blows land.
+// One mod's feel at a time; feel_clear or unloading the mod takes it off.
+struct HitFeel {
+    int  stop_light = 0, stop_heavy = 0, stop_critical = 0, stop_hurt = 0;
+    int  shake_light = 0, shake_heavy = 0, shake_hurt = 0;
+    bool rumble = false;
+};
+HitFeel     g_feel;
+std::string g_feel_owner;
+int         g_hit_stop = 0, g_feel_frame = -1;
+
+void Shake(int strength, int frames) {
+    if (strength <= 0) return;
+    const float s = static_cast<float>(strength) * 0.6f;
+    if (BtActStatus.camera_shake_frames > 0 && BtActStatus.camera_shake >= s) return;
+    BtActStatus.camera_shake = s;
+    BtActStatus.camera_shake_frames = frames;
+    BtActStatus.camera_shake_decay = s / static_cast<float>(frames);
+}
+
+void Feel(int stop, int shake, int shake_frames, int rumble, int rumble_frames) {
+    g_hit_stop = std::max(g_hit_stop, stop);
+    Shake(shake, shake_frames);
+    if (g_feel.rumble && rumble > 0) GamePad.SetVibration(1, rumble, rumble_frames);
+}
+
+void ChronicleFeelPlayerHit(bool heavy) {
+    if (g_feel_owner.empty()) return;
+    // A swing striking several monsters in one frame freezes once.
+    const int frame = static_cast<int>(SharedRuntime().Frame());
+    if (frame == g_feel_frame) return;
+    g_feel_frame = frame;
+    if (heavy || ChronicleHitIsCharged()) Feel(g_feel.stop_heavy, g_feel.shake_heavy, 14, 0xC8, 10);
+    else Feel(g_feel.stop_light, g_feel.shake_light, 8, 0x8C, 5);
+}
+void ChronicleFeelPlayerHurt(bool heavy) {
+    if (g_feel_owner.empty()) return;
+    Feel(heavy ? g_feel.stop_hurt : g_feel.stop_hurt / 2, g_feel.shake_hurt, 16, 0, 0);
+}
+void ChronicleFeelCritical() {
+    if (g_feel_owner.empty()) return;
+    Feel(g_feel.stop_critical, g_feel.shake_heavy, 18, 0xFF, 14);
+}
+bool ChronicleHitStopHold() {
+    if (g_hit_stop <= 0) return false;
+    --g_hit_stop;
+    // The pad is read but the floor isn't stepped: keep an R2 pressed now for after the freeze. (A roll needs L2's
+    // tap to end, which the step after the freeze sees.)
+    if (GamePad.Down(PAD_R2) != 0) g_r2_press.left = std::max(g_r2_press.left, g_player_tuning.input_buffer + 1);
+    return true;
+}
+
+ApiCallResult SetHitFeel(std::string_view owner, const Json &args) {
+    const char *usage = "expected {hit_stop = optional {light, heavy, critical, hurt} 0..12, shake = optional {light, heavy, hurt} 0..10, "
+                        "rumble = optional boolean}";
+    if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(usage);
+    const Json &request = args[0];
+    HitFeel feel;
+    for (auto field = request.begin(); field != request.end(); ++field) {
+        if (field.key() != "hit_stop" && field.key() != "shake" && field.key() != "rumble") {
+            return Invalid("combat.feel_set received an unsupported field: " + field.key());
+        }
+    }
+    if (request.contains("hit_stop")) {
+        const Json &stop = request["hit_stop"];
+        if (!stop.is_object()) return Invalid(usage);
+        for (auto field = stop.begin(); field != stop.end(); ++field) {
+            int *to = field.key() == "light" ? &feel.stop_light : field.key() == "heavy" ? &feel.stop_heavy
+                    : field.key() == "critical" ? &feel.stop_critical : field.key() == "hurt" ? &feel.stop_hurt : nullptr;
+            if (to == nullptr || !ReadBoundedInt(stop, field.key().c_str(), 0, 12, *to)) return Invalid(usage);
+        }
+    }
+    if (request.contains("shake")) {
+        const Json &shake = request["shake"];
+        if (!shake.is_object()) return Invalid(usage);
+        for (auto field = shake.begin(); field != shake.end(); ++field) {
+            int *to = field.key() == "light" ? &feel.shake_light : field.key() == "heavy" ? &feel.shake_heavy
+                    : field.key() == "hurt" ? &feel.shake_hurt : nullptr;
+            if (to == nullptr || !ReadBoundedInt(shake, field.key().c_str(), 0, 10, *to)) return Invalid(usage);
+        }
+    }
+    if (request.contains("rumble")) {
+        if (!request["rumble"].is_boolean()) return Invalid(usage);
+        feel.rumble = request["rumble"].get<bool>();
+    }
+    if (!g_feel_owner.empty() && g_feel_owner != owner) return Failed("another mod's hit feel is set");
+    g_feel = feel;
+    g_feel_owner = std::string(owner);
+    return {ApiCallStatus::Ok,
+            {{"hit_stop", {{"light", feel.stop_light}, {"heavy", feel.stop_heavy}, {"critical", feel.stop_critical}, {"hurt", feel.stop_hurt}}},
+             {"shake", {{"light", feel.shake_light}, {"heavy", feel.shake_heavy}, {"hurt", feel.shake_hurt}}},
+             {"rumble", feel.rumble}},
+            {}};
+}
+ApiCallResult ClearHitFeel(std::string_view owner) {
+    if (g_feel_owner == owner) {
+        g_feel_owner.clear();
+        g_feel = {};
+        g_hit_stop = 0;
+    }
+    return {ApiCallStatus::Ok, {{"cleared", true}}, {}};
+}
+
+void ChroniclePlayerHitRecoil(bool broke) {
+    if (broke && g_guard_rules.on && g_guard_rules.break_recoil > 0) {
+        BtActStatus.recoil_frames = g_guard_rules.break_recoil;
+    } else if (g_player_tuning.recoil_scale != 1.0f && BtActStatus.recoil_frames > 0) {
+        const int scaled = static_cast<int>(std::lround(static_cast<float>(BtActStatus.recoil_frames) * g_player_tuning.recoil_scale));
+        BtActStatus.recoil_frames = std::max(scaled, 1);
+    }
+    if (g_player_tuning.invincible_bonus_frames > 0) {
+        BtActStatus.invincible_frames = std::max(BtActStatus.invincible_frames,
+                                                 BtActStatus.recoil_frames + g_player_tuning.invincible_bonus_frames);
+    }
+}
+
+bool ChroniclePlayerGuardWithoutLock() { return g_guard_rules.on && g_guard_rules.without_lock; }
+
+bool ChroniclePlayerGaugeTick() {
+    g_guard_frames = BtActStatus.action_on == 6 ? g_guard_frames + 1 : 0;
+    ++g_poise_clock;
+    return GaugeDelayStep(g_gauge_delay, BtActStatus.action_gauge, g_gauge_rules.on ? g_gauge_rules.refill_delay : 0);
+}
+
+void ChroniclePlayerGaugeSeen() { GaugeDelaySeen(g_gauge_delay, BtActStatus.action_gauge); }
+
+bool ChroniclePlayerSwingAllowed(bool idle) {
+    return !g_gauge_rules.on || !idle || BtActStatus.action_gauge >= g_gauge_rules.min_to_swing;
+}
+
+void ChroniclePlayerSwingStarted(bool idle) {
+    if (!g_gauge_rules.on || !idle || BtActStatus.action_on == 0 || g_gauge_rules.first_swing_cost <= 0.0f) return;
+    BtActStatus.action_gauge = std::max(BtActStatus.action_gauge - g_gauge_rules.first_swing_cost, 0.0f);
+}
+
+void ResetChroniclePlayerRulesForTests() {
+    g_guard_rules_owner.clear();
+    g_guard_rules = {};
+    g_gauge_rules_owner.clear();
+    g_gauge_rules = {};
+    g_gauge_delay = {};
+    g_guard_frames = 0;
+    g_poise = {};
+    g_poise_clock = 0;
+}
 int ChroniclePlayerExtraShots() { return g_player_tuning.extra_shots; }
 bool ChroniclePlayerShotsPierce() { return g_player_tuning.shots_pierce; }
+
+bool ChronicleLockFlick() { return g_player_tuning.lock_flick; }
+bool ChronicleLockSight() { return g_player_tuning.lock_sight; }
+bool ChronicleLockCamera() { return g_player_tuning.lock_camera; }
+
+// soft_lock: the nearest live enemy within 64 of the player and soft_lock degrees of `heading`, if any.
+bool SoftLockHeading(float &heading) {
+    CMonstorUnit *unit = NowMonstorUnit;
+    if (g_player_tuning.soft_lock <= 0 || lockOnTargetFlag != 0 || mode != GAME_MODE_DUNGEON || unit == nullptr) return false;
+    float at[4]{};
+    CharaMain.GetPosition(at);
+    const float arc = static_cast<float>(g_player_tuning.soft_lock) * 3.14159265f / 180.0f;
+    float best = 64.0f;
+    bool found = false;
+    float turned = heading;
+    for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
+        const MONSTOR &m = unit->monster[slot];
+        if (m.state != 2 || m.hp <= 0 || m.revealed == 0 || m.lockon_enabled == 0) continue;
+        float there[4]{};
+        unit->chara[slot][0].GetPosition(there);
+        const float dx = there[0] - at[0], dz = there[2] - at[2];
+        const float d = std::hypot(dx, dz);
+        if (d >= best) continue;
+        float off = std::atan2(dx, dz) - heading;
+        while (off > 3.14159265f) off -= 6.2831853f;
+        while (off < -3.14159265f) off += 6.2831853f;
+        if (std::fabs(off) > arc) continue;
+        best = d;
+        found = true;
+        turned = std::atan2(dx, dz);
+    }
+    heading = turned;
+    return found;
+}
+
+void ChronicleSoftLockTurn() {
+    if (CharaMain.frame == nullptr) return;
+    float heading = BtActStatus.stick_strength >= 0.3f ? std::atan2(BtActStatus.move_x, BtActStatus.move_z) : PlayerHeading();
+    if (SoftLockHeading(heading)) CharaMain.frame->SetRotation(0.0f, heading, 0.0f);
+}
+
+bool ChronicleHealItemLocked() {
+    const int lock = g_player_tuning.item_heal_lock;
+    CMonstorUnit *unit = NowMonstorUnit;
+    if (lock <= 0 || g_mod_item_use || mode != GAME_MODE_DUNGEON || unit == nullptr) return false;
+    float at[4]{};
+    CharaMain.GetPosition(at);
+    for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
+        const MONSTOR &m = unit->monster[slot];
+        if (m.state != 2 || m.hp <= 0 || m.revealed == 0) continue;
+        float there[4]{};
+        unit->chara[slot][0].GetPosition(there);
+        if (std::hypot(at[0] - there[0], at[2] - there[2]) <= static_cast<float>(lock)) return true;
+    }
+    return false;
+}
 
 bool ChronicleMoveShotOrigin(float *world) {
     if (!g_shot_style.active || g_shot_style.hit == nullptr || g_shot_style.hit->from.empty() || CharaMain.frame == nullptr) return false;
@@ -14596,7 +16458,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     for (const char *path : {"player.get", "player.set", "player.heal", "player.damage", "party.list", "party.active", "party.set_active", "party.join", "party.leave", "party.town_active", "party.town_set_active",
                              "save.slot_id",
                              "player.status_add", "player.status_remove", "player.thirst_get", "player.thirst_set",
-                             "player.tuning_set", "player.tuning_clear", "player.invincible", "player.moves_set", "player.moves_clear", "player.form_set", "player.form_clear", "player.move_play", "animations.player_register", "animations.player_unregister", "animations.player_list", "animations.monster_register", "animations.monster_unregister", "animations.monster_list", "player.fatal_guard", "party.companion_set", "party.companion_get",
+                             "player.tuning_set", "player.tuning_clear", "player.invincible", "player.moves_set", "player.moves_clear", "player.form_set", "player.form_clear", "player.move_play", "player.critical_set", "player.critical_clear", "animations.player_register", "animations.player_unregister", "animations.player_list", "animations.monster_register", "animations.monster_unregister", "animations.monster_list", "player.fatal_guard", "player.guard_rules_set", "player.guard_rules_clear", "player.gauge_rules_set", "player.gauge_rules_clear", "player.gauge_get", "player.gauge_set", "player.state", "party.companion_set", "party.companion_get",
                              "characters.list", "characters.get", "world.get", "world.transition", "world.set_time",
                              "world.story_flag_get", "world.story_flag_set", "world.map_flag_get", "world.map_flag_set",
                              "world.story_value_get", "world.story_value_set",
@@ -14605,23 +16467,26 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "georama.atla_list", "georama.atla_collect", "georama.atla_spawn", "georama.satisfaction_get",
                              "locations.list", "locations.get", "locations.register",
                              "georama.request_set", "dungeons.list", "dungeons.get", "dungeons.register", "dungeons.set_layout", "dungeons.set_seed", "dungeons.set_opened_chests", "dungeons.chests_get", "dungeons.set_zones", "dungeons.zones_get", "dungeons.set_exits", "dungeons.warp", "dungeons.drop_gilda", "dungeons.enter_floor", "dungeons.set_arrival", "dungeons.set_exit_room", "dungeons.set_population", "dungeons.set_enemy_survival",
-                             "dungeons.floor_rules_get", "dungeons.floor_rules_set", "dungeons.floor_redirect", "dungeons.set_shortcuts", "dungeons.shortcuts_get", "dungeons.set_weapon_drops", "dungeons.chest_weapons_add", "dungeons.chest_weapons_clear", "dungeons.set_backrooms", "dungeons.set_story_exits", "dungeons.set_floor_select", "dungeons.set_quick_passage", "world.set_roads", "dungeons.play_event", "dungeons.set_npc_marks", "dungeons.set_npc_models", "dungeons.set_warden_room", "dungeons.set_character_blocks", "weapons.style_set", "weapons.style_clear", "effects.burst", "entities.tint", "entities.knockback", "dungeons.warden_room_get", "dungeons.warden_room_release", "dungeons.set_rest_room", "dungeons.rest_room_get", "ui.choice_open", "ui.choice_close", "ui.map_open", "ui.map_close", "dungeons.map_snapshot", "dungeons.set_seen", "dungeons.set_waypoint", "ui.boss_card", "world.dungeon_npc_set", "world.dungeon_npc_clear", "ui.run_menu_set", "ui.run_menu_clear", "ui.run_menu_open", "ui.run_menu_close", "dungeons.loot_get", "dungeons.loot_override",
+                             "dungeons.floor_rules_get", "dungeons.floor_rules_set", "dungeons.floor_redirect", "dungeons.set_shortcuts", "dungeons.shortcuts_get", "dungeons.set_weapon_drops", "dungeons.chest_weapons_add", "dungeons.chest_weapons_clear", "dungeons.set_backrooms", "dungeons.set_story_exits", "dungeons.set_floor_select", "dungeons.set_quick_passage", "world.set_roads", "dungeons.play_event", "dungeons.set_npc_marks", "dungeons.set_npc_models", "dungeons.set_warden_room", "dungeons.set_character_blocks", "weapons.style_set", "weapons.style_clear", "effects.burst", "entities.tint", "entities.knockback", "dungeons.warden_room_get", "dungeons.warden_room_release", "dungeons.room_seal", "dungeons.room_release", "dungeons.zone_gate_open", "dungeons.set_rest_room", "dungeons.rest_room_get", "ui.choice_open", "ui.choice_close", "ui.map_open", "ui.map_close", "ui.sky_open", "ui.sky_close", "dungeons.map_snapshot", "dungeons.set_seen", "dungeons.set_waypoint", "ui.boss_card", "world.dungeon_npc_set", "world.dungeon_npc_clear", "world.ghost_get", "world.ghost_play", "ui.run_menu_set", "ui.run_menu_clear", "ui.run_menu_open", "ui.run_menu_close", "dungeons.loot_get", "dungeons.loot_override",
                              "dungeons.back_floor_get", "dungeons.back_floor_enter",
                              "world.register_dungeon",
                              "weapons.list", "weapons.get", "weapons.give", "weapons.register", "weapons.equip", "weapons.remove", "weapons.upgrade",
-                             "weapons.definition_set", "weapons.stats_set", "weapons.durability_set", "weapons.abs_get", "weapons.abs_add", "weapons.attachments_get", "weapons.attachment_insert",
+                             "weapons.definition_set", "weapons.stat_label_set", "weapons.stats_set", "weapons.durability_set", "weapons.abs_get", "weapons.abs_add", "weapons.attachments_get", "weapons.attachment_insert",
                              "weapons.attachment_remove", "weapons.build_up_list", "weapons.build_up_register", "weapons.synthesize",
                              "shops.list", "shops.get", "shops.register_item", "shops.remove_item", "shops.set_items", "shops.set_price",
-                             "combat.get", "combat.damage", "combat.status_add", "combat.register_formula",
+                             "combat.get", "combat.damage", "combat.status_add", "combat.strike_player", "combat.feel_set", "combat.feel_clear", "combat.register_formula",
                              "combat.heal", "entities.query", "models.resolve", "models.register", "models.unregister", "models.replace",
                              "models.remove", "animations.register", "animations.play", "animations.stop", "debug.inspect", "debug.overlay_register",
                              "entities.get", "entities.set_stats", "entities.scale_set", "entities.script_int_set", "entities.spawn", "entities.despawn", "entities.set_active_limit", "characters.spawn",
                              "physics.query", "physics.velocity_get", "physics.velocity_set",
-                             "items.list", "items.get", "items.register", "items.give", "items.remove", "items.icon_set", "items.use", "items.quick_slots", "items.quick_slot_select", "items.quick_slot_use",
+                             "items.list", "items.get", "items.register", "items.give", "items.remove", "items.icon_set", "items.use", "items.quick_slots", "items.quick_slot_select", "items.quick_slot_use", "items.charm_slots", "items.charm_slots_set", "items.gear", "items.gear_give", "items.gear_stock_set", "items.gear_page_set", "items.gear_equip", "items.gear_unequip", "items.gear_remove",
                              "content.list", "content.register", "content.unregister"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_capabilities.push_back({"characters.register", true, {}});
+    for (const char *path : {"messages.post", "messages.list", "messages.rate", "messages.remove"}) {
+        config.api_capabilities.push_back({path, true, {}});
+    }
     config.api_capabilities.push_back({"characters.register_playable", true, {}});
     config.api_capabilities.push_back({"render.camera_get", true, {}});
     config.api_capabilities.push_back({"render.camera_set", true, {}});
@@ -14641,6 +16506,8 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     config.api_capabilities.push_back({"render.layer_remove", true, {}});
     config.api_capabilities.push_back({"render.bar_register", true, {}});
     config.api_capabilities.push_back({"render.bar_remove", true, {}});
+    config.api_capabilities.push_back({"render.target_bar_set", true, {}});
+    config.api_capabilities.push_back({"render.target_meter_set", true, {}});
     config.api_capabilities.push_back({"render.hud_icon_set", true, {}});
     config.api_capabilities.push_back({"render.hud_icon_remove", true, {}});
     config.api_capabilities.push_back({"render.floor_label_set", true, {}});
@@ -14699,10 +16566,16 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
         RestoreEnemySurvivalRequest();
         std::erase_if(g_town_camera_requests, [mod_id](const auto &entry) { return entry.first == mod_id; });
         ClearChroniclePlayerTuning(mod_id);
+        if (g_guard_rules_owner == mod_id) { g_guard_rules_owner.clear(); g_guard_rules = {}; }
+        if (g_gauge_rules_owner == mod_id) { g_gauge_rules_owner.clear(); g_gauge_rules = {}; }
+        ReleaseCriticals(mod_id);
         std::erase_if(g_floor_redirects, [mod_id](const auto &entry) { return entry.second.first == mod_id; });
-        if (g_shortcut_requests.erase(std::string(mod_id)) != 0) RefreshShortcutRequests();
+        g_shortcut_open.erase(std::string(mod_id));
+        const bool had_walls = g_illusory_requests.erase(std::string(mod_id)) != 0;
+        if (g_shortcut_requests.erase(std::string(mod_id)) != 0 || had_walls) RefreshShortcutRequests();
         dc::game::MoonModChoiceCloseOwner(mod_id);
         dc::game::MoonModMapCloseOwner(mod_id);
+        dc::game::MoonModSkyCloseOwner(mod_id);
         dc::game::MoonModMenuClear(mod_id);
         dc::game::MoonModNpcClear(std::string(mod_id));
         ClearMoonModChestWeapons(mod_id);
@@ -14779,6 +16652,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
             dc::game::MoonModCompanionRequest(-1, -1, 1, 1.0f);
             g_companion_owner.clear();
         }
+        ClearHitFeel(mod_id);
         RestoreChronicleModelReplacements(mod_id);
         RestoreMonsterScalesByOwner(mod_id);
         DespawnOwnedChronicleActors(mod_id);

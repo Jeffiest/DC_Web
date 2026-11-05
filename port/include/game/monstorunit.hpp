@@ -294,7 +294,7 @@ STATIC_ASSERT(sizeof(MONSTOR_GUARD_WINDOW) == 0x20);
 #define MONSTOR_SLOT_MAX 256
 // Kinds of monster a floor can load: a boss a mod places brings its whole native cast (the Ice Queen's is seven), and
 // a map of eight zones (dungeons.set_zones source_floor) loads eight floors' rosters.
-#define MONSTOR_MODEL_MAX 48
+#define MONSTOR_MODEL_MAX 128 // MoonMod: a whole run on one map holds many dungeons' monsters
 #else
 #define MONSTOR_SLOT_MAX 16
 #define MONSTOR_MODEL_MAX 9

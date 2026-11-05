@@ -2078,14 +2078,16 @@ int setCollisionData(CDungeonMap *map, CCPoly *poly, float *position, float radi
         }
 
         const auto &cell = map->cells[x + (z * kGridWidth)];
-        CFrame     *model = PartsCollision(map, cell.parts_no);
+        // MoonMod: a zone of another dungeon collides with its own parts (part banks)
+        CDungeonParts *cell_part = cell.parts_no == -1 ? nullptr : DngCellPart(map, x + (z * kGridWidth));
+        CFrame     *model = cell_part == nullptr ? nullptr : cell_part->collision;
 
         if (model == nullptr) {
             continue;
         }
 
         auto angle = static_cast<float>(cell.direction);
-        angle += static_cast<float>(PartsCollisionTurn(map, cell.parts_no));
+        angle += static_cast<float>(cell_part == nullptr ? 0 : cell_part->collision_turn);
 
         if (angle > 3.0f) {
             angle -= 3.0f;
@@ -2093,7 +2095,10 @@ int setCollisionData(CDungeonMap *map, CCPoly *poly, float *position, float radi
 
         model->SetRotation(0.0f, QuarterTurnAngle(angle), 0.0f);
         model->SetPosition(kCellSize * static_cast<float>(x), 0.0f, kCellSize * static_cast<float>(z));
-        count += model->PickUpNearPoly(&poly[count], box);
+        CBoxVu0 cell_box = box;
+        DngLiftCellFrame(map, model, x, z, &cell_box);
+        count += model->PickUpNearPoly(&poly[count], cell_box);
+        DngRestoreCellFrame(model);
     }
 
     for (auto &treasure_box : map->boxes) {
@@ -2167,7 +2172,10 @@ void CDungeonParts::Draw() {
         position[2] += frame_offset[i][2];
         position[3] = 1.0f;
         frame[i]->SetPosition(position);
+        DngLiftCellFrame(NowDngMap, frame[i], static_cast<int>(std::lround(pos[0] / kCellSize)),
+                         static_cast<int>(std::lround(pos[2] / kCellSize)));
         MGDraw(frame[i]);
+        DngRestoreCellFrame(frame[i]);
     }
 }
 
@@ -2210,6 +2218,7 @@ void CDungeonParts::DrawCalc(int x, int z, int turn, int map_type) {
 
         collision->SetRotation(0.0f, QuarterTurnAngle(static_cast<float>(model_turn)), 0.0f);
         collision->SetPosition(kCellSize * static_cast<float>(x), 0.0f, kCellSize * static_cast<float>(z));
+        DngLiftCellFrame(NowDngMap, collision, x, z);
         return;
     }
 

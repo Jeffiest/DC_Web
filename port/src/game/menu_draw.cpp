@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -24,6 +26,7 @@
 #include "editloop.hpp"
 #include "gamepad.hpp"
 #include "gameutil.hpp"
+#include "gear.hpp"
 #include "gfx/gfx.hpp"
 #include "itemdata.hpp"
 #include "localize/localize.hpp"
@@ -36,10 +39,15 @@
 #include "menu_misc.hpp"
 #include "menuetc.hpp"
 #include "menuitemstep.hpp"
+#include "moonmod/item_icon_override.hpp"
+#include "moonmod/run_menu.hpp"
 #include "mglib.hpp"
 #include "rect.hpp"
+#include "render/texture_registry.hpp"
+#include "ui/framework.hpp"
 #include "savedata.hpp"
 #include "shop.hpp"
+#include "shop_menu.hpp"
 #include "snd.hpp"
 #include "sysmes.hpp"
 #include "text/caption_text.hpp"
@@ -1317,23 +1325,32 @@ void InitPersonalBoardMode(CUserStatus *status, PERSONAL_BOARD *board, int mode,
     }
 }
 
+void GearTabsDraw(int tab, int x, int y, CTexture *texture, int alpha);
+
+bool GearTabShown() {
+    // The item page's board, and an item shop's (where gear sells); not the storage shop's, whose tables have no fourth
+    // page.
+    const bool board = PerBoardPt == &ItemMenuMode.board || (PerBoardPt == &ShopMenu.board && ChargeOrShopFlag == SHOP_KIND_ITEM);
+    return GearPageOpen() && board && PerBoardPt->menu_kind == PERSONAL_BOARD_ITEM;
+}
+
 int BoardModeChangeKey() {
     const int board_mode = PerBoardPt->page;
+    // MoonMod: the Equipment tab comes after Attachments when a mod has opened it.
+    const bool gear = GearTabShown();
+    const int  count = gear ? 4 : 3;
+    int        tab = PerBoardPt->page == BOARD_PAGE_GEAR ? 3 : PerBoardPt->page;
 
     if (GamePad.Down(PAD_L2 | PAD_L1) && PerBoardPt->menu_kind == PERSONAL_BOARD_ITEM) {
-        PerBoardPt->page--;
-
-        if (PerBoardPt->page < BOARD_PAGE_ITEM) {
-            PerBoardPt->page = BOARD_PAGE_ATTACH;
-        }
+        tab = (tab + count - 1) % count;
     }
 
     if (GamePad.Down(PAD_R2 | PAD_R1) && PerBoardPt->menu_kind == PERSONAL_BOARD_ITEM) {
-        PerBoardPt->page++;
+        tab = (tab + 1) % count;
+    }
 
-        if (PerBoardPt->page > BOARD_PAGE_ATTACH) {
-            PerBoardPt->page = BOARD_PAGE_ITEM;
-        }
+    if (PerBoardPt->menu_kind == PERSONAL_BOARD_ITEM) {
+        PerBoardPt->page = tab == 3 ? BOARD_PAGE_GEAR : tab;
     }
 
     return board_mode != PerBoardPt->page ? 1 : 0;
@@ -1645,6 +1662,8 @@ int PersonalRetMax(int board_mode) {
             return CharaSlotsInPlay(*PerBoardStatusPt) * 10;
         case BOARD_PAGE_ATTACH:
             return 40;
+        case BOARD_PAGE_GEAR:
+            return (GEAR_BAG_MAX + 1 + 4) / 5 * 5; // whole rows, with room for the one in hand
         case BOARD_PAGE_ATLA_VILLAGE:
         case BOARD_PAGE_ATLA_VILLAGE + 1:
         case BOARD_PAGE_ATLA_VILLAGE + 2:
@@ -1757,6 +1776,15 @@ void CommonIconDraw(int page, int count, int x, int y, int top, int bottom, int 
 
             break;
         }
+        case BOARD_PAGE_GEAR:
+            for (int i = 0; i < count; i++) {
+                if (const GearPiece *piece = GearBagPiece(i)) {
+                    DrawGearIcon(piece->icon.empty() ? GearKindIcon(piece->kind) : piece->icon, piece->color,
+                                 x + i % 5 * 0x28, y + i / 5 * 0x28, top, bottom, alpha, false, piece->kind);
+                }
+            }
+
+            break;
         case BOARD_PAGE_ITEM: {
             draw_x = x;
             const s16 *items = PerBoardPt->item_pack->item;
@@ -1860,6 +1888,200 @@ void PersonalBoardOptionDraw(int board_mode, int count, int x, int y, CTexture *
     PersonalBoardMaxDraw(count, x, y, texture, alpha);
 }
 
+namespace {
+
+// MoonMod: the tab row with a fourth tab, Equipment, for the gear bag. The sheet holds the row three times, each with
+// one tab raised; here the bar is pieced from the parts of two rows no tab stands on, and each tab's bump is cut from
+// its own row and set down closer together (kTabStep apart, not the sheet's 65) so four fit. Equipment's bump is the
+// Items bump with its bag painted over in plain stone from the bar and the tunic's icon on it.
+constexpr int kTabFirst = 40;      // the first bump's centre, from the row's left
+constexpr int kTabStep = 56;       // between bump centres
+constexpr int kSheetBump = 47;     // the sheet's first bump's centre in its row
+constexpr int kSheetStep = 65;     // and between them
+constexpr int kBumpHalf = 38;      // a bump's cut, either side of its centre
+constexpr int kBumpRows = 31;      // and down from the top
+constexpr int kBarTop = 27;        // where the bar begins in a row
+constexpr int kRowHeight = 0x2F;
+
+// The tabs' name plates, drawn rather than cut from the sheet so all four match: a gold pill in a dark brown rim, lit
+// from above, made kPlateDetail times finer than the menu's pixels and smoothed down, so its ends stay round.
+constexpr int kPlateDetail = 4;
+constexpr int kPlateHeight = 18;
+
+/** The plate texture for a plate width wide (menu pixels), made once for each width. */
+CTexture *TabPlateTexture(int width) {
+    struct Cached {
+        unsigned tbp = 0;
+        CTexture tex;
+    };
+    static std::map<int, Cached> cache;
+
+    if (auto found = cache.find(width); found != cache.end() && found->second.tbp != 0 && render::PortKeyLive(found->second.tbp)) {
+        return &found->second.tex;
+    }
+
+    const int   w = width * kPlateDetail;
+    const int   h = kPlateHeight * kPlateDetail;
+    const float radius = static_cast<float>(h) / 2.0f - 1.0f;
+    const float rim = 1.3f * kPlateDetail;
+    const float left = radius + 1.0f;
+    const float right = static_cast<float>(w) - radius - 1.0f;
+    const float middle = static_cast<float>(h) / 2.0f;
+
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4, 0);
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const float px = static_cast<float>(x) + 0.5f;
+            const float py = static_cast<float>(y) + 0.5f;
+            const float along = std::clamp(px, left, right);
+            const float dist = std::hypot(px - along, py - middle) - radius; // below 0 inside
+            const float cover = std::clamp(0.5f - dist, 0.0f, 1.0f);
+
+            if (cover <= 0.0f) {
+                continue;
+            }
+
+            // Gold that deepens downwards, a soft shine across the top half, then the rim blended in at the edge.
+            const float down = py / static_cast<float>(h);
+            float       r = 255.0f - 22.0f * down;
+            float       g = 236.0f - 66.0f * down;
+            float       b = 150.0f - 92.0f * down;
+            const float shine = std::clamp(1.0f - std::abs(down - 0.27f) / 0.17f, 0.0f, 1.0f) *
+                                std::clamp((-dist - rim) / (2.0f * kPlateDetail), 0.0f, 1.0f) * 0.55f;
+            r += (255.0f - r) * shine;
+            g += (255.0f - g) * shine;
+            b += (240.0f - b) * shine;
+            const float edge = std::clamp((rim + dist + 0.5f * kPlateDetail) / (0.6f * kPlateDetail), 0.0f, 1.0f);
+            r += (58.0f - r) * edge;
+            g += (34.0f - g) * edge;
+            b += (12.0f - b) * edge;
+
+            const size_t at = (static_cast<size_t>(y) * w + x) * 4;
+            rgba[at + 0] = static_cast<uint8_t>(std::lround(std::clamp(r, 0.0f, 255.0f)));
+            rgba[at + 1] = static_cast<uint8_t>(std::lround(std::clamp(g, 0.0f, 255.0f)));
+            rgba[at + 2] = static_cast<uint8_t>(std::lround(std::clamp(b, 0.0f, 255.0f)));
+            rgba[at + 3] = static_cast<uint8_t>(std::lround(cover * 255.0f));
+        }
+    }
+
+    render::PortDecodedTexture decoded{};
+    decoded.width = static_cast<unsigned>(w);
+    decoded.height = static_cast<unsigned>(h);
+    decoded.format = gfx::TextureFormat::Rgba8;
+    decoded.has_alpha = true;
+    decoded.levels.push_back(std::move(rgba));
+    const unsigned tbp = render::PortCreateTexture(decoded, render::PortTextureOwner::Other, nullptr);
+
+    if (tbp == 0) {
+        return nullptr;
+    }
+
+    Cached &entry = cache[width];
+    entry.tbp = tbp;
+    entry.tex.Initialize();
+    std::strcpy(entry.tex.name, "tabplate");
+    entry.tex.width = w;
+    entry.tex.height = h;
+    entry.tex.bpp = 4;
+    entry.tex.block = -1;
+    entry.tex.tex0 = static_cast<u_long>(tbp) | (1ull << 34);
+    entry.tex.tex1 = 0;
+    return &entry.tex;
+}
+
+/** A tab's name on its plate, centred at centre with the plate's top at top, in the game's own lettering. */
+void TabPlateDraw(std::string_view name, int centre, int top, int alpha) {
+    ui::Label label(name, ui::ColorWhite, ui::Alignment::Center, false, 0.74f, ui::FontWeight::Normal, 0.84f);
+    label.SetCustomRgb(0x2A, 0x18, 0x06);
+    const int width = label.GetWidth() + 16;
+    const int left = centre - width / 2;
+
+    if (CTexture *plate = TabPlateTexture(width)) {
+        const int was = PortBilinear();
+        setbilinear(1);
+        const CRect_i_ source(0, 0, width * kPlateDetail, kPlateHeight * kPlateDetail);
+        DrawMenu2DSprite(plate, CRect_i_(left + 1, top + 2, width, kPlateHeight), source, 0, 0, 0, alpha * 0x50 >> 7);
+        DrawMenu2DSprite(plate, CRect_i_(left, top, width, kPlateHeight), source, alpha);
+        setbilinear(was);
+    }
+
+    label.Draw(centre, top - 2, alpha);
+}
+
+void GearTabBump(int tab, int x, int top, CTexture *texture, int alpha) {
+    const int row = tab < 3 ? tab : 0;
+    const int source = kSheetBump + kSheetStep * row;
+    const int centre = x + kTabFirst + kTabStep * tab;
+    DrawMenu2DSprite(texture, CRect_i_(centre - kBumpHalf, top, kBumpHalf * 2, kBumpRows),
+                     CRect_i_(0x100 + source - kBumpHalf, row * 0x30, kBumpHalf * 2, kBumpRows), alpha);
+
+    if (tab < 3) {
+        return;
+    }
+
+    // Over the bag, bands of the bar's plain stone, narrowing with the bump towards its top (the rim stays).
+    for (int band = 3; band < 35; band += 2) {
+        const int half = std::min(17 + band / 2, 33) - 3;
+        DrawMenu2DSprite(texture, CRect_i_(centre - half, top + band, half * 2, 2), CRect_i_(0x100 + 175, 0x30 + 36 + band % 8, half * 2, 2), alpha);
+    }
+
+    DrawGearIcon(GearKindIcon(GEAR_TUNIC), 0xD8A070, centre - 15, top + 2, 0, 0x1C0, alpha);
+}
+
+} // namespace
+
+void GearTabsDraw(int tab, int x, int y, CTexture *texture, int alpha) {
+    const int top = y - 0x30 + 2;
+
+    // The bar, from the left of the third row and the right of the first, where no bump stands.
+    DrawMenu2DSprite(texture, CRect_i_(x, top + kBarTop, 0x80, kRowHeight - kBarTop), CRect_i_(0x100, 0x60 + kBarTop, 0x80, kRowHeight - kBarTop), alpha);
+    DrawMenu2DSprite(texture, CRect_i_(x + 0x80, top + kBarTop, 0x80, kRowHeight - kBarTop), CRect_i_(0x180, kBarTop, 0x80, kRowHeight - kBarTop), alpha);
+
+    for (int other = 0; other < 4; other++) {
+        if (other != tab) {
+            GearTabBump(other, x, top, texture, alpha);
+        }
+    }
+
+    GearTabBump(tab, x, top, texture, alpha);
+
+    // The chosen tab's name plate above it, all four drawn alike.
+    static constexpr std::string_view names[4] = {"ITEM", "WEAPON", "ATTACHMENT", "EQUIPMENT"};
+    TabPlateDraw(names[tab], x + kTabFirst + kTabStep * tab, y - 0x4C + 4, alpha);
+}
+
+void DrawGearIcon(const std::string &game_path, u32 rgb, int x, int y, int top, int bottom, int alpha, bool blacked, int kind) {
+    // The hero's own hat, tunic, gloves or boots in place of the kind's icon (the 32x32 cell in its 40x40 slot).
+    if (kind >= 0 && game_path == GearKindIcon(kind) && DrawGearPart(kind, rgb, x - 4, y - 4, 0x28, top, bottom, alpha, blacked)) {
+        return;
+    }
+
+    CTexture *texture = game_path.empty() ? nullptr : HudImageTexture(game_path.c_str());
+
+    if (texture == nullptr) {
+        return;
+    }
+
+    int position = y;
+    int v = 0;
+    int length = 0x20;
+    MenuTextureClip(position, v, length, top, bottom);
+
+    if (length <= 0 || position + length <= top || position >= bottom) {
+        return;
+    }
+
+    if (blacked) {
+        DrawMenu2DSprite(texture, CRect_i_(x, position, 0x20, length), CRect_i_(0, v, 0x20, length), 0x08, 0x0A, 0x12, alpha * 0x60 >> 7);
+        return;
+    }
+
+    // 0x80 is the texture as it is: the colour scales each channel down from white.
+    const auto channel = [rgb](int shift) { return static_cast<unsigned char>((rgb >> shift & 0xFF) * 0x80 / 0xFF); };
+    DrawMenu2DSprite(texture, CRect_i_(x, position, 0x20, length), CRect_i_(0, v, 0x20, length), channel(16), channel(8), channel(0), alpha);
+}
+
 void PersonalBoardTagDraw(int tag, int x, int y, CTexture *texture, int shift, int alpha) {
     int bright = 0x80;
     int top = 0;
@@ -1870,6 +2092,11 @@ void PersonalBoardTagDraw(int tag, int x, int y, CTexture *texture, int shift, i
             bright = 0x40;
             [[fallthrough]];
         case PERSONAL_BOARD_ITEM:
+            if (shift == 0 && GearTabShown()) {
+                GearTabsDraw(tag == BOARD_PAGE_GEAR ? 3 : tag, x, y, texture, alpha);
+                break;
+            }
+
             for (int kind = 0; kind < 3; kind++) {
                 if (tag != kind) {
                     top = y - 0x30;
@@ -2006,6 +2233,19 @@ void PersonalBoardScrlBarDraw(int count, int x, int y, float &scroll, unsigned c
 }
 
 void PersonalBoardMaxDraw(int num, int x, int y, CTexture *texture, int alpha) {
+    // MoonMod: with the Equipment tab the bubble sits under the board, between the money and the trash can, on the item
+    // page; a shop has its totals there, so in a shop it moves right, past the fourth tab.
+    if (GearTabShown() && PerBoardPt == &ItemMenuMode.board) {
+        x -= 0x24;
+        y += 0xCC;
+    } else if (GearTabShown()) {
+        x += 0x1C;
+    }
+
+    if (PerBoardPt->page == BOARD_PAGE_GEAR) {
+        num = GEAR_BAG_MAX;
+    }
+
     int left = x + 0xD2;
     int top = y - 0x28;
 
@@ -2058,6 +2298,10 @@ void PersonalBoardMaxDraw(int num, int x, int y, CTexture *texture, int alpha) {
                 max++;
             }
 
+            break;
+        case BOARD_PAGE_GEAR:
+            max = GearBagCount();
+            full = max > num ? 1 : 0;
             break;
         default:
             break;

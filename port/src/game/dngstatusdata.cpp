@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "charm_slots.hpp"
+#include "gear.hpp"
 #include "dngstatusdata.hpp"
 #include "dun/gameloop.hpp"
 #include "itemdata.hpp"
@@ -656,6 +658,8 @@ void CDngStatusData::Initialize() {
     this->cur_chara = CHARA_TOAN;
     this->party_size = 1;
     ClearCharaJoined(); // MoonMod: a new game's party has no registered character in it
+    ClearCharmSlots();  // MoonMod: nor charms in the charm slots
+    ClearGear();        // nor gear (gear.hpp)
 
     for (int chara_no = 0; chara_no < CHARA_MAX; chara_no++) {
         this->max_hp[chara_no] = static_cast<s16>(start_of(chara_no, start_hp, &PlayableChara::hp));

@@ -169,6 +169,8 @@ int _SET_MOTION(RS_STACKDATA *stack, int argc) {
             speed *= 0.5f;
         }
 
+        speed *= moonmod::ChronicleMonsterSpeedScale(monster_no); // MoonMod combat.status_add haste
+
         NowMonstorUnit->chara[monster_no][0].SetMotion(motion_id, 0);
         NowMonstorUnit->chara[monster_no][0].SetMotionSpeed(speed);
         NowMonstorUnit->monster[monster_no].requested_motion = motion_id;
@@ -188,6 +190,8 @@ int _SET_MOTION(RS_STACKDATA *stack, int argc) {
             speed *= 0.5f;
         }
 
+        speed *= moonmod::ChronicleMonsterSpeedScale(monster_no); // MoonMod combat.status_add haste
+
         NowMonstorUnit->chara[monster_no][0].SetMotion(motion_id, 0);
         NowMonstorUnit->chara[monster_no][0].SetMotionSpeed(speed);
         NowMonstorUnit->monster[monster_no].requested_motion = motion_id;
@@ -206,6 +210,8 @@ int _SET_MOTION(RS_STACKDATA *stack, int argc) {
         if (half_speed) {
             speed *= 0.5f;
         }
+
+        speed *= moonmod::ChronicleMonsterSpeedScale(monster_no); // MoonMod combat.status_add haste
 
         int mode = GetStackInt(stack++);
         NowMonstorUnit->chara[monster_no][0].SetMotion(motion_id, mode);
@@ -537,6 +543,7 @@ int _SET_MOVE(RS_STACKDATA *stack, int /*argc*/) {
         speed *= 0.5f;
     }
 
+    speed *= moonmod::ChronicleMonsterSpeedScale(monster_no); // MoonMod combat.status_add haste
     NowMonstorUnit->monster[monster_no].movement_speed = speed;
     return 1;
 }

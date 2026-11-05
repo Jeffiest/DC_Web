@@ -11,6 +11,7 @@
 #include "chararead.hpp"
 #include "cloth.hpp"
 #include "frame.hpp"
+#include "gear.hpp"
 #include "gameutil.hpp"
 #include "mathutil.hpp"
 #include "mglib.hpp"
@@ -845,11 +846,16 @@ void CCharacter::Draw() {
 
     MGSetAmbient(ambient);
     MGSetPLight(light_direction, light_colour);
-    MGDraw(this->frame);
 
-    for (int cloth_no = 0; cloth_no < CHARA_CLOTH_MAX; cloth_no++) {
-        if (this->cloth[cloth_no] != nullptr) {
-            this->cloth[cloth_no]->Draw();
+    {
+        // MoonMod: a hero's clothes for an empty gear slot are left out (gear.hpp).
+        const GearBareScope bare(this->frame);
+        MGDraw(this->frame);
+
+        for (int cloth_no = 0; cloth_no < CHARA_CLOTH_MAX; cloth_no++) {
+            if (this->cloth[cloth_no] != nullptr && !bare.Hides(this->cloth[cloth_no]->frame)) {
+                this->cloth[cloth_no]->Draw();
+            }
         }
     }
 

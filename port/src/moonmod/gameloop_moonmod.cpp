@@ -67,6 +67,8 @@ bool moonmod::ChronicleLoadMonsterModelForMod(dc::game::CMonstorUnit *unit, int 
         MonstorModelBuffer.used >= MonstorModelBuffer.limit) {
         return false;
     }
+    // the escape and teleport light's model lives in the read buffer a model loads through: not until it has gone
+    if (EscapeFlag != 0) return false;
     const int slot = unit->model_count;
     if (unit->SetupBaseModel(slot, native_model_no, 0x26, &MonstorModelBuffer) == 0 ||
         unit->model_count != slot + 1) {

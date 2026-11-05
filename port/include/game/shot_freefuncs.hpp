@@ -134,9 +134,10 @@ void BtStatusErrDraw(int y);
 void DrawModNotice(bool native_busy);
 
 /**
- * Draws one item into the reserved slot area.
+ * Draws one item into the reserved slot area: the size-square at (x, y) of page_name copied to (dsax, dsay) of
+ * item_name.
  */
-void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax, int dsay);
+void setItemToReserved(char *page_name, int x, int y, char *item_name, int dsax, int dsay, int size = 0x20);
 
 /**
  * Clears the cached map-jump data.

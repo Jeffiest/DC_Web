@@ -12,6 +12,11 @@
 
 #include "btactstatus.hpp"
 #include "btmisc.hpp"
+#include "collision.hpp"
+#include "collisiondata.hpp"
+#include "dungeonmap.hpp"
+#include "dungeonparts.hpp"
+#include "hitvalue.hpp"
 #include "character.hpp"
 #include "dataalloc.hpp"
 #include "dataread.hpp"
@@ -27,6 +32,7 @@
 #include "sound_effect.h"
 #include "texture.hpp"
 #include "userstatus.hpp"
+#include "moonmod/companion.hpp"
 #include "moonmod/game_hooks.hpp"
 
 namespace dc::game {
@@ -74,6 +80,27 @@ std::array<Bolt, 8> g_bolts{};
 constexpr std::array<int, 6>   kBoltCell = {0, 0, 0, 1, 0, 10};
 constexpr std::array<float, 6> kBoltSize = {1.0f, 1.0f, 1.0f, 1.8f, 1.0f, 0.8f};
 bool  g_placed = false;
+// MoonMod: hostile (an invader): its life, the blow it lands, its defence, frames it can't be hurt again, frames of its
+// fall left, its swings (every third is heavy) and the ambient it draws in.
+bool  g_hostile = false, g_heavy = false;
+int   g_hp = 0, g_max_hp = 0, g_blow = 10, g_defense = 0, g_hurt = 0, g_dying = 0, g_swings = 0;
+// An invader reads the player's swings: each swing started close by is weighed once (g_read), and now and then it
+// raises the hero's own guard (motions 8 up, 9 held, 10 down) for g_guard frames, which blocks a blow from the front.
+int   g_guard = 0, g_read_seed = 1;
+// Or it dashes aside, out of the swing's line (g_dash frames along g_dash_step), and can't be struck meanwhile.
+int   g_dash = 0;
+float g_dash_step[2] = {0.0f, 0.0f};
+bool  g_read = false;
+constexpr int kMotionGuardUp = 8, kMotionGuardHold = 9, kMotionGuardDown = 10;
+// Between swings it circles the player at its distance, locked on as the player's own lock-on walks (g_circle the
+// way round, 1 or -1, turning back at a wall and every other swing). Low on life it backs off (g_retreat frames) and drinks
+// one of its g_flasks (g_drink frames), healing at the end; a hit while it drinks spills it.
+int   g_circle = 1, g_retreat = 0, g_drink = 0, g_flasks = 0;
+constexpr int kMotionLockIdle = 0x12, kMotionStrafeBack = 0x16;
+constexpr int kInvaderFlasks = 2, kDrinkFrames = 50;
+float g_tint[3] = {-1.0f, -1.0f, -1.0f};
+constexpr int kMotionHurt = 6, kMotionDown = 4;
+constexpr int kTargetPlayer = -2; // a bolt flying at the player
 // MoonMod: the request's own shot (party.companion_set shot), -1 for the character's own way of fighting
 int   g_shot_cell = -1;
 float g_shot_size = 1.0f;
@@ -217,7 +244,257 @@ int PickTarget(const float *player) {
     return best;
 }
 
+// MoonMod: a blow on the player at that point, as a monster's would be: the game's own hit test takes it.
+void StrikePlayer(const float *at, int damage, bool heavy) {
+    float point[4] = {at[0], at[1], at[2], 1.0f};
+    NowColData->Set(point, damage, 2, heavy ? 11.0f : 9.0f, 0.0f, 1, heavy ? 3 : 2, 0, 0);
+}
+
+void StepModels() {
+    g_body.Step();
+    g_body.ClothStep(0);
+    if (g_loaded_weapon >= 0) g_weapon.Step();
+}
+
+// Whether the floor's walls stand between two points at waist height (the dash's check).
+bool Walled(const float *from, const float *to) {
+    if (NowDngMap == nullptr) return false;
+    static std::vector<CCPoly> polygons(2048);
+    float a[4] = {from[0], from[1] + 5.0f, from[2], 1.0f};
+    float b[4] = {to[0], from[1] + 5.0f, to[2], 1.0f};
+    float hit[4] = {};
+    const float reach = std::hypot(b[0] - a[0], b[2] - a[2]) + 12.0f;
+    const int   count = setCollisionData(NowDngMap, polygons.data(), a, reach, 2.0f);
+    return count > 0 && count <= static_cast<int>(polygons.size()) && CheckHit(polygons.data(), count, a, b, hit, 1, 4) >= 0;
+}
+
+// An invader's frame: it falls when its life is gone, takes the player's hits, closes in and swings.
+void HostileStep(const float *player, const float *me) {
+    if (g_dying > 0) {
+        if (--g_dying == 0) {
+            Unload();
+            g_wanted = -1;
+            g_hostile = false;
+            return;
+        }
+        StepModels();
+        return;
+    }
+    // The player's weapon: a hit in the game's list that can strike monsters and that no monster dealt.
+    if (g_hurt > 0) {
+        --g_hurt;
+    } else {
+        float     body[4] = {me[0], me[1] + 8.0f, me[2], 1.0f};
+        const int hit = NowColData->FindMonsterHit(body, 7.0f);
+        if (hit != -1 && NowColData->GetMonsterOwner(hit) == -1 && g_dash > 0) {
+            // Dashing aside: the blow passes through.
+        } else if (hit != -1 && NowColData->GetMonsterOwner(hit) == -1 && g_guard > 0) {
+            // Blocked on the guard: a clang, and nothing taken.
+            g_hurt = 12;
+            SndSePlay(SE_HIT_BLOCKED, -1, 0);
+        } else if (hit != -1 && NowColData->GetMonsterOwner(hit) == -1) {
+            g_drink = 0; // a drink is spilled
+            const int dealt = std::max(1, NowColData->Get(hit)->damage - g_defense);
+            g_hp = std::max(0, g_hp - dealt);
+            g_hurt = 18;
+            SndSePlay(SE_MONSTER_HIT, -1, 0);
+            float number[4] = {0.0f, 14.0f, 0.0f, 1.0f};
+            HitValueEntry(NowHitValue, number, dealt, HIT_VALUE_MONSTER, g_body.frame);
+            const bool killed = g_hp == 0;
+            moonmod::ChronicleCompanionStruck(g_loaded, dealt, g_hp, g_max_hp, killed);
+            if (killed) {
+                SetMotion(kMotionDown, true);
+                g_dying = 90;
+                for (Bolt &bolt : g_bolts) bolt.frames = 0;
+                StepModels();
+                return;
+            }
+            // A flinch, which breaks off a swing that hasn't landed yet.
+            SetMotion(kMotionHurt, true);
+            if (g_cooldown > 30) g_cooldown = 24;
+        }
+    }
+
+    const float dx = player[0] - me[0], dz = player[2] - me[2];
+    const float distance = std::hypot(dx, dz);
+    const float heading = distance > 0.01f ? std::atan2(dx, dz) : 0.0f;
+    const bool  ranged = Ranged(g_loaded);
+    const float keep = ranged ? 55.0f : 12.0f;
+    if (g_cooldown > 0) --g_cooldown;
+
+    // A swing of the player's starting close by: weighed once; about two in five it guards, when it's free to.
+    const bool swinging = BtActStatus.action_on == 1 && BtActStatus.action_no != 9 && BtActStatus.action_no != 8;
+    if (!swinging) {
+        g_read = false;
+    } else if (!g_read && distance < 32.0f) {
+        g_read = true;
+        g_read_seed = g_read_seed * 1103515245 + 12345;
+        const int roll = ((g_read_seed >> 16) & 0x7fff) % 10;
+        if (g_guard == 0 && g_dash == 0 && g_drink == 0 && g_cooldown <= 24 && g_hurt == 0) {
+            if (!ranged && roll < 4) {
+                g_guard = 40;
+                SetMotion(kMotionGuardUp, true);
+            } else if (roll < (ranged ? 5 : 7) && distance > 0.01f) {
+                // Square to the player, to whichever side the seed picks and is open: 36 units over 12 frames. Walled
+                // in on both sides, it stands its ground.
+                float side = (g_read_seed & 0x10000) != 0 ? 1.0f : -1.0f;
+                for (int tries = 0; tries < 2; ++tries, side = -side) {
+                    const float end[3] = {me[0] - dz / distance * side * 40.0f, me[1], me[2] + dx / distance * side * 40.0f};
+                    if (Walled(me, end)) continue;
+                    g_dash = 12;
+                    g_dash_step[0] = -dz / distance * side * 3.0f;
+                    g_dash_step[1] = dx / distance * side * 3.0f;
+                    SetMotion(kMotionRun, true);
+                    SndSePlay(SE_CHARA_ACTION, -1, 0);
+                    break;
+                }
+            }
+        }
+    }
+    // Below a third of its life, between swings, with a flask left: it backs away to drink.
+    if (g_flasks > 0 && g_retreat == 0 && g_drink == 0 && g_dash == 0 && g_guard == 0 && g_hurt == 0 && g_cooldown <= 24 &&
+        g_hp * 3 < g_max_hp) {
+        g_retreat = 50;
+    }
+    if (g_dash > 0) {
+        --g_dash;
+        const float next[4] = {me[0] + g_dash_step[0], player[1], me[2] + g_dash_step[1], 1.0f};
+        if (Walled(me, next)) {
+            g_dash = 0; // a wall the start didn't see: it stops there
+        } else {
+            Place(next, std::atan2(g_dash_step[0], g_dash_step[1]));
+        }
+        if (g_dash == 0) g_cooldown = std::min(g_cooldown, 10); // and straight back in with a swing
+    } else if (g_guard > 0) {
+        Place(me, heading);
+        if (--g_guard == 0) {
+            SetMotion(kMotionGuardDown, true);
+            g_cooldown = std::max(g_cooldown, 12);
+        } else if (g_guard == 30) {
+            SetMotion(kMotionGuardHold, false);
+        }
+    } else if (g_drink > 0) {
+        // Drinking: it stands still, open to a blow, and heals at the end.
+        const float still[4] = {me[0], player[1], me[2], 1.0f};
+        Place(still, heading);
+        if (--g_drink == 0) {
+            const int healed = std::min(g_max_hp - g_hp, std::max(1, g_max_hp * 2 / 5));
+            g_hp += healed;
+            SndSePlay(SE_EFFECT_CHIME, -1, 0);
+            moonmod::ChronicleCompanionStruck(g_loaded, -healed, g_hp, g_max_hp, false);
+            g_cooldown = std::max(g_cooldown, 20);
+        }
+    } else if (g_retreat > 0 && g_hurt <= 8) {
+        // Backing off, still facing the player, until it's well clear, walled or out of time; then it drinks.
+        const float step = distance > 0.01f ? 2.0f : 0.0f;
+        const float next[4] = {me[0] - dx / std::max(distance, 0.01f) * step, player[1], me[2] - dz / std::max(distance, 0.01f) * step, 1.0f};
+        const bool  blocked = Walled(me, next);
+        if (!blocked) Place(next, heading);
+        SetMotion(kMotionStrafeBack, false);
+        if (--g_retreat == 0 || blocked || distance > 100.0f) {
+            g_retreat = 0;
+            --g_flasks;
+            g_drink = kDrinkFrames;
+            SetMotion(kMotionIdle, true);
+            SndSePlay(SE_DRINK, -1, 0);
+        }
+    } else if (g_cooldown > 24 || g_hurt > 8) {
+        // Mid-swing it holds still and keeps its aim, so a dodge to the side beats it; flinching, it waits.
+    } else if (distance > keep + 1.0f) {
+        const float speed = std::min(distance - keep, distance > 60.0f ? 2.4f : 1.6f);
+        const float next[4] = {me[0] + dx / distance * speed, player[1], me[2] + dz / distance * speed, 1.0f};
+        Place(next, heading);
+        SetMotion(kMotionRun, false);
+    } else if (g_cooldown == 0) {
+        // A swing, slower to come than a helper's so it can be read; every third is a heavy one, slower still.
+        Place(me, heading);
+        SetMotion(kAttackMotion[Style(g_loaded)], true);
+        g_heavy = g_swings % 3 == 2;
+        g_cooldown = g_heavy ? 84 : 64;
+        ++g_swings;
+        if (g_swings % 2 == 0) g_circle = -g_circle; // and the other way round every other swing
+    } else if (distance > 0.01f) {
+        // Waiting on its next swing: it circles the player, locked on, holding its distance, with the player's own
+        // lock-on strafe motions (picked as movechara picks them, from facing against the way it moves).
+        const float pull = std::clamp(distance - keep, -0.6f, 0.6f);
+        const float step[2] = {-dz / distance * g_circle * 0.9f + dx / distance * pull, dx / distance * g_circle * 0.9f + dz / distance * pull};
+        float next[4] = {me[0] + step[0], player[1], me[2] + step[1], 1.0f};
+        if (Walled(me, next)) {
+            g_circle = -g_circle;
+            next[0] = me[0];
+            next[2] = me[2];
+        }
+        Place(next, heading);
+        float turn = heading - std::atan2(step[0], step[1]);
+        if (turn < -PI_SHORT) turn += TWO_PI_SHORT;
+        if (turn > PI_SHORT) turn -= TWO_PI_SHORT;
+        int motion = kMotionLockIdle;
+        if (turn > -1.2f && turn < 1.2f) motion = 0x15;
+        if (turn < -2.6f || turn > 2.6f) motion = kMotionStrafeBack;
+        if (turn > 1.2f && turn < 2.6f) motion = 0x13;
+        if (turn < -1.2f && turn > -2.6f) motion = 0x14;
+        SetMotion(motion, false);
+    } else {
+        const float still[4] = {me[0], player[1], me[2], 1.0f};
+        Place(still, heading);
+        SetMotion(kMotionIdle, false);
+    }
+    // The blow, partway into the swing: in front of it for a blade, a shot for the ranged.
+    if (g_cooldown == (g_heavy ? 58 : 46)) {
+        float aim[4];
+        g_body.frame->GetRotation(aim);
+        const int damage = g_heavy ? g_blow * 3 / 2 : g_blow;
+        if (!ranged) {
+            const float at[3] = {me[0] + 10.0f * std::sin(aim[1]), player[1] + 6.0f, me[2] + 10.0f * std::cos(aim[1])};
+            StrikePlayer(at, damage, g_heavy);
+            SndSePlay(SE_CHARA_ACTION, -1, 0);
+        } else if (auto free = std::ranges::find(g_bolts, 0, &Bolt::frames); free != g_bolts.end()) {
+            const float from[3] = {me[0], player[1] + 9.0f, me[2]};
+            const float to[3] = {player[0], player[1] + 6.0f, player[2]};
+            const float length = std::max(1.0f, std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]));
+            free->frames = std::max(1, static_cast<int>(length / 4.0f));
+            for (int axis = 0; axis < 3; ++axis) {
+                free->pos[axis] = from[axis];
+                free->step[axis] = (to[axis] - from[axis]) / static_cast<float>(free->frames);
+            }
+            free->pos[3] = 1.0f;
+            free->step[3] = 0.0f;
+            free->target = kTargetPlayer;
+            free->damage = damage;
+            free->cell = g_shot_cell >= 0 ? g_shot_cell : kBoltCell[Style(g_loaded)];
+            free->size = g_shot_cell >= 0 ? g_shot_size : kBoltSize[Style(g_loaded)];
+            SndSePlay(SE_CHARA_ACTION, -1, 0);
+        }
+    }
+    // Its shots land where they arrive: dodged, they're spent on the floor.
+    for (Bolt &bolt : g_bolts) {
+        if (bolt.frames <= 0) continue;
+        for (int axis = 0; axis < 3; ++axis) bolt.pos[axis] += bolt.step[axis];
+        if (--bolt.frames == 0 && bolt.target == kTargetPlayer) StrikePlayer(bolt.pos, bolt.damage, false);
+    }
+    StepModels();
+}
+
 } // namespace
+
+void MoonModCompanionHostile(int hp, int damage, int defense, const float *tint) {
+    g_hostile = hp > 0;
+    g_hp = g_max_hp = std::max(0, hp);
+    g_blow = std::max(1, damage);
+    g_defense = std::max(0, defense);
+    g_hurt = g_dying = g_swings = g_guard = g_dash = g_retreat = g_drink = 0;
+    g_flasks = kInvaderFlasks;
+    g_heavy = g_read = false;
+    for (int axis = 0; axis < 3; ++axis) g_tint[axis] = tint != nullptr ? tint[axis] : -1.0f;
+}
+
+MoonModCompanionLife MoonModCompanionLifeGet() { return {g_hostile && g_loaded >= 0, g_hp, g_max_hp}; }
+
+bool MoonModCompanionInvaderAt(float *out) {
+    if (!g_hostile || g_loaded < 0 || !g_placed || g_dying > 0 || g_hp <= 0) return false;
+    Position(out);
+    return true;
+}
 
 void MoonModCompanionRequest(int chara, int weapon_item, int stance, float damage_scale, int shot_cell, float shot_size) {
     g_wanted = (chara >= CHARA_TOAN && chara < CharaCount()) ? chara : -1;
@@ -237,7 +514,8 @@ void MoonModCompanionStep() {
         return;
     }
     // A companion can't be the character the player is controlling.
-    const int wanted = g_wanted == UserStatus->cur_chara ? -1 : g_wanted;
+    // MoonMod: an invader can be a dark copy of the hero the player is.
+    const int wanted = g_wanted == UserStatus->cur_chara && !g_hostile ? -1 : g_wanted;
     if (wanted != g_loaded || (wanted >= 0 && g_wanted_weapon != g_loaded_weapon && g_wanted_weapon >= ITEM_WEAPON_START)) {
         if (wanted < 0) Unload();
         else if (!Load(wanted, g_wanted_weapon)) { Unload(); g_wanted = -1; }
@@ -247,6 +525,13 @@ void MoonModCompanionStep() {
     float player[4], me[4], facing[4];
     CharaMain.GetPosition(player);
     CharaMain.frame->GetRotation(facing);
+    if (!g_placed && g_hostile) {
+        // An invader comes in ahead of the player, in the room they walked into, facing them.
+        const float ahead[4] = {player[0] + 70.0f * std::sin(facing[1]), player[1], player[2] + 70.0f * std::cos(facing[1]), 1.0f};
+        Place(ahead, facing[1] + 3.14159265f);
+        TrailClear();
+        g_placed = true;
+    }
     if (!g_placed) {
         // Arriving: beside the player and a step ahead, into the room (behind is the doorway they came in by).
         const float side = facing[1] + 0.9f;
@@ -257,6 +542,10 @@ void MoonModCompanionStep() {
         g_placed = true;
     }
     Position(me);
+    if (g_hostile) {
+        HostileStep(player, me);
+        return;
+    }
     TrailPush(player);
 
     g_target = PickTarget(player);
@@ -388,6 +677,15 @@ void MoonModCompanionDraw(bool shadow) {
         g_body.DrawShadow();
         return;
     }
+    // MoonMod: an invader draws in its own colour, and white for a moment when it's hit.
+    float      saved[4];
+    const bool tinted = g_hostile && (g_tint[0] >= 0.0f || g_hurt > 12);
+    if (tinted) {
+        MGGetAmbient(saved);
+        float ambient[4] = {g_tint[0], g_tint[1], g_tint[2], saved[3]};
+        if (g_hurt > 12) ambient[0] = ambient[1] = ambient[2] = 128.0f;
+        MGSetAmbient(ambient);
+    }
     TexManager.ReloadTexture(Vif1Packet, kCompanionTextureBlock);
     g_body.TextureAnime(kCompanionTextureBlock);
     g_body.Draw();
@@ -395,6 +693,7 @@ void MoonModCompanionDraw(bool shadow) {
         TexManager.ReloadTexture(Vif1Packet, kCompanionWeaponTextureBlock);
         g_weapon.Draw();
     }
+    if (tinted) MGSetAmbient(saved);
 }
 
 // In the effects pass beside the player's own shots, which sets up the sprites' blending.

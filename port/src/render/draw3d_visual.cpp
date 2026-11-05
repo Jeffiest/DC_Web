@@ -298,7 +298,9 @@ void Draw3DDrawVisual(const Draw3DVisual &visual, const float model[4][4], const
 
 Draw3DIdentityScope::Draw3DIdentityScope(const void *object, float teleport_distance, bool blend_vertices)
     : key(gfx::CurrentInterpKey()), no_interpolation(gfx::CurrentNoInterpolation()) {
-    gfx::SetInterpKey(reinterpret_cast<uintptr_t>(object), false, teleport_distance, blend_vertices);
+    // The overhead pass (the aerial dungeon map) is drawn fresh each tick, not interpolated.
+    gfx::SetInterpKey(reinterpret_cast<uintptr_t>(object), MGPortOrthographicDepth() > 0.0f, teleport_distance,
+                      blend_vertices);
 }
 
 Draw3DIdentityScope::~Draw3DIdentityScope() {

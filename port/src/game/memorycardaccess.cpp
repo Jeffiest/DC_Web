@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "chara_extras_save.hpp"
+#include "charm_slots.hpp"
+#include "gear.hpp"
 #include "dngstatusdata.hpp"
 #include "menu_draw.hpp"
 #include "menu_save.hpp"
@@ -476,6 +478,8 @@ int CMemoryCardAccess::SaveToMc(int file_no) {
     QuestHostSave(SaveSlotDirectory(file_no));
     // MoonMod: so do the registered characters (chara_extras_save.hpp), whom the save never holds.
     CharaExtrasSave(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
+    CharmSlotsSave(SaveSlotDirectory(file_no)); // and the charm slots (charm_slots.hpp)
+    GearSave(SaveSlotDirectory(file_no));       // and the gear (gear.hpp)
     SaveState state;
     SaveStateRead(SaveStatePath(), state);
     const SaveState current = CurrentState();
@@ -507,6 +511,8 @@ int CMemoryCardAccess::LoadFromMc(int file_no) {
     std::memcpy(SaveData, g_image, sizeof(CSaveData));
     QuestHostLoad(SaveSlotDirectory(file_no));
     CharaExtrasLoad(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
+    CharmSlotsLoad(SaveSlotDirectory(file_no));
+    GearLoad(SaveSlotDirectory(file_no));
 
     // The save screen keeps starting at the last numbered save.
     if (file_no == kSaveSlotAutosave) {
@@ -539,6 +545,8 @@ int CMemoryCardAccess::DeleteFile(int file_no) {
 
     QuestHostDelete(SaveSlotDirectory(file_no));
     CharaExtrasDelete(SaveSlotDirectory(file_no));
+    CharmSlotsDelete(SaveSlotDirectory(file_no));
+    GearDelete(SaveSlotDirectory(file_no));
     fs::remove(SaveSlotDirectory(file_no), error);
     if (error) return -1;
     SaveState state;
@@ -609,6 +617,8 @@ bool SaveSlotWriteAutosave() {
     }
     QuestHostSave(SaveSlotDirectory(kSaveSlotAutosave));
     CharaExtrasSave(SaveSlotDirectory(kSaveSlotAutosave), *SaveData->GetDngStatus());
+    CharmSlotsSave(SaveSlotDirectory(kSaveSlotAutosave));
+    GearSave(SaveSlotDirectory(kSaveSlotAutosave));
     return true;
 }
 

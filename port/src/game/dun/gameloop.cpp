@@ -28,6 +28,7 @@
 #include "camera.hpp"
 #include "camerafollow.hpp"
 #include "character.hpp"
+#include "charm_slots.hpp"
 #include "clothread.hpp"
 #include "clsmes.hpp"
 #include "collision.hpp"
@@ -36,12 +37,17 @@
 #include "dataread.hpp"
 #include "dataset.hpp"
 #include "debugfont.hpp"
+#include "dodge_run.hpp"
+#include "gauge_rules.hpp"
+#include "guard_rules.hpp"
+#include "gear.hpp"
 #include "dispctrl.hpp"
 #include "dngmessageman.hpp"
 #include "dngstatusdata.hpp"
 #include "dranmapfield.hpp"
 #include "dungeonparts.hpp"
 #include "dungeoneventman.hpp"
+#include "dungeon_aerial.hpp"
 #include "dungeonmap.hpp"
 #include "edit.hpp"
 #include "editloop3.hpp"
@@ -100,9 +106,12 @@
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/choice_panel.hpp"
 #include "moonmod/map_screen.hpp"
+#include "moonmod/sky_screen.hpp"
 #include "moonmod/run_menu.hpp"
 #include "moonmod/dungeon_npc.hpp"
 #include "moonmod/companion.hpp"
+#include "moonmod/ghost.hpp"
+#include "moonmod/target_hud.hpp"
 #include "data/data_read.hpp"
 
 namespace dc::game {
@@ -1980,7 +1989,8 @@ void GameInit() {
 int GameLoop() {
     switch (BtGameModeFlag) {
         case BT_GAME_MODE_PLAY:
-            DunMoveChara();
+            // MoonMod combat.feel_set: a hit-stop holds the whole floor still (drawn, not stepped) for a few frames.
+            if (!moonmod::ChronicleHitStopHold()) DunMoveChara();
             break;
         case BT_GAME_MODE_BATTLE_MENU:
             if (BattleMenuCursor() == 0) {
@@ -2267,6 +2277,7 @@ void Draw_MainUnit() {
 
     MoonModCompanionDraw(false);
     MoonModNpcDraw(false);
+    MoonModGhostDraw(false);
 
     MGSetAmbient(saved_ambient);
     sceVu0CopyMatrix(light, saved_light);
@@ -2511,6 +2522,7 @@ void DunMainDraw() {
     }
 
     if (lightingMode == 0) {
+        DngZoneLightingStep(); // MoonMod (Confluence): each zone lit as its own dungeon
         MGSetPLight(main_light, main_lightcolor);
         MGSetAmbient(main_ambientlight);
         MGSetBGColor(main_bgColor[0], main_bgColor[1], main_bgColor[2], 128.0f);
@@ -2657,7 +2669,7 @@ void DunMainDraw() {
 
         CSHOT_EFFECT *shot = NowShotEffect->effect;
 
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < SHOT_EFFECT_PACK_MAX; i++) {
             shot[i].Draw();
         }
 
@@ -2915,7 +2927,7 @@ void DunMainDraw() {
             sceVu0FVECTOR map_pos;
             sceVu0FVECTOR map_rot;
 
-            gfx::UiAnchorScope map_anchor(kMiniMapAnchor);
+            gfx::UiAnchorScope map_anchor(ConfigGet().aerial_map ? gfx::UiAnchor{} : kMiniMapAnchor);
 
             TexManager.ReloadTexture(Vif1Packet, 0x1F);
             sceVu0CopyVector(map_pos, CharaFrame->position);
@@ -2923,7 +2935,10 @@ void DunMainDraw() {
             // Keep the normal map visibility toggle; the map is drawn in the configured layout when it shows.
             if (UserStatus->minimap_status != 3) {
                 NowDngMap->DrawMiniMap(map_pos, map_rot[1]);
-                NowMonstorUnit->DrawMapSymbol(map_pos);
+                // The aerial map shows the monsters as their models.
+                if (!DungeonAerialMapDrawn()) {
+                    NowMonstorUnit->DrawMapSymbol(map_pos);
+                }
                 RandomItem->MapSymbolDraw();
             }
         }
@@ -2944,6 +2959,7 @@ void DunMainDraw() {
         MoonModMenuDraw();   // MoonMod: a mod's run menu, over the HUD
         MoonModChoiceDraw(); // MoonMod: a mod's choice panel, over the HUD
         MoonModMapDraw();    // MoonMod: a mod's map screen
+        MoonModSkyDraw();    // MoonMod: a mod's sky page
 
         setbilinear(1);
     }
@@ -3031,7 +3047,7 @@ void DunMainDraw() {
 
     // MoonMod: a mod's notice (ui.notify) in the same window, when the game's own message is not using it.
     DrawModNotice(DngMessMan.hide_timer > 0 || DngMessMan.enabled == 0 || DngMessMan.message != -1 || BtEventMode != 0 ||
-                  MoonModChoiceUp() || MoonModMenuUp() || MoonModMapUp());
+                  MoonModChoiceUp() || MoonModMenuUp() || MoonModMapUp() || MoonModSkyUp());
 
     if (BtEventMode != 0) {
         if (DebugStatus[4] != 0) {
@@ -3072,13 +3088,36 @@ void motionDrive() {
     static int moonmod_dodge_cooldown = 0;
     if (moonmod_dodge_cooldown > 0) --moonmod_dodge_cooldown;
     const float moonmod_dodge = moonmod::ChroniclePlayerDodgePower();
+    // MoonMod player.tuning_set dodge_run: L2 held runs and a tap dodges as it is let go (dodge_run.hpp); without it
+    // L2 dodges on the press. Dran's Feather worn as a charm halves what the run drains, spending a use a tick.
+    bool l2_dodge = GamePad.Down(PAD_L2) != 0;
+    if (const float run_drain = moonmod::ChroniclePlayerDodgeRun(); run_drain > 0.0f && UserStatus != nullptr) {
+        const int  chara = UserStatus->cur_chara;
+        const bool feather = FindCharmSlot(chara, ITEM_DRAN_S_FEATHER) >= 0;
+        const bool can_run = BtEventMode == 0 && BtActStatus.action_on == 0 && BtActStatus.movement_locked == 0 &&
+                             BtActStatus.jumping == 0 && BtActStatus.in_water == 0 && lockOnTargetFlag == 0 &&
+                             BtActStatus.stick_strength >= 0.3f;
+        l2_dodge = DodgeRunStep(PlayerDodgeRun, GamePad.On(PAD_L2) != 0, can_run, BtActStatus.action_gauge,
+                                run_drain / 60.0f * (feather ? 0.5f : 1.0f) * GearRunScale(UserStatus->cur_chara));
+        if (PlayerDodgeRun.running && feather && SpendCharm(chara, ITEM_DRAN_S_FEATHER) == CharmGuard::Broke) {
+            DngMessMan.message = 0xB7;
+            DngMessMan.insert_mes_1 = GetCommonItemDataSystemMsg(ITEM_DRAN_S_FEATHER);
+            DngMessMan.timer = 0xB4;
+            DngMessMan.steev_window = false;
+        }
+    } else {
+        PlayerDodgeRun = DodgeRun{};
+    }
     // MoonMod player.moves_set: a dodge move (a roll, a backstep) takes L2 first.
-    const bool moonmod_dodge_move = moonmod::ChroniclePlayerMoveOnDodge(GamePad.Down(PAD_L2) != 0);
+    const bool moonmod_dodge_move = moonmod::ChroniclePlayerMoveOnDodge(l2_dodge);
     // MoonMod player.moves_set: R2 is the heavy attack, or a combo finisher partway through the attack combo.
     moonmod::ChroniclePlayerMoveOnR2(GamePad.Down(PAD_R2) != 0);
-    if (!moonmod_dodge_move && moonmod_dodge > 0.0f && moonmod_dodge_cooldown == 0 && GamePad.Down(PAD_L2) != 0 && BtActStatus.action_on == 0 &&
+    if (!moonmod_dodge_move && !moonmod::ChroniclePlayerHasDodgeMove() && moonmod_dodge > 0.0f && moonmod_dodge_cooldown == 0 && l2_dodge &&
+        BtActStatus.action_on == 0 &&
         BtActStatus.movement_locked == 0 && BtActStatus.jumping == 0 && BtActStatus.recoil_frames == 0 &&
-        BtActStatus.in_water == 0 && CharaMain.frame != nullptr) {
+        BtActStatus.in_water == 0 && CharaMain.frame != nullptr &&
+        BtActStatus.action_gauge >= static_cast<float>(moonmod::ChroniclePlayerDodgeGauge())) {
+        BtActStatus.action_gauge -= static_cast<float>(moonmod::ChroniclePlayerDodgeGauge()); // dodge_gauge: the shove's cost
         sceVu0FVECTOR forward = {0.0f, 0.0f, 1.0f, 1.0f};
         sceVu0FVECTOR facing;
         sceVu0FMATRIX turn;
@@ -3199,6 +3238,7 @@ void motionDrive() {
 
         MoonModCompanionStep(); // MoonMod: the Gauntlet's companion follows and fights
         MoonModNpcStep();       // MoonMod: a mod's figure on the floor (world.dungeon_npc_set)
+        MoonModGhostStep();     // MoonMod: the player's last seconds kept, and a ghost played back (world.ghost_play)
 
         if (BtActStatus.shadow_visible != 0) {
             CharaMain.ShadowStep();
@@ -3392,54 +3432,39 @@ void motionDrive() {
         BtActStatus.special_cooldown--;
     }
 
+    // MoonMod: counts the guard's frames, and gauge_rules_set refill_delay holds the refill.
+    const bool may_refill = moonmod::ChroniclePlayerGaugeTick();
+
     // The action gauge fills back up at a rate the weapon sets.
     if (static_cast<int>(BtActStatus.action_gauge) < 100) {
         if (BtActStatus.refill_frames < 10) {
             BtActStatus.refill_frames++;
         }
 
-        auto gain = static_cast<float>(NowWeaponHave->speed) / 30.0f;
+        // The weapon's Speed / 30 a tick and the character's factor (gauge_rules.hpp), or a mod's stamina and
+        // lightness (player.tuning_set).
+        const int who = CombatChara(UserStatus->cur_chara);
+        float     gain = GaugeRefillGain({.chara = who,
+                                          .weapon_speed = NowWeaponHave->speed,
+                                          .stamina = moonmod::ChroniclePlayerStamina(UserStatus->cur_chara),
+                                          .lightness = moonmod::ChroniclePlayerLightness(),
+                                          .goo = StatusErrCheck(AILMENT_GOO) != 0,
+                                          .stamina_ailment = StatusErrCheck(AILMENT_STAMINA) != 0,
+                                          .swinging = BtActStatus.swinging != 0,
+                                          .gun_type = BtActStatus.gun_type,
+                                          .exhausted = BtActStatus.gauge_exhausted != 0,
+                                          .gear_stamina = static_cast<float>(GearWornEffects(UserStatus->cur_chara).stamina)});
 
-        if (StatusErrCheck(AILMENT_GOO) != 0) {
-            gain /= 2.0f;
-        }
-
-        if (StatusErrCheck(AILMENT_STAMINA) != 0) {
-            gain *= 2.0f;
-        }
-
-        gain = std::max(gain, 1.0f);
-
-        s8 who = static_cast<s8>(CombatChara(UserStatus->cur_chara));
-
-        // Toan and Ungaga recharge slowly, and not at all on a frame they swing.
         if (who == CHARA_TOAN || who == CHARA_UNGAGA) {
-            if (BtActStatus.swinging == 0) {
-                gain *= 0.25f;
-            } else {
-                gain = 0.0f;
-            }
-
             BtActStatus.swinging = 0;
         }
 
-        if (who == CHARA_OSMOND) {
-            if (BtActStatus.gun_type != 1) {
-                if (BtActStatus.gauge_exhausted == 0) {
-                    gain = 0.0f;
-                } else {
-                    gain *= 0.5f;
-                }
-            } else {
-                gain *= 1.5f;
-            }
-        }
-
-        if (who == CHARA_XIAO || who == CHARA_RUBY) {
-            gain *= 1.5f;
-        }
-
         gain *= moonmod::ChroniclePlayerGaugeRefillScale(); // MoonMod player.tuning_set
+
+        if (PlayerDodgeRun.running || !may_refill) { // MoonMod dodge_run: no refill while running; refill_delay
+            gain = 0.0f;
+        }
+
         BtActStatus.action_gauge += gain;
 
         if (!(static_cast<int>(BtActStatus.action_gauge) < 100)) {
@@ -3450,6 +3475,8 @@ void motionDrive() {
     } else if (BtActStatus.gauge_flash > 0) {
         BtActStatus.gauge_flash--;
     }
+
+    moonmod::ChroniclePlayerGaugeSeen();
 
     if (BtActStatus.hud_shake_frames > 0) {
         BtActStatus.hud_shake_y = static_cast<int>(16.0f * static_cast<float>(rand()) / 2147483648.0f) - 8;
@@ -3581,7 +3608,7 @@ void motionDrive() {
 
     CSHOT_EFFECT *effects = NowShotEffect->effect;
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < SHOT_EFFECT_PACK_MAX; i++) {
         effects[i].Step();
     }
 
@@ -3686,7 +3713,7 @@ void BtLoadMonstor(int ura) {
 
     CSHOT_EFFECT *effects = NowShotEffect->effect;
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < SHOT_EFFECT_PACK_MAX; i++) {
         effects[i].Initialize();
     }
 
@@ -4242,6 +4269,44 @@ void SpendQuickItem(int slot, int item_id) {
     }
 }
 
+// MoonMod: whether an amulet guards against an ailment a hit rolled: one in a charm slot (charm_slots.hpp) first,
+// then one in a quick-use slot, as the game has it. Either spends a use, and breaks when the last is gone. Before
+// either, the worn gear's chance against it (gear.hpp, guard 0..3: freeze, poison, curse, goo) may shrug it off,
+// spending nothing.
+bool AmuletGuards(int item_id) {
+    int guard = -1;
+    switch (item_id) {
+        case ITEM_ANTI_FREEZE_AMULET: guard = 0; break;
+        case ITEM_ANTIDOTE_AMULET: guard = 1; break;
+        case ITEM_ANTICURSEAMULET: guard = 2; break;
+        case ITEM_ANTIGOO_AMULET: guard = 3; break;
+        default: break;
+    }
+    if (GearGuards(UserStatus->cur_chara, guard, rand() % 100)) {
+        return true;
+    }
+
+    if (const CharmGuard guard = SpendCharm(UserStatus->cur_chara, item_id); guard != CharmGuard::None) {
+        if (guard == CharmGuard::Broke) {
+            DngMessMan.message = 0xB7;
+            DngMessMan.insert_mes_1 = GetCommonItemDataSystemMsg(item_id);
+            DngMessMan.timer = 0xB4;
+            DngMessMan.steev_window = false;
+        }
+
+        return true;
+    }
+
+    const int slot = static_cast<CDngStatusData *>(UserStatus)->CheckActItemSlot(item_id);
+
+    if (slot == -1) {
+        return false;
+    }
+
+    SpendQuickItem(slot, item_id);
+    return true;
+}
+
 } // namespace
 
 void HitBlowVelocity(int hit_no, float *velocity) {
@@ -4266,6 +4331,18 @@ void HitBlowVelocity(int hit_no, float *velocity) {
     velocity[0] = away_x / length;
     velocity[1] = 0.0f;
     velocity[2] = away_z / length;
+}
+
+// MoonMod player.guard_rules_set chip: what gets through a block, taken and shown like a hit's damage.
+static void GuardChip(int damage) {
+    if (damage <= 0) {
+        return;
+    }
+
+    UserStatus->AddNowLife(UserStatus->cur_chara, -damage, 10.0f);
+
+    float number_pos[4] = {0.0f, CharaHeight(UserStatus), 0.0f, 1.0f};
+    HitValueEntry(NowHitValue, number_pos, damage, HIT_VALUE_PLAYER, CharaMain.frame);
 }
 
 int BtCheckDamageProc() {
@@ -4314,6 +4391,7 @@ int BtCheckDamageProc() {
 
             BtActStatus.move_power = 0.0f;
             BtActStatus.gauge_exhausted = 0;
+            const float gauge_before = BtActStatus.action_gauge; // MoonMod: the hit's rules below set the gauge
             BtActStatus.action_gauge = 100.0f;
             CMonUnitHold = 0;
             CEffectHold = 0;
@@ -4326,7 +4404,8 @@ int BtCheckDamageProc() {
             COLLISION_HIT *hit = &NowColData->hit[hit_no];
             // MoonMod: a monster's damage_scale (entities.set_stats) on what its hit takes off
             int            damage = moonmod::ChronicleMonsterHitDamage(NowColData->Get(hit_no)->damage, hit->owner, hit->monster_no);
-            int            guard = UserStatus->defense[static_cast<int>(UserStatus->cur_chara)];
+            int            guard = UserStatus->defense[static_cast<int>(UserStatus->cur_chara)] +
+                        GearWornEffects(UserStatus->cur_chara).defence; // MoonMod: and the worn gear's (gear.hpp)
 
             if (StatusErrCheck(AILMENT_STAMINA) != 0) {
                 guard *= 2;
@@ -4377,51 +4456,35 @@ int BtCheckDamageProc() {
             }
 
             if ((hit->flags & 0x100) && roll < 0x41) {
-                int slot = static_cast<CDngStatusData *>(UserStatus)->CheckActItemSlot(ITEM_ANTI_FREEZE_AMULET);
-
-                if (slot == -1) {
+                if (!AmuletGuards(ITEM_ANTI_FREEZE_AMULET)) {
                     BtSetStatusErr(AILMENT_FREEZE);
-                } else {
-                    SpendQuickItem(slot, ITEM_ANTI_FREEZE_AMULET);
                 }
             }
 
             if ((hit->flags & 0x200) && roll < 0x41 && (UserStatus->ailments[static_cast<int>(UserStatus->cur_chara)] & AILMENT_POISON) == 0) {
-                int slot = static_cast<CDngStatusData *>(UserStatus)->CheckActItemSlot(ITEM_ANTIDOTE_AMULET);
-
-                if (slot == -1) {
+                if (!AmuletGuards(ITEM_ANTIDOTE_AMULET)) {
                     BtSetStatusErr(AILMENT_POISON);
                     DngMessMan.message = 0xBB;
                     DngMessMan.timer = 0xB4;
                     DngMessMan.steev_window = false;
-                } else {
-                    SpendQuickItem(slot, ITEM_ANTIDOTE_AMULET);
                 }
             }
 
             if ((hit->flags & 0x400) && roll < 0x41 && (UserStatus->ailments[static_cast<int>(UserStatus->cur_chara)] & AILMENT_CURSE) == 0) {
-                int slot = static_cast<CDngStatusData *>(UserStatus)->CheckActItemSlot(ITEM_ANTICURSEAMULET);
-
-                if (slot == -1) {
+                if (!AmuletGuards(ITEM_ANTICURSEAMULET)) {
                     BtSetStatusErr(AILMENT_CURSE);
                     DngMessMan.message = 0xB9;
                     DngMessMan.timer = 0xB4;
                     DngMessMan.steev_window = false;
-                } else {
-                    SpendQuickItem(slot, ITEM_ANTICURSEAMULET);
                 }
             }
 
             if ((hit->flags & 0x800) && roll < 0x41 && (UserStatus->ailments[static_cast<int>(UserStatus->cur_chara)] & AILMENT_GOO) == 0) {
-                int slot = static_cast<CDngStatusData *>(UserStatus)->CheckActItemSlot(ITEM_ANTIGOO_AMULET);
-
-                if (slot == -1) {
+                if (!AmuletGuards(ITEM_ANTIGOO_AMULET)) {
                     BtSetStatusErr(AILMENT_GOO);
                     DngMessMan.message = 0xBA;
                     DngMessMan.timer = 0xB4;
                     DngMessMan.steev_window = false;
-                } else {
-                    SpendQuickItem(slot, ITEM_ANTIGOO_AMULET);
                 }
             }
 
@@ -4430,11 +4493,29 @@ int BtCheckDamageProc() {
                 damage = UserStatus->max_hp[static_cast<int>(UserStatus->cur_chara)] >> 1;
             }
 
+            // MoonMod: the guard's and the gauge's rules (player.guard_rules_set, gauge_rules_set) decide whether
+            // the guard stops the hit, what gets through and the gauge after it, and queue game.player.hit. With
+            // none set it is the game's test: a heavy hit while the guard is held, any other in any phase of it.
+            sceVu0FVECTOR facing;
+            CharaFrame->GetRotation(facing);
+            const float                             *attacker = monster != -1 ? from : hit->pos;
+            const moonmod::ChroniclePlayerHitResult guarded = moonmod::ChroniclePlayerHitResolve(
+                {.kind = hit->kind,
+                 .damage = damage,
+                 .guarding = blown != 0,
+                 .held = BtActStatus.action_no == 9,
+                 .angle = GuardAngle(facing[1], CharaMain.pos[0], CharaMain.pos[2], attacker[0], attacker[2]),
+                 .gauge = gauge_before,
+                 .monster = monster});
+            BtActStatus.action_gauge = guarded.gauge;
+            damage = guarded.damage;
+
             if (hit->kind == 3) {
                 sceVu0CopyVector(blow, hit->pos);
                 GamePad.SetVibration(1, 0xE6, 0x16);
 
-                if (BtActStatus.action_no == 9) {
+                if (guarded.blocked) {
+                    GuardChip(damage);
                     HitBlowVelocity(hit_no, blowVelo);
                     velo__2[0] = blowVelo[0] / 10.0f;
                     velo__2[2] = blowVelo[2] / 10.0f;
@@ -4451,6 +4532,7 @@ int BtCheckDamageProc() {
                     SndSePlay(SE_CHARA_HURT, -1, 0);
                     SndSePlay(SE_PLAYER_HIT, -1, 0);
                     BtActStatus.hud_shake_frames = 15;
+                    moonmod::ChronicleFeelPlayerHurt(true); // MoonMod: hit feel (combat.feel_set)
                     setUnitAmbientAnime(160.0f, 1.0f, 255.0f, 0.0f, 0.0f);
                     UserStatus->AddNowLife(UserStatus->cur_chara, -damage, 10.0f);
 
@@ -4459,14 +4541,20 @@ int BtCheckDamageProc() {
                     number_pos[1] = CharaHeight(UserStatus);
                     HitValueEntry(NowHitValue, number_pos, damage, HIT_VALUE_PLAYER, CharaMain.frame);
 
-                    HitBlowVelocity(hit_no, blowVelo);
-                    unitBlowActionRot(blowVelo);
+                    // MoonMod: unless the worn gear's poise took it (gear.hpp): then the hurt, but no turn to the blow
+                    // and no stagger, and the swing goes on.
+                    if (!guarded.poised) {
+                        HitBlowVelocity(hit_no, blowVelo);
+                        unitBlowActionRot(blowVelo);
+                    }
 
                     if (hit->target_mask != 3) {
                         NowColData->active[hit_no] = 0;
                     }
 
-                    if (damage < UserStatus->hp[static_cast<int>(UserStatus->cur_chara)]) {
+                    if (guarded.poised) {
+                        // the action under way goes on
+                    } else if (damage < UserStatus->hp[static_cast<int>(UserStatus->cur_chara)]) {
                         BtActStatus.action_on = 5;
                         BtActStatus.motion_no = 6;
                         CharaMain.motion_type.state.time = static_cast<float>(CharaMain.motion_type.motion_info[6].start);
@@ -4476,9 +4564,12 @@ int BtCheckDamageProc() {
                         CharaMain.motion_type.state.time = static_cast<float>(CharaMain.motion_type.motion_info[4].start);
                     }
 
-                    driveNoInterpolate = 1;
-                    lockOnTargetFlag = 0;
-                    BtActStatus.recoil_frames = 0xA0;
+                    if (!guarded.poised) {
+                        driveNoInterpolate = 1;
+                        lockOnTargetFlag = 0;
+                        BtActStatus.recoil_frames = 0xA0;
+                        moonmod::ChroniclePlayerHitRecoil(guarded.broke);
+                    }
                 }
             }
 
@@ -4489,7 +4580,8 @@ int BtCheckDamageProc() {
                 sceVu0CopyVector(at, hit->pos);
                 GamePad.SetVibration(1, 0xDC, 0xC);
 
-                if (blown != 0) {
+                if (guarded.blocked) {
+                    GuardChip(damage);
                     sceVu0CopyVector(away, CharaMain.pos);
 
                     if (monster != -1) {
@@ -4521,6 +4613,7 @@ int BtCheckDamageProc() {
                     SndSePlay(SE_CHARA_HURT_HEAVY, -1, 0);
                     SndSePlay(SE_PLAYER_HIT, -1, 0);
                     BtActStatus.hud_shake_frames = 25;
+                    moonmod::ChronicleFeelPlayerHurt(false); // MoonMod: hit feel (combat.feel_set)
                     setUnitAmbientAnime(80.0f, 1.0f, 255.0f, 0.0f, 0.0f);
                     UserStatus->AddNowLife(UserStatus->cur_chara, -damage, 10.0f);
 
@@ -4547,7 +4640,9 @@ int BtCheckDamageProc() {
                         cnt++;
                     }
 
-                    if (!(stickVector < 0.8f)) {
+                    if (guarded.poised) {
+                        // MoonMod: the worn gear's poise took it (gear.hpp): no stagger, the swing goes on.
+                    } else if (!(stickVector < 0.8f) && !guarded.broke) { // MoonMod: a broken guard always knocks down
                         BtActStatus.action_on = 0;
                         BtActStatus.motion_no = 0x1D;
                     } else {
@@ -4556,14 +4651,18 @@ int BtCheckDamageProc() {
                         CharaMain.motion_type.state.time = static_cast<float>(CharaMain.motion_type.motion_info[4].start);
                     }
 
-                    driveNoInterpolate = 1;
-                    BtActStatus.recoil_frames = 0x50;
+                    if (!guarded.poised) {
+                        driveNoInterpolate = 1;
+                        BtActStatus.recoil_frames = 0x50;
 
-                    if (hit->kind == 4) {
-                        BtActStatus.recoil_frames = 8;
-                        setUnitAmbientAnime(10.0f, 1.0f, 255.0f, 0.0f, 0.0f);
-                    } else {
-                        setUnitAmbientAnime(80.0f, 1.0f, 255.0f, 0.0f, 0.0f);
+                        if (hit->kind == 4) {
+                            BtActStatus.recoil_frames = 8;
+                            setUnitAmbientAnime(10.0f, 1.0f, 255.0f, 0.0f, 0.0f);
+                        } else {
+                            setUnitAmbientAnime(80.0f, 1.0f, 255.0f, 0.0f, 0.0f);
+                        }
+
+                        moonmod::ChroniclePlayerHitRecoil(guarded.broke);
                     }
                 }
             }
@@ -5594,6 +5693,10 @@ void autoCamTrial() {
         return;
     }
 
+    // MoonMod lock_camera: a large locked-on monster lets the camera sit further out (walls still pull it in).
+    const float pull = MoonModLockPullOut();
+    const float far_dist = camera_far_dist__2 + pull;
+
     NowCamera__3->GetPos(eye);
     NowCamera__3->GetRef(look);
 
@@ -5651,7 +5754,8 @@ void autoCamTrial() {
                 CDungeonMap *map = NowDngMap;
                 MAP_CELL *cell = &map->cells[i + j * DNG_GRID];
                 s32          parts_no = cell->parts_no;
-                CFrame      *frame = parts_no == -1 ? nullptr : map->parts[parts_no].camera_collision;
+                CDungeonParts *cell_part = parts_no == -1 ? nullptr : DngCellPart(map, i + j * DNG_GRID); // MoonMod: part banks
+                CFrame      *frame = cell_part == nullptr ? nullptr : cell_part->camera_collision;
 
                 if (frame == nullptr) {
                     continue;
@@ -5663,7 +5767,7 @@ void autoCamTrial() {
 
                 int turn = cell->direction;
 
-                turn += parts_no == -1 ? 0 : map->parts[parts_no].camera_collision_turn;
+                turn += cell_part == nullptr ? 0 : cell_part->camera_collision_turn;
 
                 if (turn > 3) {
                     turn -= 3;
@@ -5675,7 +5779,10 @@ void autoCamTrial() {
 
                 frame->SetRotation(0.0f, PI * (-90.0f * turn) / 180.0f, 0.0f);
                 frame->SetPosition(160.0f * i, 0.0f, 160.0f * j);
-                count += frame->PickUpNearPoly(&poly[count], box);
+                CBoxVu0 cell_box = box;
+                DngLiftCellFrame(map, frame, i, j, &cell_box);
+                count += frame->PickUpNearPoly(&poly[count], cell_box);
+                DngRestoreCellFrame(frame);
             }
         }
     }
@@ -5686,14 +5793,14 @@ void autoCamTrial() {
     sceVu0SubVector(reach, pos, forward);
     sceVu0SubVector(reach, pos, ref);
     sceVu0Normalize(reach, reach);
-    sceVu0ScaleVectorXYZ(reach, reach, 80.0f);
+    sceVu0ScaleVectorXYZ(reach, reach, 80.0f + pull);
     reach[0] += ref[0];
     reach[1] += ref[1];
     reach[2] += ref[2];
 
     int hits = CheckHits(poly, count, ref, reach, 32, hit_poly, hit_point, 1, 0);
 
-    camera_far_dist_limmit = 80.0f;
+    camera_far_dist_limmit = 80.0f + pull;
 
     if (hits > 0) {
         camera_far_dist_limmit = DistVector(ref, hit_point[0]);
@@ -5726,7 +5833,7 @@ void autoCamTrial() {
                     } else {
                         CameraAutoMove(NowCamera__3, hit_point[last], 1000000.0f, 1000000.0f);
                     }
-                } else if (camera_far_dist_limmit >= camera_near_dist__2 && camera_far_dist_limmit < camera_far_dist__2) {
+                } else if (camera_far_dist_limmit >= camera_near_dist__2 && camera_far_dist_limmit < far_dist) {
                     NowCamera__3->SetPos(hit_point[0]);
                 } else {
                     CameraAutoMove(NowCamera__3, hit_point[last], 1000000.0f, 1000000.0f);
@@ -5779,8 +5886,8 @@ void autoCamTrial() {
         }
     }
 
-    if (!(NowCamera__3->GetDistance() <= camera_far_dist__2)) {
-        NowCamera__3->AddDistance(-(NowCamera__3->GetDistance() - camera_far_dist__2) / 10.0f);
+    if (!(NowCamera__3->GetDistance() <= far_dist)) {
+        NowCamera__3->AddDistance(-(NowCamera__3->GetDistance() - far_dist) / 10.0f);
     }
 
     if (NowCamera__3->GetDistance() < camera_near_dist__2) {
@@ -5820,11 +5927,24 @@ void autoCamTrial() {
     // A locked-on monster pulls the camera round behind the player.
     if (lockOnTargetFlag != 0) {
         sceVu0CopyVector(near_chara, CharaMain.pos);
-        NowMonstorUnit->chara[lockOnTargetNo][0].GetPosition(locked);
+        MoonModLockedPosition(locked);
 
         float away = DistVector(near_chara, locked);
 
-        if (!(away <= 30.0f)) {
+        // MoonMod player.tuning_set lock_camera: the camera turns to keep the target straight beyond the player, a
+        // few degrees of slack far off and more close up (so a monster at the player's feet doesn't spin it).
+        if (moonmod::ChronicleLockCamera() && away > 6.0f) {
+            float want = atan2f(locked[0] - near_chara[0], locked[2] - near_chara[2]) - PI_D;
+            if (!(want <= PI_SHORT)) want -= TWO_PI_SHORT;
+            if (want < -PI_SHORT) want += TWO_PI_SHORT;
+            const float slack = away < 30.0f ? 30.0f : 8.0f;
+            float angle = NowCamera__3->GetAngle();
+            if (AngleCmp(want, angle, DEG_TO_RAD_SHORT * slack) != 0) {
+                angle = AngleInterpolate(angle, want, EIGHTH_PI_SHORT, INTERPOLATE_STEP);
+                NowCamera__3->SetAngle(angle);
+                NowCamera__3->SetSpeed(8.0f);
+            }
+        } else if (!(away <= 30.0f)) {
             CharaMain.frame->GetLWMatrix(world);
 
             auto want = static_cast<float>(atan2f(world[2][0], world[2][2]) - PI_D);
@@ -5969,6 +6089,112 @@ int Run_TrapCircle(MAP_TRAP_CIRCLE *trap) {
     return kind;
 }
 
+namespace {
+
+// Whether a straight line between two points crosses an empty cell of the random floor (a wall).
+bool MoonModWallBetween(const float *from, const float *to) {
+    if (NowDngMap != &MainDungeonMap || MainDungeonMap.map_type != 1) return false;
+    const float dx = to[0] - from[0], dz = to[2] - from[2];
+    const int steps = std::max(1, static_cast<int>(std::hypot(dx, dz) / 40.0f));
+    for (int n = 1; n < steps; ++n) {
+        const float x = from[0] + dx * n / steps, z = from[2] + dz * n / steps;
+        const int col = static_cast<int>((x + 80.0f) / 160.0f), row = static_cast<int>((z + 80.0f) / 160.0f);
+        if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return true;
+        if (MainDungeonMap.cells[col + row * DNG_GRID].parts_no == MAP_PARTS_NONE) return true;
+    }
+    return false;
+}
+
+extern float targetCursorCnt; // the lock-on cursor's grow-in, defined below
+float moonmodFlickLast = 0.0f;
+int   moonmodUnseenFrames = 0;
+
+} // namespace
+
+float MoonModLockPullOut() {
+    if (!moonmod::ChronicleLockCamera() || lockOnTargetFlag == 0 || lockOnTargetNo < 0 || lockOnTargetNo >= MONSTOR_SLOT_MAX ||
+        NowMonstorUnit == nullptr) {
+        return 0.0f;
+    }
+    const float size = std::max(NowMonstorUnit->monster[lockOnTargetNo].body_radius, 0.5f * NowMonstorUnit->chara[lockOnTargetNo][0].body_height);
+    return std::clamp((size - 15.0f) * 2.0f, 0.0f, 60.0f);
+}
+
+bool MoonModLockedPosition(float *out) {
+    if (lockOnTargetNo == kLockOnInvader && MoonModCompanionInvaderAt(out)) return true;
+    if (lockOnTargetNo >= 0 && lockOnTargetNo < MONSTOR_SLOT_MAX && NowMonstorUnit != nullptr) {
+        NowMonstorUnit->chara[lockOnTargetNo][0].GetPosition(out);
+        return true;
+    }
+    sceVu0CopyVector(out, CharaFrame->position);
+    return false;
+}
+
+void MoonModLockOnInvaderPick() {
+    sceVu0FVECTOR there;
+    if (lockOnTargetFlag != 0 || !MoonModCompanionInvaderAt(there)) return;
+    const float away = DistVector(CharaFrame->position, there);
+    if (!(away < 160.0f)) return;
+    if (lockOnTargetNo >= 0 && lockOnTargetNo < MONSTOR_SLOT_MAX) {
+        sceVu0FVECTOR monster;
+        NowMonstorUnit->chara[lockOnTargetNo][0].GetPosition(monster);
+        if (DistVector(CharaFrame->position, monster) <= away) return;
+    }
+    lockOnTargetNo = kLockOnInvader;
+}
+
+void MoonModLockOnExtras() {
+    if (lockOnTargetFlag == 0 || lockOnTargetNo < 0 || NowMonstorUnit == nullptr) {
+        moonmodUnseenFrames = 0;
+        moonmodFlickLast = 0.0f;
+        return;
+    }
+    sceVu0FVECTOR stood;
+    sceVu0FVECTOR locked;
+    sceVu0CopyVector(stood, CharaFrame->position);
+    NowMonstorUnit->chara[lockOnTargetNo][0].GetPosition(locked);
+    if (moonmod::ChronicleLockSight()) {
+        moonmodUnseenFrames = MoonModWallBetween(stood, locked) ? moonmodUnseenFrames + 1 : 0;
+        if (moonmodUnseenFrames > 30) {
+            moonmodUnseenFrames = 0;
+            LockOffTargte();
+            SndSePlay(MENU_SOUND_REFUSE, -1, 0);
+            return;
+        }
+    }
+    if (!moonmod::ChronicleLockFlick()) return;
+    const float flick = GamePad.GetRXf();
+    const bool fresh = std::fabs(flick) >= 0.75f && std::fabs(moonmodFlickLast) < 0.35f;
+    moonmodFlickLast = flick;
+    if (!fresh) return;
+    // The stick's right on screen, in the world (as the bomb's aim reads the stick).
+    const float facing = NowCamera__3->GetAngle();
+    const float right_x = std::cos(facing), right_z = -std::sin(facing);
+    const float rate = CharaRangeRate(UserStatus);
+    int   best = -1;
+    float best_dist = 1.0e9f;
+    for (int i = 0; i < MONSTOR_SLOT_MAX; ++i) {
+        const auto &m = NowMonstorUnit->monster[i];
+        if (i == lockOnTargetNo || m.state != 2 || m.hp <= 0 || m.revealed == 0 || m.lockon_enabled == 0) continue;
+        sceVu0FVECTOR there;
+        NowMonstorUnit->chara[i][0].GetPosition(there);
+        if (!(DistVector(stood, there) < m.lock_range * rate)) continue;
+        const float side = (there[0] - locked[0]) * right_x + (there[2] - locked[2]) * right_z;
+        if (side * flick <= 0.0f) continue;
+        const float d = DistVector(locked, there);
+        if (d < best_dist) {
+            best_dist = d;
+            best = i;
+        }
+    }
+    if (best < 0) return;
+    lockOnTargetNo = best;
+    DngMes2.mes_made = -1;
+    MonsterNameMake(NowMonstorUnit->monster[best].name_no);
+    targetCursorCnt = 8.0f;
+    SndSePlay(SE_LOCK_ON, -1, 0);
+}
+
 void LockOffTargte() {
     lockOnTargetDraw = 0;
     lockOnTargetNo = -1;
@@ -5993,6 +6219,11 @@ void DrawTargetLife() {
 
     // The twelfth word of the options hides the gauge.
     if (static_cast<s32 *>(SaveData->GetConfigData())[11] != 0) {
+        return;
+    }
+
+    // MoonMod: a mod's wider bar, with its meter (render.target_bar_set), in place of the gauge.
+    if (MoonModTargetBarDraw(lockOnTargetNo)) {
         return;
     }
 
@@ -6252,6 +6483,27 @@ void setTargetCursor(int on) {
     int           screen[4];
 
     float rate = CharaRangeRate(status);
+
+    // MoonMod: locked on to an invader: the cursor over it, kept while it's up and in reach (its bar is the mod's).
+    if (on != 0 && lockOnTargetNo == kLockOnInvader) {
+        lockOnTargetDraw = 0;
+        EnemyLifeGage.on = 0;
+        SetMonsterNameDrawFlag(0);
+        if (!MoonModCompanionInvaderAt(target) || !(DistVector(CharaFrame->position, target) < 200.0f)) {
+            SndSePlay(MENU_SOUND_REFUSE, -1, 0);
+            targetCursorShiftNo = 0;
+            targetCursorShiftRot = 0;
+            lockOnTargetFlag = 0;
+            lockOnTargetNo = -1;
+            return;
+        }
+        target[1] += 10.0f;
+        target[3] = 1.0f;
+        sceVu0CopyVector(BtActStatus.target_position, target);
+        targetCursorCnt = targetCursorCnt > 0.0f ? std::max(0.0f, targetCursorCnt - 0.5f) : 0.0f;
+        DrawtargetCursor(BtActStatus.target_position, 12.0f + targetCursorCnt, 6.0f + targetCursorCnt / 2.0f, targetCursorCnt);
+        return;
+    }
 
     if (on != 0) {
         int keep = 1;

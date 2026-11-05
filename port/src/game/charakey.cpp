@@ -213,7 +213,7 @@ void ToanKey_Play() {
                 BtActStatus.action_gauge = 0.0f;
                 BtActStatus.move_power = 0.0f;
             } else if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 25.0f;
+                BtActStatus.action_gauge -= 25.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -260,7 +260,7 @@ void ToanKey_Play() {
 
         if (time >= end - 1.0f && time <= end) {
             if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 25.0f;
+                BtActStatus.action_gauge -= 25.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -306,7 +306,7 @@ void ToanKey_Play() {
 
         if (time >= end - 1.0f && time <= end) {
             if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 25.0f;
+                BtActStatus.action_gauge -= 25.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -352,7 +352,7 @@ void ToanKey_Play() {
 
         if (time >= end - 1.0f && time <= end) {
             if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 25.0f;
+                BtActStatus.action_gauge -= 25.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -731,7 +731,7 @@ void UngagaKey_Play() {
 
         if (time >= end - 1.0f && time <= end) {
             if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 20.0f;
+                BtActStatus.action_gauge -= 20.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -784,7 +784,7 @@ void UngagaKey_Play() {
 
         if (time >= end - 0.5f && time <= end) {
             if (BtActStatus.combo_queued == 1) {
-                BtActStatus.action_gauge -= 20.0f;
+                BtActStatus.action_gauge -= 20.0f * moonmod::ChroniclePlayerSwingCostScale();
 
                 if (BtActStatus.action_gauge <= 0.0f) {
                     BtActStatus.action_gauge = 0.0f;
@@ -1087,7 +1087,7 @@ void GoroKey_Play() {
                 BtActStatus.action_on = 1;
                 BtActStatus.action_step = 0;
                 BtActStatus.charge_time = 1.0f;
-                BtActStatus.action_gauge -= 15.0f;
+                BtActStatus.action_gauge -= 15.0f * moonmod::ChroniclePlayerSwingCostScale(); // MoonMod lightness
                 BtActStatus.charge_level = 0;
                 BtActStatus.combo_window = 0;
                 BtActStatus.combo_queued = 0;

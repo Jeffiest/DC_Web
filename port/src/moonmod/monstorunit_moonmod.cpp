@@ -106,7 +106,12 @@ void ResetMoonModMonstorVariants() {
 int MoonModArrangementCount(CDungeonMap *map, int count, int model_no) {
     if (count > 0 && model_no == -1) {
         // a floor whose zones come from several floors holds each of their floor's worth (dungeons.set_zones source_floor)
-        if (map != nullptr && DngZoneSourcesShown(map->map_seed)) count *= DngZoneFloorCount;
+        // (a quiet zone holds none of them)
+        if (map != nullptr && (DngZoneSourcesShown(map->map_seed) || DngZoneDungeonsShown(map->map_seed))) {
+            int busy = 0;
+            for (int z = 0; z < DngZoneFloorCount; ++z) busy += (DngZoneFloorQuietMask & (1 << z)) == 0 ? 1 : 0;
+            count *= std::max(1, busy);
+        }
         count = std::min(MONSTOR_SLOT_MAX - 1, (count * (100 + DngMonsterBonusPercent) + 99) / 100);
         // a floor built in zones (dungeons.set_zones) is its mod's: another mod's room density doesn't apply to it
         const bool zoned = map != nullptr && DngZoneFloorCount > 0 && DngZoneFloorSeed == map->map_seed;
@@ -131,13 +136,19 @@ int MoonModArrangementCount(CDungeonMap *map, int count, int model_no) {
 
 bool MoonModLoadZoneMonsters(CMonstorUnit *unit, BT_ENEMY_FLOOR *floors, int cur_floor, CDataAlloc2<1> *alloc) {
     std::fill(std::begin(DngZoneModelMask), std::end(DngZoneModelMask), 0);
-    if (!DngZoneSourcesShown(MainDungeonMap.map_seed) || selectMapNo < 0 || selectMapNo >= 7) return false;
+    const bool dungeons = DngZoneDungeonsShown(MainDungeonMap.map_seed);
+    if ((!DngZoneSourcesShown(MainDungeonMap.map_seed) && !dungeons) || selectMapNo < 0 || selectMapNo >= 7) return false;
     int monster_of[MONSTOR_MODEL_MAX];
     int count = 0;
     for (int z = 0; z < DngZoneFloorCount; ++z) {
-        int floor = DngZoneFloorSource[z] >= 0 ? DngZoneFloorSource[z] : cur_floor;
-        if (floor >= maxFloorTbl__3[selectMapNo]) floor = cur_floor;
-        for (const auto &entry : floors[floor].monster) {
+        if ((DngZoneFloorQuietMask & (1 << z)) != 0) continue; // set_zones quiet
+        // a zone of another dungeon (source_dungeon) has that dungeon's monsters, of the floor asked or as deep in
+        const int       dungeon = dungeons && DngZoneFloorDungeon[z] >= 0 ? DngZoneFloorDungeon[z] : selectMapNo;
+        BT_ENEMY_FLOOR *table = dungeon == selectMapNo ? floors : BtEnemyLayoutList[dungeon];
+        int             floor = DngZoneFloorSource[z] >= 0 ? DngZoneFloorSource[z] : cur_floor;
+        if (floor >= maxFloorTbl__3[dungeon]) floor = dungeon == selectMapNo ? cur_floor : maxFloorTbl__3[dungeon] - 1;
+        if (dungeon != selectMapNo) std::printf("moonmod: zone %d has dungeon %d's monsters (floor %d)\n", z, dungeon, floor + 1);
+        for (const auto &entry : table[floor].monster) {
             if (entry.monster_no == -1) break;
             int slot = -1;
             for (int m = 0; m < count; ++m) {
@@ -155,7 +166,17 @@ bool MoonModLoadZoneMonsters(CMonstorUnit *unit, BT_ENEMY_FLOOR *floors, int cur
 }
 
 bool MoonModZoneModelAllowed(CDungeonMap *map, const float *position, int model) {
-    if (map != &MainDungeonMap || !DngZoneSourcesShown(map->map_seed) || model < 0 || model >= static_cast<int>(std::size(DngZoneModelMask))) return true;
+    if (map == &MainDungeonMap && DngZoneFloorQuietMask != 0 && DngZoneFloorIs(map->map_seed)) { // set_zones quiet
+        const int col = static_cast<int>((position[0] + 80.0f) / 160.0f), row = static_cast<int>((position[2] + 80.0f) / 160.0f);
+        if (col >= 0 && row >= 0 && col < DNG_GRID && row < DNG_GRID) {
+            const int zone = DngZoneOfCell[col + row * DNG_GRID];
+            if (zone != DNG_ZONE_NONE && (DngZoneFloorQuietMask & (1 << zone)) != 0) return false;
+        }
+    }
+    if (map != &MainDungeonMap || !(DngZoneSourcesShown(map->map_seed) || DngZoneDungeonsShown(map->map_seed)) || model < 0 ||
+        model >= static_cast<int>(std::size(DngZoneModelMask))) {
+        return true;
+    }
     const int col = static_cast<int>((position[0] + 80.0f) / 160.0f), row = static_cast<int>((position[2] + 80.0f) / 160.0f);
     if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return false;
     const int zone = DngZoneOfCell[col + row * DNG_GRID];
@@ -176,14 +197,25 @@ void MoonModZoneKeyCarriers(CMonstorUnit *unit, CDungeonMap *map) {
         const DNG_ZONE_GATE &gate = DngZoneGateTable[g];
         if (!gate.locked || gate.key_item < 0) continue; // a smoke gate takes no key
         const int zone = gate.zone - 1;
+        // past the seventh gate the keys come round again: a key another gate takes too counts only in this gate's zone
+        bool shared = false;
+        for (int o = 0; o < DngZoneGateCount; ++o) shared = shared || (o != g && DngZoneGateTable[o].key_item == gate.key_item);
         bool held = false; // placing more monsters later hands the key out once
-        for (const MONSTOR &m : unit->monster) held = held || (m.state != -1 && m.drop_item == gate.key_item);
-        for (const TREASURE_BOX &box : map->boxes) held = held || (box.used != 0 && box.item_no == gate.key_item);
+        for (int i = 0; i < MONSTOR_SLOT_MAX; ++i) {
+            const MONSTOR &m = unit->monster[i];
+            if (m.state == -1 || m.drop_item != gate.key_item) continue;
+            sceVu0FVECTOR at;
+            unit->chara[i][0].GetPosition(at);
+            held = held || !shared || zone_at(at) == zone;
+        }
+        for (const TREASURE_BOX &box : map->boxes) {
+            held = held || (box.used != 0 && box.item_no == gate.key_item && (!shared || zone_at(box.pos) == zone));
+        }
         // the key the player already picked up (a floor built again from its seed) or left lying on the floor
-        if (UserStatus != nullptr) {
+        if (UserStatus != nullptr && !shared) {
             held = held || GetNowItemNum(static_cast<short>(gate.key_item), &static_cast<CDngStatusData *>(UserStatus)->item_pack) > 0;
         }
-        held = held || (RandomItem != nullptr && RandomItem->CheckItemNo(gate.key_item) != 0);
+        held = held || (!shared && RandomItem != nullptr && RandomItem->CheckItemNo(gate.key_item) != 0);
         if (held) continue;
         int carriers[MONSTOR_SLOT_MAX];
         int count = 0;

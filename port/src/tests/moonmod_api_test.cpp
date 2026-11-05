@@ -19,6 +19,7 @@
 #include "moonmod/combat_formula.hpp"
 #include "moonmod/native_resource_overrides.hpp"
 #include "moonmod/chronicle_adapter.hpp"
+#include "moonmod/game_hooks.hpp"
 #include "dungeonmap.hpp"
 #include "userstatus.hpp"
 #include "moonmod/runtime.hpp"
@@ -1846,6 +1847,336 @@ TEST(MoonModApi, ChroniclePlayerMovesTakeTheComboTriggers) {
     for (const char *owner : {"test.a", "test.b", "test.c"}) EXPECT_EQ(call("player.moves_clear", owner, Json::array()).status, ApiCallStatus::Ok);
 }
 
+TEST(MoonModApi, ChronicleCriticalMovesAndTheirArmedTarget) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, std::string_view owner, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler(owner, *operation, args);
+    };
+    auto critical = [](const char *id, const char *kind) {
+        return Json{{"id", id}, {"character", "toan"}, {"trigger", "critical"}, {"critical", kind}, {"motion", 0x25}};
+    };
+    Json backstab = critical("backstab", "backstab");
+    backstab["reach"] = 20;
+    backstab["arc"] = 100;
+    backstab["pairs"] = Json::array({Json{{"model", 3}, {"animation", "e06a_crumple"}, {"speed", 0.5}}});
+    Json riposte = critical("riposte", "riposte");
+    riposte["gap"] = 10;
+    riposte["hold"] = 90;
+    // A backstab and a riposte sit side by side; another mod may not take the same kind.
+    EXPECT_EQ(call("player.moves_set", "test.a", Json::array({Json{{"moves", {backstab, riposte}}}})).status, ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.moves_set", "test.b", Json::array({Json{{"moves", {critical("again", "riposte")}}}})).status, ApiCallStatus::Failed);
+    Json no_kind = critical("x", "backstab");
+    no_kind.erase("critical");
+    Json bad_kind = critical("x", "stab");
+    Json far = critical("x", "backstab");
+    far["reach"] = 61;
+    Json narrow = critical("x", "backstab");
+    narrow["arc"] = 10;
+    Json bad_pair = critical("x", "backstab");
+    bad_pair["pairs"] = Json::array({Json{{"model", 3}}});
+    Json stray = Json{{"id", "x"}, {"character", "toan"}, {"trigger", "heavy"}, {"motion", 0x25}, {"reach", 20}};
+    for (const Json &bad : {no_kind, bad_kind, far, narrow, bad_pair, stray}) {
+        EXPECT_EQ(call("player.moves_set", "test.c", Json::array({Json{{"moves", {bad}}}})).status, ApiCallStatus::InvalidArgument) << bad.dump();
+    }
+    // Arming takes a live enemy in a dungeon; the shape is checked first.
+    for (const Json &bad : {Json::object(), Json{{"entity", "chronicle:monster:0:1"}, {"frames", 0}}, Json{{"entity", "chronicle:monster:0:1"}, {"why", 1}}}) {
+        EXPECT_EQ(call("player.critical_set", "test.a", Json::array({bad})).status, ApiCallStatus::InvalidArgument) << bad.dump();
+    }
+    EXPECT_NE(call("player.critical_set", "test.a", Json::array({Json{{"entity", "chronicle:monster:0:1"}}})).status, ApiCallStatus::Ok);
+    const moonmod::ApiCallResult cleared = call("player.critical_clear", "test.a", Json::array());
+    ASSERT_EQ(cleared.status, ApiCallStatus::Ok) << cleared.message;
+    EXPECT_FALSE(cleared.value["cleared"].get<bool>());
+    EXPECT_EQ(call("player.critical_clear", "test.a", Json::array({1})).status, ApiCallStatus::InvalidArgument);
+    // A held monster skips its flinch until its hold counts out, then starts its idle program afresh.
+    EXPECT_FALSE(moonmod::ChronicleMonsterIsHeld(2));
+    EXPECT_EQ(moonmod::ChronicleMonsterHeld(nullptr, 2), 0);
+    for (const char *owner : {"test.a", "test.b", "test.c"}) EXPECT_EQ(call("player.moves_clear", owner, Json::array()).status, ApiCallStatus::Ok);
+}
+
+TEST(MoonModApi, ChroniclePlayedMovesAndTheHealItemLock) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::ResetChroniclePlayerTuningForTests();
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, std::string_view owner, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler(owner, *operation, args);
+    };
+    // A played move has no button; any number of them sit side by side, another mod's too.
+    auto played = [](const char *id, const char *who) {
+        return Json{{"id", id}, {"character", who}, {"trigger", "played"}, {"motion", 0x1C}, {"speed", 0.6}};
+    };
+    EXPECT_EQ(call("player.moves_set", "test.a", Json::array({Json{{"moves", {played("drink", "toan"), played("drink_x", "xiao"), played("sip", "toan")}}}})).status,
+              ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.moves_set", "test.b", Json::array({Json{{"moves", {played("drink", "toan")}}}})).status, ApiCallStatus::Ok);
+    EXPECT_NE(call("player.move_play", "test.a", Json::array({Json{{"id", "drink"}}})).status, ApiCallStatus::Ok); // no dungeon
+    // Arts: R2 while guarding, picked by the equipped weapon and its level; several sit side by side.
+    auto art = [](const char *id, Json weapons, int level) {
+        return Json{{"id", id}, {"character", "toan"}, {"trigger", "art"}, {"motion", 0x25}, {"weapons", weapons}, {"min_level", level}};
+    };
+    EXPECT_EQ(call("player.moves_set", "test.c", Json::array({Json{{"moves", {art("rush", Json::array({258, 259}), 3), art("whirl", Json::array({261}), 3),
+                                                                                art("any", Json::array(), 1)}}}})).status,
+              ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.moves_set", "test.d", Json::array({Json{{"moves", {art("rush", Json::array({258}), 1)}}}})).status, ApiCallStatus::Ok);
+    for (const Json &bad : {art("x", Json::array({12}), 1), art("x", Json::array({258}), 0), art("x", Json::array({258}), 100), art("x", Json(258), 1),
+                            Json{{"id", "x"}, {"character", "toan"}, {"trigger", "heavy"}, {"motion", 0x25}, {"min_level", 2}}}) {
+        EXPECT_EQ(call("player.moves_set", "test.e", Json::array({Json{{"moves", {bad}}}})).status, ApiCallStatus::InvalidArgument) << bad.dump();
+    }
+    for (const char *owner : {"test.c", "test.d"}) EXPECT_EQ(call("player.moves_clear", owner, Json::array()).status, ApiCallStatus::Ok);
+    // The lock is a distance, 0 to 400; out of a dungeon nothing is near.
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"item_heal_lock", 401}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"item_heal_lock", 1.5}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"item_heal_lock", 120}}})).status, ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.tuning_set", "test.b", Json::array({Json{{"item_heal_lock", 80}}})).status, ApiCallStatus::Ok);
+    EXPECT_EQ(moonmod::ChroniclePlayerTuningGet().item_heal_lock, 120);
+    EXPECT_FALSE(moonmod::ChronicleHealItemLocked());
+    for (const char *owner : {"test.a", "test.b"}) {
+        EXPECT_EQ(call("player.moves_clear", owner, Json::array()).status, ApiCallStatus::Ok);
+        EXPECT_EQ(call("player.tuning_clear", owner, Json::array()).status, ApiCallStatus::Ok);
+    }
+    EXPECT_EQ(moonmod::ChroniclePlayerTuningGet().item_heal_lock, 0);
+}
+
+// Hit feel (combat.feel_set): a landed blow holds the floor still for its frames (light, heavy, critical, hurt), one
+// freeze a frame however many monsters it strikes; feel_clear takes it off.
+TEST(MoonModApi, ChronicleHitFeelHoldsTheFloorStill) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, std::string_view owner, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler(owner, *operation, args);
+    };
+    EXPECT_EQ(call("combat.feel_set", "test.feel", Json::array({Json{{"hit_stop", Json{{"light", 13}}}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("combat.feel_set", "test.feel", Json::array({Json{{"hit_stop", Json{{"slow", 3}}}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("combat.feel_set", "test.feel", Json::array({Json{{"shake", Json{{"light", 11}}}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("combat.feel_set", "test.feel", Json::array({Json{{"rumble", 1}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_FALSE(moonmod::ChronicleHitStopHold());
+    moonmod::ChronicleFeelPlayerHit(false); // nothing set: no feel
+    EXPECT_FALSE(moonmod::ChronicleHitStopHold());
+    ASSERT_EQ(call("combat.feel_set", "test.feel",
+                   Json::array({Json{{"hit_stop", Json{{"light", 3}, {"heavy", 6}, {"critical", 10}, {"hurt", 4}}}, {"rumble", false}}}))
+                  .status,
+              ApiCallStatus::Ok);
+    EXPECT_EQ(call("combat.feel_set", "test.other", Json::array({Json::object()})).status, ApiCallStatus::Failed);
+    auto held = [] {
+        int n = 0;
+        while (moonmod::ChronicleHitStopHold()) ++n;
+        return n;
+    };
+    moonmod::ChronicleFeelPlayerHit(false);
+    moonmod::ChronicleFeelPlayerHit(false); // the same frame: one freeze
+    EXPECT_EQ(held(), 3);
+    moonmod::ChronicleFeelCritical();
+    EXPECT_EQ(held(), 10);
+    moonmod::ChronicleFeelPlayerHurt(true);
+    EXPECT_EQ(held(), 4);
+    moonmod::ChronicleFeelPlayerHurt(false);
+    EXPECT_EQ(held(), 2);
+    EXPECT_EQ(call("combat.feel_clear", "test.feel", Json::array()).status, ApiCallStatus::Ok);
+    moonmod::ChronicleFeelCritical();
+    EXPECT_EQ(held(), 0);
+}
+
+TEST(MoonModApi, ChronicleInputBufferKeepsARefusedPress) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler("test.buffer", *operation, args);
+    };
+    EXPECT_EQ(call("player.tuning_set", Json::array({Json{{"chain_cancel", 31}}})).status, ApiCallStatus::InvalidArgument);
+    const auto chain = call("player.tuning_set", Json::array({Json{{"chain_cancel", 6}}}));
+    ASSERT_EQ(chain.status, ApiCallStatus::Ok);
+    EXPECT_EQ(chain.value["effective"]["chain_cancel"], 6);
+    EXPECT_FALSE(moonmod::ChroniclePlayerChainToAttack()); // nothing playing to cut
+    EXPECT_EQ(call("player.tuning_clear", Json::array()).status, ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.tuning_set", Json::array({Json{{"input_buffer", 21}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", Json::array({Json{{"input_buffer", 2.5}}})).status, ApiCallStatus::InvalidArgument);
+    const auto set = call("player.tuning_set", Json::array({Json{{"input_buffer", 12}}}));
+    ASSERT_EQ(set.status, ApiCallStatus::Ok);
+    EXPECT_EQ(set.value["effective"]["input_buffer"], 12);
+    EXPECT_EQ(call("player.tuning_clear", Json::array()).status, ApiCallStatus::Ok);
+
+    // Off (0): a press is wanted on its own step only.
+    moonmod::ChroniclePressBuffer off;
+    EXPECT_TRUE(off.Wanted(true, 0));
+    EXPECT_FALSE(off.Wanted(false, 0));
+    // A press refused for three steps is still wanted on the fourth, and gone once taken.
+    moonmod::ChroniclePressBuffer press;
+    int wanted = 0;
+    for (int step = 0; step < 4; ++step) wanted += press.Wanted(step == 0, 12) ? 1 : 0;
+    EXPECT_EQ(wanted, 4);
+    press.Taken();
+    EXPECT_FALSE(press.Wanted(false, 12));
+    // Never taken, it runs out after the window.
+    moonmod::ChroniclePressBuffer stale;
+    wanted = 0;
+    for (int step = 0; step < 30; ++step) wanted += stale.Wanted(step == 0, 12) ? 1 : 0;
+    EXPECT_EQ(wanted, 13);
+}
+
+TEST(MoonModApi, ChronicleLockCameraIsATuning) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler("test.camera", *operation, args);
+    };
+    EXPECT_EQ(call("player.tuning_set", Json::array({Json{{"lock_camera", 1}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", Json::array({Json{{"dodge_gauge", 101}}})).status, ApiCallStatus::InvalidArgument);
+    ASSERT_EQ(call("player.tuning_set", Json::array({Json{{"dodge_gauge", 35}}})).status, ApiCallStatus::Ok);
+    EXPECT_EQ(moonmod::ChroniclePlayerDodgeGauge(), 35);
+    EXPECT_EQ(call("player.tuning_clear", Json::array()).status, ApiCallStatus::Ok);
+    EXPECT_EQ(moonmod::ChroniclePlayerDodgeGauge(), 0);
+    EXPECT_FALSE(moonmod::ChronicleLockCamera());
+    ASSERT_EQ(call("player.tuning_set", Json::array({Json{{"lock_camera", true}}})).status, ApiCallStatus::Ok);
+    EXPECT_TRUE(moonmod::ChronicleLockCamera());
+    EXPECT_EQ(call("player.tuning_clear", Json::array()).status, ApiCallStatus::Ok);
+    EXPECT_FALSE(moonmod::ChronicleLockCamera());
+}
+
+TEST(MoonModApi, ChronicleMonsterCallTakesAFrameName) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation("monsters.call");
+    ASSERT_NE(operation, nullptr);
+    auto call = [&](const Json &args) {
+        return config.api_handler("test.shot", *operation, Json::array({Json{{"entity", "chronicle:monster:0:1"}, {"native", "SET_SHOT"}, {"args", args}}}));
+    };
+    // A bad name is refused before the dungeon is looked at; a good one gets as far as needing a dungeon.
+    EXPECT_EQ(call(Json::array({"dcol 0", 1.0, 2.0, 3.0})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(Json::array({std::string(32, 'a'), 1.0, 2.0, 3.0})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(Json::array({"", 1.0})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call(Json::array({"dcol0", 1.0, 2.0, 3.0})).status, ApiCallStatus::Failed);
+}
+
+TEST(MoonModApi, ChronicleHostileCompanionIsAnInvader) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler("test.invader", *operation, args);
+    };
+    // hostile needs a character, a life and a blow; defence and a tint are optional.
+    EXPECT_EQ(call("party.companion_set", Json::array({Json{{"hostile", Json{{"hp", 100}, {"damage", 12}}}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("party.companion_set", Json::array({Json{{"character", "goro"}, {"hostile", Json{{"hp", 0}, {"damage", 12}}}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("party.companion_set", Json::array({Json{{"character", "goro"}, {"hostile", Json{{"hp", 100}}}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("party.companion_set",
+                   Json::array({Json{{"character", "goro"}, {"hostile", Json{{"hp", 100}, {"damage", 12}, {"tint", Json{{"r", 20}, {"g", 0}}}}}}}))
+                  .status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("party.companion_set", Json::array({Json{{"character", "goro"},
+                                                            {"hostile", Json{{"hp", 300}, {"damage", 14}, {"defense", 4},
+                                                                             {"tint", Json{{"r", 30}, {"g", 10}, {"b", 40}}}}}}}))
+                  .status,
+              ApiCallStatus::Ok);
+    // Out of a dungeon nothing is loaded, so it isn't out (or hostile) yet.
+    const auto got = call("party.companion_get", Json::array());
+    EXPECT_EQ(got.status, ApiCallStatus::Ok);
+    EXPECT_FALSE(got.value["hostile"].get<bool>());
+    EXPECT_EQ(call("party.companion_set", Json::array({Json::object()})).status, ApiCallStatus::Ok);
+
+    // combat.strike_player, a mod's own attack on the player: a point, a reach, a blow; only in a dungeon.
+    EXPECT_EQ(call("combat.strike_player", Json::array({Json{{"x", 0}, {"y", 0}, {"z", 0}, {"radius", 1}, {"damage", 10}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("combat.strike_player", Json::array({Json{{"x", 0}, {"y", 0}, {"z", 0}, {"radius", 30}, {"damage", 10}, {"kind", "huge"}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("combat.strike_player", Json::array({Json{{"x", 0}, {"y", 0}, {"radius", 30}, {"damage", 10}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_NE(call("combat.strike_player", Json::array({Json{{"x", 0}, {"y", 0}, {"z", 0}, {"radius", 30}, {"damage", 10}, {"kind", "heavy"}}})).status,
+              ApiCallStatus::Ok); // not in a dungeon here
+
+    // The death ghost: nothing kept outside a dungeon; play takes a hero and 1-600 frames of five numbers, {} stops.
+    const auto kept = call("world.ghost_get", Json::array());
+    EXPECT_EQ(kept.status, ApiCallStatus::Ok);
+    EXPECT_TRUE(kept.value["frames"].empty());
+    EXPECT_TRUE(kept.value["character"].is_null());
+    EXPECT_EQ(call("world.ghost_play", Json::array({Json{{"character", "toan"}, {"frames", Json::array()}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("world.ghost_play", Json::array({Json{{"character", "nobody"}, {"frames", Json::array({Json::array({0, 0, 0, 0, 0})})}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("world.ghost_play", Json::array({Json{{"character", "toan"}, {"frames", Json::array({Json::array({0, 0, 0, 0})})}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_NE(call("world.ghost_play", Json::array({Json{{"character", "toan"}, {"frames", Json::array({Json::array({0, 0, 0, 0, 1})})}}})).status,
+              ApiCallStatus::Ok); // not in a dungeon here
+    EXPECT_EQ(call("world.ghost_play", Json::array({Json::object()})).status, ApiCallStatus::Ok);
+}
+
+TEST(MoonModApi, ChronicleLockOnTuningBossBarsAndHaste) {
+    using moonmod::ApiCallStatus;
+    using moonmod::Json;
+    moonmod::ResetChroniclePlayerTuningForTests();
+    moonmod::RuntimeConfig config;
+    config.game_id = "chronicle";
+    moonmod::ConfigureChronicleApi(config);
+    auto call = [&](std::string_view path, std::string_view owner, const Json &args) {
+        const moonmod::ApiOperationSpec *operation = moonmod::FindApiOperation(path);
+        EXPECT_NE(operation, nullptr) << path;
+        return config.api_handler(owner, *operation, args);
+    };
+    // lock_flick and lock_sight are booleans, soft_lock 0 to 90 degrees; mods' tunings merge (any on, the widest arc).
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"lock_flick", 1}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"soft_lock", 91}}})).status, ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({Json{{"lock_flick", true}, {"soft_lock", 30}}})).status, ApiCallStatus::Ok);
+    EXPECT_EQ(call("player.tuning_set", "test.b", Json::array({Json{{"lock_sight", true}, {"soft_lock", 45}}})).status, ApiCallStatus::Ok);
+    EXPECT_TRUE(moonmod::ChronicleLockFlick());
+    EXPECT_TRUE(moonmod::ChronicleLockSight());
+    EXPECT_EQ(moonmod::ChroniclePlayerTuningGet().soft_lock, 45);
+    for (const char *owner : {"test.a", "test.b"}) EXPECT_EQ(call("player.tuning_clear", owner, Json::array()).status, ApiCallStatus::Ok);
+    EXPECT_FALSE(moonmod::ChronicleLockFlick());
+    EXPECT_FALSE(moonmod::ChronicleLockSight());
+    EXPECT_EQ(moonmod::ChroniclePlayerTuningGet().soft_lock, 0);
+
+    // A boss bar keeps its label and is told apart from the corner bars.
+    EXPECT_EQ(call("render.bar_register", "test.a", Json::array({Json{{"id", "boss"}, {"label", "DRAN"}, {"current", 50}, {"max", 100}, {"boss", 1}}})).status,
+              ApiCallStatus::InvalidArgument);
+    EXPECT_EQ(call("render.bar_register", "test.a", Json::array({Json{{"id", "boss"}, {"label", "DRAN"}, {"current", 50}, {"max", 100}, {"boss", true}}})).status,
+              ApiCallStatus::Ok);
+    bool found = false;
+    for (const auto &bar : moonmod::ChronicleHudBars()) {
+        if (!bar.boss) continue;
+        found = true;
+        EXPECT_EQ(bar.label, "DRAN");
+        EXPECT_EQ(bar.number, -1);
+        EXPECT_DOUBLE_EQ(bar.current, 50.0);
+    }
+    EXPECT_TRUE(found);
+    EXPECT_EQ(call("render.bar_remove", "test.a", Json::array({Json{{"id", "boss"}}})).status, ApiCallStatus::Ok);
+
+    // Haste runs out with the monster's steps and is cleared with its slot.
+    EXPECT_FLOAT_EQ(moonmod::ChronicleMonsterSpeedScale(0), 1.0f);
+    EXPECT_FLOAT_EQ(moonmod::ChronicleMonsterSpeedScale(-1), 1.0f);
+}
+
 TEST(MoonModApi, ChronicleTuningForStatusMapSwapAndTheFatalGuard) {
     using moonmod::ApiCallStatus;
     using moonmod::Json;
@@ -1905,7 +2236,23 @@ TEST(MoonModApi, ChronicleTuningForStatusMapSwapAndTheFatalGuard) {
                             Json{{"dodge_hop", 1}}}) {
         EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({bad})).status, ApiCallStatus::InvalidArgument) << bad.dump();
     }
+    // Vigil's run, Lightness and Stamina: each character's refill by id, owners taking the largest.
+    ASSERT_EQ(call("player.tuning_set", "test.a",
+                   Json::array({Json{{"dodge_run", 20}, {"lightness", true}, {"stamina", {{"toan", 35}, {"xiao", 120}}}}})).status,
+              ApiCallStatus::Ok);
+    ASSERT_EQ(call("player.tuning_set", "test.b", Json::array({Json{{"stamina", {{"toan", 50}}}}})).status, ApiCallStatus::Ok);
+    EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerDodgeRun(), 20.0f);
+    EXPECT_TRUE(moonmod::ChroniclePlayerLightness());
+    EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerStamina(CHARA_TOAN), 50.0f);
+    EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerStamina(CHARA_XIAO), 120.0f);
+    EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerStamina(CHARA_GORO), 0.0f);
+    for (const Json &bad : {Json{{"dodge_run", 201}}, Json{{"lightness", 1}}, Json{{"stamina", 30}},
+                            Json{{"stamina", {{"nobody", 30}}}}, Json{{"stamina", {{"toan", 601}}}}, Json{{"stamina", {{"toan", "fast"}}}}}) {
+        EXPECT_EQ(call("player.tuning_set", "test.a", Json::array({bad})).status, ApiCallStatus::InvalidArgument) << bad.dump();
+    }
     moonmod::ResetChroniclePlayerTuningForTests();
+    EXPECT_FALSE(moonmod::ChroniclePlayerLightness());
+    EXPECT_FLOAT_EQ(moonmod::ChroniclePlayerStamina(CHARA_TOAN), 0.0f);
 
     // The fatal guard: charges per character, spent one at a time.
     ASSERT_EQ(call("player.fatal_guard", "test.a", Json::array({Json{{"charges", 1}}})).status, ApiCallStatus::Ok);

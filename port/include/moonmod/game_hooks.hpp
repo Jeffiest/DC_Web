@@ -49,6 +49,10 @@ void  ChroniclePlayerModelLoaded(int chara);
 // ones, where the mod motions sit): the mod motions come off until the chest is done.
 void  ChroniclePlayerMotionsSuspend();
 bool  ChroniclePlayerMoveOnAttack();
+// player.tuning_set chain_cancel: attack pressed in the recovery of one of the mod's attack moves (a heavy, a
+// finisher), its last blow chain_cancel steps past, ends the move so the native swing starts on this press. True
+// when it did.
+bool  ChroniclePlayerChainToAttack();
 // L2 pressed this frame: a mod dodge move (trigger dodge or dodge_back) starts in place of the tuning dodge.
 bool  ChroniclePlayerMoveOnDodge(bool pressed);
 // R2 pressed this frame: a combo_finisher (after enough combo blows) or the heavy attack, if a mod set one.
@@ -63,9 +67,84 @@ int   ChroniclePlayerStatusImmune();
 float ChroniclePlayerSwapDelay();
 float ChroniclePlayerDodgePower();
 int   ChroniclePlayerDodgeInvincibleFrames();
+int   ChroniclePlayerDodgeGauge();
 bool  ChroniclePlayerDodgeHop();
+// Whether the character playing now has a dodge move of a mod's (player.moves_set dodge, dodge_back). The
+// tuning's dodge_power shove is for the characters without one, so a refused roll (an empty gauge) stays refused.
+bool  ChroniclePlayerHasDodgeMove();
+float ChroniclePlayerDodgeRun(); // player.tuning_set dodge_run: gauge a second a run drains (0 = no run)
+bool  ChroniclePlayerLightness(); // player.tuning_set lightness: Speed sets the swing cost, not the refill
+float ChroniclePlayerStamina(int chara); // player.tuning_set stamina: chara's refill in gauge a second (0 = the game's)
+// What lightness makes the active weapon's swings cost, as a scale of the game's cost (1 without it).
+float ChroniclePlayerSwingCostScale();
+// A hit on the player (BtCheckDamageProc): the guard's rules (player.guard_rules_set) and the gauge's
+// (player.gauge_rules_set) decide what it does, and game.player.hit is queued. With neither set, it is the game's.
+struct ChroniclePlayerHit {
+    int   kind = 0;         // 2 light, 3 heavy, 4 trap
+    int   damage = 0;       // after the player's defence
+    bool  guarding = false; // action_on 6
+    bool  held = false;     // action 9
+    float angle = 0.0f;     // degrees from the player's facing to the attacker
+    float gauge = 100.0f;   // the action gauge before the hit
+    int   monster = -1;     // the attacker's slot, or -1
+};
+struct ChroniclePlayerHitResult {
+    bool  blocked = false;
+    bool  parried = false;
+    bool  broke = false;
+    bool  poised = false;   // it landed, but the worn gear's poise took it: no stagger (gear.hpp, PoiseTakes)
+    int   damage = 0;       // what gets through
+    float gauge = 100.0f;   // the action gauge after the hit
+};
+ChroniclePlayerHitResult ChroniclePlayerHitResolve(const ChroniclePlayerHit &hit);
+// After a landed hit set its recoil: recoil_scale, invincible_bonus_frames (player.tuning_set), a guard break's recoil.
+void  ChroniclePlayerHitRecoil(bool broke);
+// Hit feel (combat.feel_set): a blow of the player's landed on a monster (heavy: a heavy hit, or charged), the player
+// was hurt (heavy: knocked back), or a critical began. Each starts the hit-stop, camera shake and rumble set for it.
+void  ChronicleFeelPlayerHit(bool heavy);
+void  ChronicleFeelPlayerHurt(bool heavy);
+void  ChronicleFeelCritical();
+// True while a hit-stop holds the dungeon still this frame (it is drawn, not stepped); counts the frame off.
+bool  ChronicleHitStopHold();
+// player.tuning_set input_buffer: a press refused now is kept `window` steps and tried again each step until a move
+// takes it. Window 0 is the game's own (the press is tried on its frame only).
+struct ChroniclePressBuffer {
+    int  left = 0;
+    bool Wanted(bool pressed, int window) {
+        if (pressed) left = window + 1;
+        if (left <= 0) return false;
+        --left;
+        return true;
+    }
+    void Taken() { left = 0; }
+};
+bool  ChroniclePlayerGuardWithoutLock(); // player.guard_rules_set without_lock: R1 guards with no lock-on target
+// Once a dungeon tick, before the refill: counts the frames the guard has been up, and says whether the refill may
+// run (gauge_rules_set refill_delay); ChroniclePlayerGaugeSeen takes the gauge after it.
+bool  ChroniclePlayerGaugeTick();
+void  ChroniclePlayerGaugeSeen();
+// The attack button with no action running (idle) or during one: false when gauge_rules_set min_to_swing refuses the
+// first swing; Started charges first_swing_cost once a native first swing has begun.
+bool  ChroniclePlayerSwingAllowed(bool idle);
+void  ChroniclePlayerSwingStarted(bool idle);
 int   ChroniclePlayerExtraShots();
 bool  ChroniclePlayerShotsPierce();
+// player.tuning_set item_heal_lock: an HP-healing item (the item menu's, a quick slot's) is refused while a live,
+// revealed enemy is within that distance of the active character. A mod's own items.use is not.
+bool  ChronicleHealItemLocked();
+// player.tuning_set lock_flick, lock_sight (read by the dungeon loop's lock-on, MoonModLockOnExtras) and soft_lock:
+// ChronicleSoftLockTurn turns the player, not locked on, to the nearest enemy ahead as a native swing starts.
+// combat.status_add haste: a hasted monster's scripted motions and moves play this much faster (1 when not hasted).
+float ChronicleMonsterSpeedScale(int slot);
+// The attack button pressed in a dungeon: an illusory wall (dungeons.set_shortcuts illusory) in front of the player,
+// within reach, opens.
+void  ChronicleWallStruck();
+bool  ChronicleLockFlick();
+bool  ChronicleLockSight();
+// player.tuning_set lock_camera: the lock-on camera keeps the target framed beyond the player (the game lets it
+// wander up to 90 degrees off before turning), close up as well as far.
+bool  ChronicleLockCamera();
+void  ChronicleSoftLockTurn();
 // A mod move's shots (player.moves_set, a hit with shot = true): where they leave from (false: the weapon's tip, as
 // before), the look each slot of the player's shots takes as it is spawned, and a burst where one lands.
 bool  ChronicleMoveShotOrigin(float *world);
@@ -79,6 +158,8 @@ void  ChronicleNativeItemPickedUp(int item_no, int count, int character, int slo
 // The companion: its weapon's base attack, and a blow on a monster slot (no formulas; reported to mods).
 int   ChronicleCompanionBaseAttack(int character);
 void  ChronicleCompanionStrike(int slot, int amount, int character);
+// A hostile companion (an invader) was hurt by the player: game.companion.struck {character, damage, hp, max_hp, killed}.
+void  ChronicleCompanionStruck(int character, int damage, int hp, int max_hp, bool killed);
 // Free back floors (dungeons.set_backrooms): the stairs' key window becomes a panel; true when it took over.
 bool  ChronicleBackroomAsk();
 // A fixed floor's gate pressed at (its marker's name): true when a mod's story-exit panel opened in place of the lock.
@@ -169,6 +250,13 @@ float *ChronicleMonsterScriptHeight(CMonstorUnit *unit, int slot);
 // fades out instead, and ChronicleMonsterDefeatFading holds its script while it does.
 void  ChronicleMonsterDefeatScene(CMonstorUnit *unit, int slot);
 bool  ChronicleMonsterDefeatFading(CMonstorUnit *unit, int slot);
+// A critical's target (player.moves_set trigger critical) is held while its pair motion plays: each step
+// ChronicleMonsterHeld counts the hold down, 1 while it lasts (its script paused), 2 on the step it ends (its idle
+// program starts afresh), 0 when not held. ChronicleMonsterIsHeld: held now (a blow doesn't run its flinch).
+// ChronicleMonsterHoldReset: a slot spawned afresh (-1: every slot).
+int   ChronicleMonsterHeld(CMonstorUnit *unit, int slot);
+bool  ChronicleMonsterIsHeld(int slot);
+void  ChronicleMonsterHoldReset(int slot);
 // A boss's cast (characters.spawn arena_slot) names its members by the slots they hold in their own arena: the slot
 // here of the member of `slot`'s cast that holds `native` there (`native` itself outside a cast), or -1; and the
 // arena slot `slot` holds (its own slot outside a cast).

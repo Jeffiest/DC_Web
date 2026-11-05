@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 #include <string_view>
@@ -34,6 +35,8 @@ struct ChronicleHudBar {
     double current = 0.0;
     double maximum = 1.0;
     int    number = -1; // trailing number of the label ("LV5" -> 5), drawn left of the bar
+    bool   boss = false; // render.bar_register boss = true: drawn wide along the bottom of the screen, labelled
+    std::string label;
 };
 std::vector<ChronicleHudBar> ChronicleHudBars();
 
@@ -92,11 +95,22 @@ struct ChroniclePlayerTuning {
     float swap_delay = 1.0f;            // scales the battle menu's character-change waits (0 = none)
     float dodge_power = 0.0f;           // L2 dodges in the facing direction this hard (0 = no dodge)
     int   dodge_invincible_frames = 0;  // invincibility a dodge gives
+    int   dodge_gauge = 0;              // weapon gauge (of 100) the dodge_power shove costs; refused with less
     bool  dodge_hop = false;            // the dodge leaves the ground (Xiao's tumble)
+    float dodge_run = 0.0f;             // L2 held runs, draining this much gauge a second; a tap dodges (0 = no run)
+    bool  lightness = false;            // a weapon's Speed sets its swings' gauge cost, not the refill (gauge_rules.hpp)
+    std::array<float, 16> stamina{};    // each character's refill in gauge a second, by native slot (0 = the game's)
     int   extra_shots = 0;              // Xiao's shots and Ruby's orbs fire this many more, fanned out
     bool  shots_pierce = false;         // Ruby's orbs fly on through monsters
     float reach_scale = 1.0f;           // Ungaga's spear hits reach this much further
     bool  no_first_person = false;      // R2 (and a mod's toggle) no longer switch to the first-person view in dungeons
+    int   item_heal_lock = 0;           // HP-healing items refuse within this distance of a live enemy (0 = never)
+    bool  lock_flick = false;           // locked on, a flick of the right stick moves the lock to the next enemy that way
+    bool  lock_sight = false;
+    bool  lock_camera = false;          // locked on, the camera keeps the target in front of the player, not a wide arc           // the lock drops after half a second with a wall between the player and the target
+    int   input_buffer = 0;             // a roll or R2 pressed when it can't start is kept this many steps (0 = off)
+    int   chain_cancel = 0;             // steps after an attack's last blow when R2 or attack cuts into the next (0 = off)
+    int   soft_lock = 0;                // unlocked, a swing turns to the nearest enemy within this many degrees (0 = off)
 };
 const ChroniclePlayerTuning &ChroniclePlayerTuningGet();
 void ClearChroniclePlayerTuning(std::string_view owner);
@@ -124,6 +138,9 @@ float ChroniclePlayerSwapDelay();
 float ChroniclePlayerDodgePower();
 int ChroniclePlayerDodgeInvincibleFrames();
 bool ChroniclePlayerDodgeHop();
+float ChroniclePlayerDodgeRun();
+bool ChroniclePlayerLightness();
+float ChroniclePlayerStamina(int chara);
 int ChroniclePlayerExtraShots();
 bool ChroniclePlayerShotsPierce();
 bool ChroniclePlayerFirstPersonAllowed();
@@ -131,6 +148,7 @@ float ChroniclePlayerReachScale();
 // player.fatal_guard: charges that turn a fatal hit on a character into 1 HP.
 bool ConsumeChronicleFatalGuard(int character);
 void ResetChronicleFatalGuardForTests();
+void ResetChroniclePlayerRulesForTests(); // player.guard_rules_set and gauge_rules_set off, their counters reset
 void ResetChronicleFloorRedirectsForTests();
 void ChronicleMonsterDefeated(dc::game::CMonstorUnit *unit, int slot, bool scripted);
 void ChronicleNativeItemPickedUp(int item_no, int count, int character = -1, int slot = -1);

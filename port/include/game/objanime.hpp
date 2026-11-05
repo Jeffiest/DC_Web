@@ -144,7 +144,9 @@ STATIC_ASSERT(sizeof(OBJ_ANIME_SEQ) == 0x90);
 /**
  * Frame animations the map parts declare, filled by the item-definition parser.
  */
-extern OBJ_ANIME_SEQ FrameObjAnim[48];
+// Retail's 48; MoonMod: room for the part banks' animated parts too (dungeons.set_zones source_dungeon).
+constexpr int FRAME_OBJ_ANIM_MAX = 512;
+extern OBJ_ANIME_SEQ FrameObjAnim[FRAME_OBJ_ANIM_MAX];
 
 /**
  * Describes one effect that an edited map places on a part, and the frame

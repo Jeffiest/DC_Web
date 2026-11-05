@@ -129,6 +129,22 @@ void Draw3DMul(float out[4][4], const float a[4][4], const float b[4][4]) {
 // point MGRotTransPers2D gives, and that lands on the target through its logical mapping (with
 // the field-height targets taking half the rows). Depth is a + b / z with the GS Z of
 // MGSetRenderInfo, offset[2] + scale[2] / z, read through MGPortDepth.
+namespace {
+float g_orthographic_depth = 0.0f;
+} // namespace
+
+float MGPortOrthographicDepth() {
+    return g_orthographic_depth;
+}
+
+MGPortOrthographicScope::MGPortOrthographicScope(float depth) : previous_(g_orthographic_depth) {
+    g_orthographic_depth = depth;
+}
+
+MGPortOrthographicScope::~MGPortOrthographicScope() {
+    g_orthographic_depth = previous_;
+}
+
 void Draw3DEyeToClip(const RenderInfo &info, float clip[4][4]) {
     gfx::TextureHandle  target = gfx::CurrentRenderTarget();
     gfx::LogicalMapping mapping = gfx::GetLogicalMapping(target);
@@ -143,6 +159,18 @@ void Draw3DEyeToClip(const RenderInfo &info, float clip[4][4]) {
     float               centre_y = info.offset[1] - (kGsCentre - kScreenHeight * 0.5f);
 
     std::memset(clip, 0, sizeof(float) * 16);
+    if (g_orthographic_depth > 0.0f) {
+        clip[0][0] = kx * info.scale[0] / g_orthographic_depth;
+        clip[1][1] = ky * info.scale[1] / g_orthographic_depth;
+        clip[3][0] = kx * centre_x + ox;
+        clip[3][1] = ky * centre_y + oy;
+        const float range = info.far[2] - info.near[2];
+        clip[2][2] = -1.0f / range;
+        clip[3][2] = info.far[2] / range;
+        clip[3][3] = 1.0f;
+        return;
+    }
+
     clip[0][0] = kx * info.scale[0];
     clip[2][0] = kx * centre_x + ox;
     clip[1][1] = ky * info.scale[1];

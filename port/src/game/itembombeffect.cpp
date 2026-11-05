@@ -9,6 +9,7 @@
 #include "dun/gameloop.hpp"
 #include "itemdata.hpp"
 #include "mglib.hpp"
+#include "moonmod/game_hooks.hpp"
 #include "rect.hpp"
 #include "shot_freefuncs.hpp"
 #include "snd.hpp"
@@ -59,7 +60,8 @@ int checkItemUsed(int slot) {
         case ITEM_PREMIUM_CHICKEN:
         case ITEM_CHEESE:
         case ITEM_MELLOW_BANANA:
-            return hp < max_hp ? 1 : 0;
+            // MoonMod item_heal_lock: no eating a heal from a quick slot with an enemy near.
+            return hp < max_hp && !moonmod::ChronicleHealItemLocked() ? 1 : 0;
         default:
             return 1;
     }

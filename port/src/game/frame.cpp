@@ -421,6 +421,39 @@ float (*CFrame::GetInverseMatrix())[4] {
     GetLWMatrix(world_matrix);
     sceVu0InversMatrix(inverse, world_matrix);
 
+    // MoonMod: sceVu0InversMatrix transposes the rotation, which only inverts an orthonormal matrix. A sheared frame
+    // (a sloped dungeon cell, moonmod/dungeonmap_layout.hpp) gets a full 3x3 inverse instead.
+    const float(*m)[4] = world_matrix;
+    float skew = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            const float dot = m[i][0] * m[j][0] + m[i][1] * m[j][1] + m[i][2] * m[j][2];
+            const float len = i == j ? std::sqrt(m[i][0] * m[i][0] + m[i][1] * m[i][1] + m[i][2] * m[i][2]) : 0.0f;
+            skew = std::max(skew, std::fabs(i == j ? dot - len * len : dot));
+        }
+    }
+    if (skew > 1e-3f) {
+        const float det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                          m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        if (std::fabs(det) > 1e-8f) {
+            const float d = 1.0f / det;
+            inverse[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * d;
+            inverse[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * d;
+            inverse[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * d;
+            inverse[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * d;
+            inverse[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * d;
+            inverse[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * d;
+            inverse[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * d;
+            inverse[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * d;
+            inverse[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * d;
+            for (int j = 0; j < 3; j++) {
+                inverse[j][3] = 0.0f;
+                inverse[3][j] = -(m[3][0] * inverse[0][j] + m[3][1] * inverse[1][j] + m[3][2] * inverse[2][j]);
+            }
+            inverse[3][3] = 1.0f;
+        }
+    }
+
     return inverse;
 }
 
@@ -875,7 +908,7 @@ int CFrameVu1::DrawVu1(unsigned int *packet, RenderInfo *info) {
         ShadowMatrix(info->shadow, info->light_direction, info->shadow_point, info->shadow_normal);
     }
 
-    if (visual && attr.draw_on && attr.cull_enable) {
+    if (visual && attr.draw_on && attr.cull_enable && render::MGPortOrthographicDepth() == 0.0f) {
         MulFrameMatrix(screen_matrix, info->view_scaled, matrix);
         float inv_scale = 1.0f / info->scale[0];
 

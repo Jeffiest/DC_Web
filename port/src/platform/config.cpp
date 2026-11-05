@@ -615,6 +615,26 @@ bool Apply(Config &config, std::string_view name, const Json &value) {
     }
     if (name == "game.dungeon_aerial_map") return ReadBool(value, config.dungeon_aerial_map);
     if (name == "game.fit_dungeon_map") return ReadBool(value, config.fit_dungeon_map);
+    if (name == "game.aerial_map") return ReadBool(value, config.aerial_map);
+    if (name == "game.aerial_map_markers") return ReadBool(value, config.aerial_map_markers);
+    if (name == "game.aerial_map_ceiling" || name == "game.aerial_map_zoom" || name == "game.aerial_map_model_scale" ||
+        name == "game.aerial_map_size") {
+        const bool ceiling = name == "game.aerial_map_ceiling";
+        float      number = 0.0f;
+        if (!ReadNumber(value, number) || !std::isfinite(number)) {
+            return false;
+        }
+        const bool  model = name == "game.aerial_map_model_scale";
+        const float most = ceiling ? 5000.0f : model ? 40.0f : name == "game.aerial_map_size" ? 1.5f : 8.0f;
+        if (number < (ceiling ? 0.0f : 0.5f) || number > most) {
+            return false;
+        }
+        (ceiling ? config.aerial_map_ceiling
+                 : name == "game.aerial_map_zoom" ? config.aerial_map_zoom
+                 : model                         ? config.aerial_map_model_scale
+                                                 : config.aerial_map_size) = number;
+        return true;
+    }
     if (name == "discord.rich_presence") {
         return ReadBool(value, config.discord_rich_presence);
     }
@@ -825,6 +845,12 @@ std::string ConfigSerialize(const Config &config) {
     root["input"]["bindings"] = std::move(bindings);
     root["game"]["dungeon_aerial_map"] = config.dungeon_aerial_map;
     root["game"]["fit_dungeon_map"] = config.fit_dungeon_map;
+    root["game"]["aerial_map"] = config.aerial_map;
+    root["game"]["aerial_map_ceiling"] = Shortest(config.aerial_map_ceiling);
+    root["game"]["aerial_map_zoom"] = Shortest(config.aerial_map_zoom);
+    root["game"]["aerial_map_model_scale"] = Shortest(config.aerial_map_model_scale);
+    root["game"]["aerial_map_markers"] = config.aerial_map_markers;
+    root["game"]["aerial_map_size"] = Shortest(config.aerial_map_size);
     root["discord"]["rich_presence"] = config.discord_rich_presence;
     return root.dump(4) + "\n";
 }

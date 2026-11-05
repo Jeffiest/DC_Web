@@ -2,12 +2,22 @@
 
 #include "common.h"
 
+#include <cstdint>
+#include <string_view>
+#include <vector>
+
 #include "dataalloc_fwd.hpp"
 #include "itemdata.hpp"
 #include "menu_draw.hpp"
 #include "rect.hpp"
 
 namespace dc::game {
+
+/**
+ * Keeps a copy of the status sheet's pixels (r, g, b, a rows, width by height) as it loads, from which the hero page
+ * builds its tablet; any other texture name is ignored.
+ */
+void RememberMenuSheet(std::string_view name, unsigned width, unsigned height, const std::vector<uint8_t> &rgba);
 
 /**
  * Where the battle menu was opened from, as BtlMenuMode holds it.
@@ -600,6 +610,16 @@ void DrawWepStatus(int x, int y, WEAPON_HAVE *weapon, int selected, int alpha);
  * Draws the bars comparing a weapon's current values against its built-up ones.
  */
 void DrawWepVolumeDisplay(int x, int y, WEAPON_HAVE *weapon, int alpha);
+
+/** The weapon stats a label can be set for (weapons.stat_label_set), in the cards' order. */
+enum WeaponStat { WEAPON_STAT_ATTACK, WEAPON_STAT_ENDURANCE, WEAPON_STAT_SPEED, WEAPON_STAT_MAGIC, WEAPON_STAT_COUNT };
+
+/**
+ * MoonMod: a mod's own image (an icons/<stem>.png game path) for a stat's label on the weapon cards, drawn where the
+ * game's two letters were; an empty path gives the game's back.
+ */
+void SetWeaponStatLabel(int stat, std::string game_path);
+const std::string &WeaponStatLabel(int stat);
 
 /**
  * Returns the x position that centers a weapon name of a width.

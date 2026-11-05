@@ -206,6 +206,8 @@ int StartLoadCharaMDS(u_long128 *buffer, int chara, int read_no);
  * Builds the menu character model from its read file and poses it for the menu.
  */
 void MenuCharaMDSBuild2(int chara, int texture_block);
+/** MoonMod: stands the item page's model where the game puts chara, moved by dx, dy and grown by scale. */
+void MenuCharaPlace(int chara, float scale, float dx, float dy);
 
 /**
  * Starts the background reads of the character change screen and reports whether they were started.

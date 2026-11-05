@@ -2,6 +2,8 @@
 
 #include <libvu0.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -11,12 +13,14 @@
 
 #include "battlemenu.hpp"
 #include "camera.hpp"
+#include "charm_slots.hpp"
 #include "character.hpp"
 #include "clsmes.hpp"
 #include "dataalloc.hpp"
 #include "dataread.hpp"
 #include "editloop.hpp"
 #include "gamepad.hpp"
+#include "gear.hpp"
 #include "itemdata.hpp"
 #include "mainselect.hpp"
 #include "mathutil.hpp"
@@ -28,6 +32,7 @@
 #include "menuetc.hpp"
 #include "menuitemstep.hpp"
 #include "mglib.hpp"
+#include "moonmod/run_menu.hpp"
 #include "quest/custom_shop.hpp"
 #include "rect.hpp"
 #include "savedata.hpp"
@@ -851,7 +856,7 @@ void ChargeShopLRDraw(int alpha) {
             break;
         case SHOP_SIDE_PERSONAL:
             x = 0x146;
-            gap = 0xE6;
+            gap = GearTabShown() ? 0x10A : 0xE6; // MoonMod: past the Equipment tab's plate
             break;
     }
 
@@ -2501,6 +2506,25 @@ int CalItemMoney(int item_no, int sell) {
 }
 
 /**
+ * MoonMod: what an item with volume left sells for. An amulet is worth less for every use spent and nothing once worn
+ * below half its uses (WornCharmPrice); everything else (Dran's Feather too, whose uses are random) sells for
+ * CalItemMoney's price.
+ */
+int SellItemMoney(int item_no, int volume) {
+    const int money = CalItemMoney(item_no, 1);
+    if (!IsCharmItem(item_no) || item_no == ITEM_DRAN_S_FEATHER) {
+        return money;
+    }
+    const ITEM_DATA *data = GetItemData(item_no);
+    return WornCharmPrice(money, volume, data != nullptr ? data->vol : 0);
+}
+
+/** MoonMod: whether a worn charm is what sells for nothing, so the shop's one-gilda floor leaves it at 0. */
+bool WorthlessCharm(int item_no, int volume) {
+    return IsCharmItem(item_no) && item_no != ITEM_DRAN_S_FEATHER && SellItemMoney(item_no, volume) <= 0;
+}
+
+/**
  * Totals the shop price of the attachments fitted to a weapon.
  */
 int WeaponCalMoney(WEAPON_HAVE *weapon, int sell) {
@@ -2572,7 +2596,7 @@ int SellMoneyCheck2() {
             int item_no = ShopListPt[i].item_no;
 
             if (item_no >= ITEM_ATTACH_START) {
-                int money = CalItemMoney(item_no, 1);
+                int money = SellItemMoney(item_no, ShopListPt[i].data.volume);
 
                 if (item_no >= ITEM_WEAPON_START) {
                     money += WeaponCalMoney(&ShopListPt[i].data.weapon, 1);
@@ -3024,6 +3048,61 @@ namespace {
 /**
  * Draws the item shop's board with its goods and their prices.
  */
+// MoonMod: the gear a mod stocks this shop with (items.gear_stock_set), in the cells after its own goods. A gear good
+// is no item: its cell's item_no stays 0 and ShopGearCell names the good, by its place in the shop's stock.
+std::array<int, 30> ShopGearCell;
+int                 ShopGearShop = -1;
+
+/** The gear good in a shop cell, or null. */
+GearGood *ShopGearGood(int cell) {
+    std::vector<GearGood> *stock = GearStock(ShopGearShop);
+
+    if (stock == nullptr || cell < 0 || cell >= 30 || ShopGearCell[cell] < 0 || ShopGearCell[cell] >= static_cast<int>(stock->size())) {
+        return nullptr;
+    }
+
+    GearGood &good = (*stock)[ShopGearCell[cell]];
+    return good.sold ? nullptr : &good;
+}
+
+/** The gear piece under the cursor on the player's Equipment tab, or null. */
+const GearPiece *ShopGearPiece() {
+    return ShopMenu.side == SHOP_SIDE_PERSONAL && ShopMenu.board.page == BOARD_PAGE_GEAR && ShopMenu.board.cursor_area == PERSONAL_BOARD_AREA_CELLS
+               ? GearBagPiece(ShopMenu.board.cursor)
+               : nullptr;
+}
+
+/** Lays the shop's unsold gear goods in its empty cells: after a full list of 20 goods, in the board's last ten. */
+void ShopGearLay(int shop_no) {
+    ShopGearShop = shop_no;
+    ShopGearCell.fill(-1);
+    std::vector<GearGood> *stock = GearStock(shop_no);
+
+    // With no Equipment tab there is nowhere for a bought piece to go.
+    if (stock == nullptr || !GearPageOpen()) {
+        return;
+    }
+
+    int cell = 0;
+
+    for (int k = 0; k < static_cast<int>(stock->size()); k++) {
+        if ((*stock)[k].sold) {
+            continue;
+        }
+
+        while (cell < 30 && ShopBoardInfo[cell] != SHOP_SLOT_EMPTY) {
+            cell++;
+        }
+
+        if (cell >= 30) {
+            break;
+        }
+
+        ShopGearCell[cell] = k;
+        ShopBoardInfo[cell] = SHOP_SLOT_SHOP_GOOD;
+    }
+}
+
 void DrawItemShopBoard2(int x, int y, int alpha) {
     int top = y + 9;
     int bottom = y + 0xA9;
@@ -3050,7 +3129,13 @@ void DrawItemShopBoard2(int x, int y, int alpha) {
             num = ShopListPt[i].data.param[1];
         }
 
-        DrawIconParts(item, icon_x, icon_y, top, bottom, alpha, num);
+        if (const GearGood *good = ShopGearGood(i)) {
+            const GearPiece &piece = good->piece;
+            DrawGearIcon(piece.icon.empty() ? GearKindIcon(piece.kind) : piece.icon, piece.color, icon_x, icon_y, top, bottom, alpha, false, piece.kind);
+        } else {
+            DrawIconParts(item, icon_x, icon_y, top, bottom, alpha, num);
+        }
+
         icon_x += 0x28;
 
         if (i % 5 == 4) {
@@ -3404,7 +3489,7 @@ void ShopCancelGoodReturn2() {
     int next = 0;
 
     for (int i = 0; i < 30; i++) {
-        if (ShopListPt[i].item_no < ITEM_ATTACH_START) {
+        if (ShopListPt[i].item_no < ITEM_ATTACH_START && ShopGearGood(i) == nullptr) {
             if (next > count) {
                 break;
             }
@@ -3739,6 +3824,7 @@ void ItemShopGoodInitialize(int shop_no) {
         memset(&ShopListPt[i], 0, sizeof(SHOP_ITEMLIST));
     }
 
+    ShopGearLay(shop_no);
     ShopSpecialFunc();
     InitAllHaveData();
 }
@@ -3746,6 +3832,7 @@ void ItemShopGoodInitialize(int shop_no) {
 } // namespace
 
 void InitItemShop2(int *tex_block, int shop_no, int mode) {
+    SetHeldGear(0); // MoonMod: nothing of the item page's left in hand, or the Equipment tab would skip it
     ShopMenuInit(tex_block, shop_no, mode);
     ItemShopMemoryAlloc();
     ItemShopGoodInitialize(shop_no);
@@ -3826,7 +3913,7 @@ void ItemShopSelectKey2() {
         int cursor = ShopMenu.board.cursor;
         int shop_info = ShopBoardInfo[cursor];
 
-        if (ShopListPt[cursor].item_no < ITEM_ATTACH_START && ShopHaveItemPt->item_no < ITEM_ATTACH_START) {
+        if (ShopGearGood(cursor) != nullptr || (ShopListPt[cursor].item_no < ITEM_ATTACH_START && ShopHaveItemPt->item_no < ITEM_ATTACH_START)) {
             ComMenuSePlay(MENU_SOUND_REFUSE);
             return;
         }
@@ -3950,6 +4037,22 @@ void ItemShopSelectKey2() {
 
         if (ShopHaveItemPt->item_no >= ITEM_ATTACH_START) {
             ComMenuSePlay(MENU_SOUND_REFUSE);
+            return;
+        }
+
+        // MoonMod: a gear good goes to the gear bag, paid for at once.
+        if (const GearGood *good = ShopGearGood(ShopMenu.board.cursor)) {
+            if (ShopUserStatusPt->money < good->price) {
+                SetItemShopTalkMode(SHOP_TALK_NOT_ENOUGH_MONEY, SHOP_MSG_TALKING);
+                ComMenuSePlay(MENU_SOUND_REFUSE);
+            } else if (GearBagCount() >= GEAR_BAG_MAX) {
+                SetItemShopTalkMode(SHOP_TALK_NO_SPACE, SHOP_MSG_TALKING);
+                ComMenuSePlay(MENU_SOUND_REFUSE);
+            } else {
+                ShopMenu.talk_mode = SHOP_TALK_BUY_PROMPT;
+                ComMenuSePlay(MENU_SOUND_CONFIRM);
+            }
+
             return;
         }
 
@@ -4188,7 +4291,20 @@ int ItemShopKey2() {
 
                 break;
             case SHOP_TALK_SELL_PROMPT:
-                if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0) {
+                if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0 && ShopMenu.board.page == BOARD_PAGE_GEAR) {
+                    // MoonMod: a gear piece sells for its value, gone from the bag.
+                    if (const GearPiece *piece = GearBagPiece(ShopMenu.board.cursor)) {
+                        const int value = std::max(piece->value, 0);
+                        RemoveGear(piece->uid);
+                        ShopUserStatusPt->money = static_cast<u16>(std::min(0xFFFF, ShopUserStatusPt->money + value));
+                        ComMenuSePlay(SE_PURCHASE);
+                    } else {
+                        ComMenuSePlay(MENU_SOUND_REFUSE);
+                    }
+
+                    ShopMenu.talk_mode = SHOP_TALK_NONE;
+                    PersonalBoardLimmitCheck();
+                } else if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0) {
                     s16          cursor = ShopMenu.board.cursor;
                     int          item_no;
                     int          money;
@@ -4251,7 +4367,22 @@ int ItemShopKey2() {
                     CommonMenuMes1.MakeMesWin(0x4B4);
                 }
 
-                if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0) {
+                if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0 && ShopGearGood(ShopMenu.board.cursor) != nullptr) {
+                    // MoonMod: a gear good: a copy to the bag, the good sold out of the shop.
+                    GearGood *good = ShopGearGood(ShopMenu.board.cursor);
+
+                    if (AddGear(good->piece) != 0) {
+                        ShopUserStatusPt->money = static_cast<u16>(std::max(0, ShopUserStatusPt->money - good->price));
+                        good->sold = true;
+                        ShopBoardInfo[ShopMenu.board.cursor] = SHOP_SLOT_EMPTY;
+                        ShopGearCell[ShopMenu.board.cursor] = -1;
+                        ComMenuSePlay(SE_PURCHASE);
+                    } else {
+                        ComMenuSePlay(MENU_SOUND_REFUSE);
+                    }
+
+                    SetItemShopTalkMode(SHOP_TALK_NONE, SHOP_MSG_IDLE);
+                } else if (GamePad.Down(PAD_TRIANGLE | PAD_CROSS) != 0) {
                     int item_no = ShopListPt[ShopMenu.board.cursor].item_no;
                     ShopDataMoveFinish();
                     int  price = CalItemMoney(item_no, 0);
@@ -4471,6 +4602,12 @@ int ItemShopKey2() {
                                     s32 *info;
                                     pos = ShopMenu.board.cursor;
 
+                                    // MoonMod: a gear piece is sold with Triangle; nothing is carried to or from here.
+                                    if (ShopMenu.board.page == BOARD_PAGE_GEAR) {
+                                        ComMenuSePlay(MENU_SOUND_REFUSE);
+                                        break;
+                                    }
+
                                     switch (ShopMenu.board.page) {
                                         case BOARD_PAGE_ITEM:
                                             info = ItemBoardInfo;
@@ -4511,6 +4648,23 @@ int ItemShopKey2() {
 
                             if (ShopHaveItemPt->item_no >= ITEM_ATTACH_START) {
                                 ComMenuSePlay(MENU_SOUND_REFUSE);
+                                return 0;
+                            }
+
+                            // MoonMod: a gear piece on the Equipment tab sells for its value.
+                            if (ShopMenu.board.page == BOARD_PAGE_GEAR) {
+                                const GearPiece *piece = ShopGearPiece();
+
+                                if (piece == nullptr) {
+                                    ComMenuSePlay(MENU_SOUND_REFUSE);
+                                } else if (ShopUserStatusPt->money + std::max(piece->value, 0) > 0xFFFF) {
+                                    SetItemShopTalkMode(SHOP_TALK_TOO_MUCH_MONEY, SHOP_MSG_TALKING);
+                                    ComMenuSePlay(MENU_SOUND_REFUSE);
+                                } else {
+                                    ShopMenu.talk_mode = SHOP_TALK_SELL_PROMPT;
+                                    ComMenuSePlay(MENU_SOUND_CONFIRM);
+                                }
+
                                 return 0;
                             }
 
@@ -4953,7 +5107,7 @@ void ItemShopDraw2() {
                 case SHOP_SIDE_PERSONAL:
                     state = SearchBoardNowPosItemExist(ShopMenu.board.page, ShopMenu.board.cursor);
 
-                    if (state < ITEM_ATTACH_START) {
+                    if (state < ITEM_ATTACH_START && ShopGearPiece() == nullptr) {
                         state = 0;
                     } else {
                         state = 1;
@@ -4961,7 +5115,7 @@ void ItemShopDraw2() {
 
                     break;
                 case SHOP_SIDE_STOCK:
-                    if (ShopListPt[ShopMenu.board.cursor].item_no > ITEM_ATTACH_START) {
+                    if (ShopListPt[ShopMenu.board.cursor].item_no > ITEM_ATTACH_START || ShopGearGood(ShopMenu.board.cursor) != nullptr) {
                         state = 1;
                     } else {
                         state = 0;
@@ -4989,14 +5143,17 @@ void ItemShopDraw2() {
                 int cursor = ShopMenu.board.cursor;
                 int item_no = ShopListPt[cursor].item_no;
 
-                if (item_no >= ITEM_ATTACH_START) {
+                if (const GearGood *good = ShopGearGood(cursor)) {
+                    const int good_y = static_cast<int>(6.0f + ShopMenu.stock_y + static_cast<float>(cursor / 5 * 0x28));
+                    DrawBigSellTicket(0, good->price, cursor % 5 * 0x28 + 0x4A, good_y, 0x80);
+                } else if (item_no >= ITEM_ATTACH_START) {
                     int selling = 0;
 
                     if (ShopBoardInfo[cursor] == SHOP_SLOT_PLAYER_ITEM) {
                         selling = 1;
                     }
 
-                    int money = CalItemMoney(item_no, selling);
+                    int money = selling != 0 ? SellItemMoney(item_no, ShopListPt[cursor].data.volume) : CalItemMoney(item_no, selling);
 
                     if (item_no >= ITEM_WEAPON_START) {
                         money += WeaponCalMoney(&ShopListPt[cursor].data.weapon, selling);
@@ -5014,14 +5171,22 @@ void ItemShopDraw2() {
                 break;
             }
             case SHOP_SIDE_PERSONAL:
-                if (ShopMenu.talk_mode == SHOP_TALK_SELL_PROMPT) {
+                if (ShopMenu.talk_mode == SHOP_TALK_SELL_PROMPT && ShopMenu.board.page == BOARD_PAGE_GEAR) {
+                    if (const GearPiece *piece = ShopGearPiece()) {
+                        const int ticket_y = static_cast<int>(6.0f + ShopMenu.board.y);
+                        DrawBigSellTicket(1, std::max(piece->value, 0), ShopMenu.board.cursor % 5 * 0x28 + 0x16A,
+                                          ticket_y + (ShopMenu.board.cursor / 5 - ShopMenu.board.top_row) * 0x28, 0x80);
+                    }
+                } else if (ShopMenu.talk_mode == SHOP_TALK_SELL_PROMPT) {
                     int item_no;
+                    int volume = 0;
 
                     switch (ShopMenu.board.page) {
                         case BOARD_PAGE_ITEM: {
                             CUserStatus *status = ShopUserStatusPt;
                             ITEM_PACK   *pack = &status->item_pack;
                             item_no = pack->item[ShopMenu.board.cursor];
+                            volume = pack->item_vol[ShopMenu.board.cursor];
                             break;
                         }
                         case BOARD_PAGE_ATTACH: {
@@ -5040,7 +5205,7 @@ void ItemShopDraw2() {
                     }
 
                     int ticket_y = static_cast<int>(6.0f + ShopMenu.board.y);
-                    int money = CalItemMoney(item_no, 1);
+                    int money = SellItemMoney(item_no, volume);
 
                     if (item_no >= ITEM_WEAPON_START) {
                         int          chara_no = ShopMenu.board.cursor / 10;
@@ -5049,7 +5214,7 @@ void ItemShopDraw2() {
                         money += WeaponCalMoney(&row[ShopMenu.board.cursor % 10], 1);
                     }
 
-                    if (money <= 0) {
+                    if (money <= 0 && !WorthlessCharm(item_no, volume)) {
                         money = 1;
                     }
 
@@ -5074,6 +5239,15 @@ void ItemShopDraw2() {
         MenuTextureReload(CommonMenuMes2.tex_block);
         CommonMenuMes2.Step();
         CommonMenuMes2.DrawMesWin();
+
+        // MoonMod: the gear piece or good under the cursor, its card over the (empty) help window.
+        if (ShopHaveItemPt->item_no < ITEM_ATTACH_START) {
+            if (const GearPiece *piece = ShopGearPiece()) {
+                MoonModGearCardDraw(*piece, 0x80, -1);
+            } else if (const GearGood *good = ShopMenu.side == SHOP_SIDE_STOCK ? ShopGearGood(ShopMenu.board.cursor) : nullptr) {
+                MoonModGearCardDraw(good->piece, 0x80, good->price);
+            }
+        }
 
         if (ShopHaveItemPt->item_no < ITEM_ATTACH_START) {
             s8  plate[3] = {6, 7, 8};

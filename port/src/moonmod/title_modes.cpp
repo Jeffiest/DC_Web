@@ -350,6 +350,10 @@ void RemoveTitleModesByOwner(std::string_view owner) {
 
 const std::vector<TitleMode> &TitleModes() { return g_title_modes; }
 
+ApiCallResult ReadTitleSky(const Json &request, const std::optional<TitleSky> &previous, std::optional<TitleSky> &out) {
+    return ReadSky(request, previous, out);
+}
+
 const TitleMode *FindTitleMode(std::string_view id, std::string_view owner) { return FindMutable(id, owner); }
 
 Json TitleModeJson(const TitleMode &mode) {

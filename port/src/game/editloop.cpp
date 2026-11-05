@@ -2135,6 +2135,19 @@ int EditLoop() {
         }
     }
 
+    // DC_SHOP_TEST=<shop> opens that item shop once the town is walkable, as its shopkeeper would: a scripted run
+    // can shoot a shop without walking to its counter.
+    static bool shop_test_done = false;
+
+    if (GameMode == ED_MODE_WALK && !shop_test_done && loop_counter > 30) {
+        shop_test_done = true;
+
+        if (const char *shop = std::getenv("DC_SHOP_TEST"); shop != nullptr) {
+            EdSetShopNo(std::atoi(shop));
+            goto_menu = ED_MENU_SHOP;
+        }
+    }
+
     if (GameMode == ED_MODE_WALK && (EdPadDown(0x10, 1) != 0 || goto_menu != 0 || (SystemMesCheck() == 0 && EdCheckItemOver() != 0))) {
         int menu_no = ED_MENU_BATTLE;
 

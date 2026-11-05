@@ -107,7 +107,7 @@ static float s_pin_pos[3] = {};
 // collision is only gathered near the camera, which eases over after a jump.
 void TeleportPlayer(float x, float z) {
     if (CharaFrame == nullptr) return;
-    const float y = 0.0f;
+    const float y = DngFloorHeight(NowDngMap, x, z);
     CharaMain.SetPosition(x, y, z);
     CharaFrame->SetPosition(x, y, z);
     if (NowCamera__3 != nullptr) NowCamera__3->SetFollow(x, y + 14.0f, z);

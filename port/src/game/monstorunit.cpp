@@ -1453,6 +1453,8 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                     const float mark_spread = 1.0f / 2.0f;
                     HitMark[hitCnt].Set(effect[current_monster].position[i], hit_direction, HIT_MARK_HIT, mark_spread, 0.01f, 0.02f, mark_scale, 32, monster[current_monster].ground_y);
                     HitPointMark[hitCnt].Set(effect[current_monster].position[i]);
+                    // MoonMod: hit feel (combat.feel_set) on the player's blows
+                    if (NowColData->GetMonsterOwner(hit) == -1) moonmod::ChronicleFeelPlayerHit(record->kind >= 3);
 
                     if (hitCnt == 15) {
                         hitCnt = 0;
@@ -2091,10 +2093,14 @@ void CMonstorUnit::Step(int pause) {
                     case MonsterDamageResult::None:
                         break;
                     case MonsterDamageResult::Hit:
-                        moonmod::ChronicleMonsterRun(this, current_monster, 110);
-                        script_state[current_monster] = 1;
+                        // MoonMod: a critical's target takes the blow in its pair motion, without its flinch.
+                        if (!moonmod::ChronicleMonsterIsHeld(current_monster)) {
+                            moonmod::ChronicleMonsterRun(this, current_monster, 110);
+                            script_state[current_monster] = 1;
+                        }
                         break;
                     case MonsterDamageResult::Killed:
+                        moonmod::ChronicleMonsterHoldReset(current_monster); // its death plays out
                         moonmod::ChronicleMonsterRun(this, current_monster, 120);
                         script_state[current_monster] = 1;
                         break;
@@ -2107,7 +2113,13 @@ void CMonstorUnit::Step(int pause) {
                         monster[current_monster].invincible_timer--;
                     }
                 } else {
-                    if (moonmod::ChronicleMonsterDefeatFading(this, current_monster)) {
+                    // MoonMod: a critical's target plays its pair motion with its script held, and starts its idle
+                    // program afresh once the hold ends.
+                    const int held = moonmod::ChronicleMonsterHeld(this, current_monster);
+                    if (held == 2) script_state[current_monster] = 0;
+                    if (held == 1) {
+                        // held: its pair motion plays on
+                    } else if (moonmod::ChronicleMonsterDefeatFading(this, current_monster)) {
                         // MoonMod: a boss whose defeat scene can't run here fades out, its script held, and dies
                         // as a monster's script has it do (STATUS_SET_DEAD).
                         if (monster[current_monster].palette_alpha <= 0.0f && monster[current_monster].state == 2) {
@@ -2561,6 +2573,7 @@ int CMonstorUnit::SetupBaseModel(int slot, int model_no, int texture_block, CDat
 
         if (entry == -1) {
             std::println("******* ShotEntry Error !!***********");
+            model[slot].shot_effect[0] = -1; // MoonMod: not the table's index, which no slot holds
         } else {
             model[slot].shot_effect[0] = entry;
         }
@@ -2571,6 +2584,7 @@ int CMonstorUnit::SetupBaseModel(int slot, int model_no, int texture_block, CDat
 
         if (entry == -1) {
             std::println("******* ShotEntry Error !!***********");
+            model[slot].shot_effect[1] = -1; // MoonMod: not the table's index, which no slot holds
         } else {
             model[slot].shot_effect[1] = entry;
         }
@@ -2599,6 +2613,7 @@ int CMonstorUnit::SetupViewMonstor(int model_no, float *position, int event_flag
     BtSetEventScript(&interpreter[current_monster], script_data[model_no], script[current_monster]);
     chara[current_monster][0] = base_chara[model_no][0];
     chara[current_monster][0].motion[0] = &chara[current_monster][0].motion_type;
+    DngLiftPoint(NowDngMap, position);
     chara[current_monster][0].SetPosition(position);
     chara[current_monster][0].SetRotation(0.0f, 0.0f, 0.0f);
 
@@ -2678,6 +2693,7 @@ int CMonstorUnit::SetupViewMonstor(int model_no, float *position, int event_flag
         moonmod::ChronicleMonsterRun(this, current_monster, 1);
     }
 
+    moonmod::ChronicleMonsterHoldReset(current_monster);
     script_state[current_monster] = 0;
     alive_count++;
     moonmod::ChronicleMonsterActorCreated(this, current_monster);

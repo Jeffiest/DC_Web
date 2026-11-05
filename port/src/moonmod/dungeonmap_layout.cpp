@@ -35,6 +35,9 @@ int DngExitRoomValid = 0;
 int DngExitRoomX = 0;
 int DngExitRoomY = 0;
 int DngShortcutDoors = 0;
+int DngShortcutOpenKeys = 0;
+int DngIllusoryWalls = 0;
+int DngIllusoryOpen = 0;
 int DngZoneCount = 0;
 int DngZoneRooms[DNG_ZONE_MAX] = {};
 int DngZoneOpenMask = 0;
@@ -45,6 +48,11 @@ DNG_ZONE_GATE DngZoneGateTable[DNG_ZONE_MAX - 1];
 int DngZoneGateCount = 0;
 unsigned char DngZoneOfCell[DNG_CELLS];
 int DngZoneShrines = 0;
+int DngZoneDescent = 0;
+int DngHeightSeed = -1;
+float DngCellY0[DNG_CELLS] = {};
+float DngCellY1[DNG_CELLS] = {};
+signed char DngCellRamp[DNG_CELLS] = {};
 int DngZoneShrineHeal = 1;
 int DngZoneSanctuary = 0;
 DngNpcMark DngNpcMarks[DNG_NPC_MARK_MAX] = {};
@@ -53,9 +61,12 @@ int        DngNpcMarkSeed = 0;
 DngNpcModel DngNpcModels[DNG_NPC_MODEL_MAX] = {};
 int         DngNpcModelCount = 0;
 bool DngZoneFloorIs(int map_seed) { return DngZoneFloorCount > 0 && DngZoneFloorSeed == map_seed; }
-int DngZoneSourceFloor[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-int DngZoneFloorSource[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-int DngZoneModelMask[48] = {};
+int DngZoneSourceFloor[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int DngZoneFloorSource[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int DngZoneModelMask[DNG_ZONE_MODEL_MAX] = {};
+int DngZoneQuietMask = 0, DngZoneHealMask = 0, DngZoneArenaMask = 0;
+int DngZoneFloorQuietMask = 0, DngZoneFloorHealMask = 0;
+int DngZoneVaults = 1;
 
 int DngPutSpotLimit() { return DngZoneCount > 0 || DngZoneFloorCount > 0 ? 1 << 16 : 196; }
 int DngZoneExitFloor = -1;
@@ -75,10 +86,12 @@ int DngZoneSourceFloorAt(int map_seed, const float *pos, int own_floor) {
     if (col < 0 || row < 0 || col >= DNG_GRID || row >= DNG_GRID) return own_floor;
     const int zone = DngZoneOfCell[col + row * DNG_GRID];
     if (zone == DNG_ZONE_NONE || zone >= DNG_ZONE_MAX) return own_floor;
+    // a zone of another dungeon (source_dungeon): its source_floor is that dungeon's, for its monsters only
+    if (DngZoneFloorDungeon[zone] >= 0) return own_floor;
     return DngZoneFloorSource[zone] >= 0 ? DngZoneFloorSource[zone] : own_floor;
 }
-int DngZoneShrineX[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-int DngZoneShrineY[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int DngZoneShrineX[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int DngZoneShrineY[DNG_ZONE_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 
 int DngZoneGateKey(int zone) {
     // A map of more than eight zones runs out of keys: from the eighth gate on the six keys come round again (a key
@@ -98,6 +111,11 @@ int DngWardenRoomEnabled = 0, DngWardenRoomLockIn = 0, DngWardenRoomState = 0, D
 int DngWardenRoomX = 0, DngWardenRoomY = 0, DngWardenRoomW = 0, DngWardenRoomH = 0;
 DNG_WARDEN_DOOR DngWardenDoorTable[DNG_WARDEN_DOORS];
 int DngWardenDoorCount = 0;
+DNG_SEAL_DOOR DngSealDoorTable[DNG_SEAL_DOORS];
+int DngSealDoorCount = 0;
+DNG_SEAL_ROOM DngSealRoomTable[DNG_ROOM_MAX];
+int DngSealRoomCount = 0;
+int DngSealRoomSeed = -1;
 int DngRestRoomEnabled = 0, DngRestRoomSeed = -1, DngRestSpringX = 0, DngRestSpringY = 0, DngRestStairsX = 0, DngRestStairsY = 0;
 int DngRestHallX = 0, DngRestHallY = 0, DngRestHallW = 0, DngRestHallH = 0;
 int DngCharaBlockMask = -1;

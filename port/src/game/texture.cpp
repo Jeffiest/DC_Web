@@ -30,6 +30,7 @@
 #include "mglib.hpp"
 #include "render/texture_registry.hpp"
 #include "text/caption_text.hpp"
+#include "battlemenu.hpp"
 #include "texture.hpp"
 #include "tim2.hpp"
 #include "moonmod/mod_texture.hpp"
@@ -600,6 +601,9 @@ void Enter(CTextureManager &manager, EnterMode mode, int block, char *name, u_ch
         }
         LocalizeTexture(name, decoded);
         ModsTextureOverride(name, decoded);
+        if (!decoded.levels.empty() && decoded.format == gfx::TextureFormat::Rgba8) {
+            RememberMenuSheet(name, decoded.width, decoded.height, decoded.levels[0]);
+        }
         caption::PreparePainted(name, decoded);
         MakeGroundPeriodic(name, decoded);
         DumpTexture(name, decoded);
@@ -682,6 +686,8 @@ void CTextureManager::SetBuffer(u_long128 *buffer, int size) {
 
     buffer_used = 0;
 }
+
+int TexPreferBlock = -1;
 
 int CTextureManager::SearchTextureName(char *name, int block) {
     for (int index = texture_max; index >= 0; index--) {
