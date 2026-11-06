@@ -50,7 +50,14 @@ target_link_libraries(darkcloud_tests PRIVATE GTest::gtest nlohmann_json::nlohma
 
 # A test that stalls is cut off; graphics startup can take several seconds on some systems. The clock
 # cases measure short sleeps, which the parallel gfx cases skew, so they run on their own.
-set(DC_TEST_TIMEOUT 30 CACHE STRING "Seconds a test case may run before it is cut off")
+# Windows gets 60 by default, as Linux's CI sets: DungeonReach's Gauntlet floors took 10 to 28 seconds on the Windows
+# runner, and went past 30 when it ran more tests beside them.
+if(WIN32)
+    set(DC_TEST_TIMEOUT_DEFAULT 60)
+else()
+    set(DC_TEST_TIMEOUT_DEFAULT 30)
+endif()
+set(DC_TEST_TIMEOUT ${DC_TEST_TIMEOUT_DEFAULT} CACHE STRING "Seconds a test case may run before it is cut off")
 # The cases that need a Vulkan device have the gpu label, so a machine without one runs ctest -LE gpu. They are
 # Kazarov's suites named GfxGpu* (its src/cpp/gfx/README.md, "Shared device test classification") and the ones
 # that start a device under another name (GfxMisc, GfxTim2 and GfxCachedTarget), and every suite in a Chronicle
