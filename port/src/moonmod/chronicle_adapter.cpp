@@ -13702,7 +13702,10 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
             if (!named[slot] && MoonModCoopIsPuppet(slot)) MoonModCoopPuppetSet(slot, MoonModPuppet{});
         }
-        return {ApiCallStatus::Ok, {{"followed", followed}, {"refused", refused}}, {}};
+        // The blows this player landed on the copies since the last call, for the host's monsters.
+        Json hits = Json::array();
+        for (const MoonModPuppetHit &hit : MoonModCoopTakePuppetHits()) hits.push_back({{"slot", hit.slot}, {"damage", hit.damage}});
+        return {ApiCallStatus::Ok, {{"followed", followed}, {"refused", refused}, {"hits", hits}}, {}};
     }
     // dungeons.shared_events_get / shared_event_run: co-op's shared doors (moonmod/coop_events.hpp).
     if (operation.path == "dungeons.shared_events_get") {

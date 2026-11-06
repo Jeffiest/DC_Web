@@ -87,7 +87,22 @@ bool MoonModCoopPuppetSet(int slot, const MoonModPuppet &puppet) {
     return true;
 }
 
+namespace {
+std::vector<MoonModPuppetHit> g_puppet_hits;
+} // namespace
+
+void MoonModCoopPuppetHit(int slot, int damage) {
+    if (damage > 0 && g_puppet_hits.size() < 32) g_puppet_hits.push_back({slot, damage});
+}
+
+std::vector<MoonModPuppetHit> MoonModCoopTakePuppetHits() {
+    std::vector<MoonModPuppetHit> out;
+    out.swap(g_puppet_hits);
+    return out;
+}
+
 void MoonModCoopPuppetsClear() {
+    g_puppet_hits.clear();
     for (Puppet &p : g_puppets) p = Puppet{};
 }
 

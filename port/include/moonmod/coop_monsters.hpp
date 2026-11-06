@@ -27,6 +27,12 @@ bool MoonModCoopPuppetSet(int slot, const MoonModPuppet &puppet);
 void MoonModCoopPuppetsClear();
 bool MoonModCoopIsPuppet(int slot);
 void MoonModCoopPuppetsStep(); // after the monsters' own step
+// A blow this player landed on a copy (any: a weapon's, a bomb's, a thrown item's), for the host's monster.
+void MoonModCoopPuppetHit(int slot, int damage);
+struct MoonModPuppetHit {
+    int slot = 0, damage = 0;
+};
+std::vector<MoonModPuppetHit> MoonModCoopTakePuppetHits();
 
 // Host: the remote players as the monsters' targets, around the monsters' step.
 float MoonModCoopNearestDistance(const float *player, const float *monster);

@@ -5,6 +5,7 @@
 
 #include <libvu0.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -1682,6 +1683,12 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                     }
 
                     BtActStatus.monstor_target = owner;
+                    if (amount > 0 && MoonModCoopIsPuppet(current_monster)) {
+                        // MoonMod co-op: a blow on the host's monster's copy is the host's to land; the copy
+                        // keeps a sliver of life until the host's dies.
+                        MoonModCoopPuppetHit(current_monster, amount);
+                        amount = std::max(0, std::min(amount, monster[current_monster].hp - 1));
+                    }
                     monster[current_monster].hp -= amount;
                     if (amount > 0) {
                         moonmod::QueueChronicleMonsterHit(this, current_monster, owner, weapon_id, amount, element);
