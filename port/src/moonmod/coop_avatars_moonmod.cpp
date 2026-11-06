@@ -66,10 +66,16 @@ unsigned char *Aligned(unsigned char *raw) {
 }
 
 bool InDungeon() { return mode == GAME_MODE_DUNGEON && UserStatus != nullptr && CharaMain.frame != nullptr; }
+// Georama's editor, where the player's own hero isn't drawn: the others are, and their names whatever the distance.
+bool Editing() {
+    return GameMode == ED_MODE_GEORAMA || GameMode == ED_MODE_GEORAMA_MENU_INIT || GameMode == ED_MODE_RETURN_MENU_GEORAMA;
+}
+
 bool InTown() {
     return mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT && Chara != nullptr && Chara->frame != nullptr &&
            (GameMode == ED_MODE_WALK || GameMode == ED_MODE_TALK || GameMode == ED_MODE_EVENT || GameMode == ED_MODE_FISHING ||
-            GameMode == ED_MODE_TIME_CHANGE || GameMode == ED_MODE_DOOR_OPEN);
+            GameMode == ED_MODE_TIME_CHANGE || GameMode == ED_MODE_DOOR_OPEN || GameMode == ED_MODE_RETURN_MENU_WALK ||
+            GameMode == ED_MODE_MENU_INIT || Editing());
 }
 bool InPlace() { return InDungeon() || InTown(); }
 // Where the avatars are: a dungeon, or a town by its map. A new place loads them afresh (its own arenas and textures).
@@ -294,12 +300,12 @@ void MoonModAvatarsDrawNames() {
         const Avatar &a = g_avatars[slot];
         if (!a.wanted || !a.placed || a.loaded_character < 0 || a.target.name.empty()) continue;
         const float far = std::hypot(a.at[0] - player[0], a.at[2] - player[2]);
-        if (far > 260.0f) continue;
+        if (far > 260.0f && !(mode == GAME_MODE_EDIT && Editing())) continue;
         sceVu0FVECTOR head = {a.at[0], a.at[1] + 20.0f, a.at[2], 1.0f}; // just over the head (CharaHeight is 14-18)
         int           screen[4] = {};
         if (MGRotTransPers2D(screen, head, 0) == 0) continue;
         // Full nearby, gone toward where monsters stop being drawn (300).
-        const int alpha = far < 160.0f ? 128 : static_cast<int>(128.0f * (260.0f - far) / 100.0f);
+        const int alpha = far < 160.0f || (mode == GAME_MODE_EDIT && Editing()) ? 128 : static_cast<int>(128.0f * (260.0f - far) / 100.0f);
         ui::Label label(a.target.name, ui::ColorWhite, ui::Alignment::Center, true, 0.7f);
         if (a.target.tint[0] >= 0.0f) label.SetCustomRgb(150, 186, 255); // a guest's name in their blue
         label.SetOutline(2.0f, 10, 10, 20);

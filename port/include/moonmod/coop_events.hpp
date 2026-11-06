@@ -20,6 +20,8 @@ struct MoonModSharedEvent {
 // leaves it or changes the party (a new floor, the dungeon's exit, the character), which is never shared.
 void MoonModCoopScriptOp(int kind);
 void MoonModCoopEventsPoll();         // each dungeon frame
+// The script about to start is one every game runs by itself (a room cleared of monsters, a monster's death): not sent.
+void MoonModCoopScriptNotShared();
 std::vector<MoonModSharedEvent> MoonModCoopTakeEvents();
 bool MoonModCoopRunEvent(const MoonModSharedEvent &event); // false when one is already waiting
 // From the script's item window: true when a shared script asked, which takes the first key it offers.

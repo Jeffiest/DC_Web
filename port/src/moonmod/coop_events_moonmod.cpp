@@ -19,12 +19,13 @@ bool InScript(int task) {
 
 // The script running now: what started it, whether it came from another player, and what it has done.
 struct Running {
-    bool               valid = false, remote = false, changes = false, leaves = false, sent = false;
+    bool               valid = false, remote = false, local = false, changes = false, leaves = false, sent = false;
     MoonModSharedEvent event;
 };
 Running g_running;
 int     g_previous_task = 0;
 bool    g_next_is_remote = false;
+bool    g_next_is_local = false;
 
 struct Waiting {
     bool               on = false;
@@ -37,6 +38,8 @@ constexpr int kWaitFrames = 1800; // half a minute for the game to be free
 std::vector<MoonModSharedEvent> g_out;
 
 } // namespace
+
+void MoonModCoopScriptNotShared() { g_next_is_local = true; }
 
 void MoonModCoopScriptOp(int kind) {
     if (!g_running.valid) return;
@@ -57,7 +60,8 @@ void MoonModCoopEventsPoll() {
         g_running = Running{};
         g_running.valid = true;
         g_running.remote = g_next_is_remote;
-        g_next_is_remote = false;
+        g_running.local = g_next_is_local;
+        g_next_is_remote = g_next_is_local = false;
         MoonModSharedEvent &e = g_running.event;
         e.script = BtEventInfo.script_no != -1 ? BtEventInfo.script_no : BtEventInfo.running_script_no;
         e.mode = BtEventInfo.action_mode;
@@ -69,7 +73,7 @@ void MoonModCoopEventsPoll() {
     }
     // Sent once the script ends: by then it is known to have changed the floor and not to have left it.
     if (g_running.valid && (!in_script || g_running.leaves)) {
-        if (!in_script && !g_running.remote && g_running.changes && !g_running.leaves && g_running.event.script >= 0 && g_out.size() < 8) {
+        if (!in_script && !g_running.remote && !g_running.local && g_running.changes && !g_running.leaves && g_running.event.script >= 0 && g_out.size() < 8) {
             g_out.push_back(g_running.event);
         }
         if (!in_script) g_running = Running{};

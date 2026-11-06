@@ -605,10 +605,12 @@ void DunMoveChara() {
                                 BtEventInfo.fade_on_start = false;
                                 gameTask = GAME_TASK_FLOOR_FADE_RESET;
                             } else if (UserStatus->CheckLife() != 0 && BtActStatus.action_on == 0 && (script = NowMonstorUnit->CheckEventFlag2()) != -1) {
+                                MoonModCoopScriptNotShared(); // MoonMod co-op: a monster's death runs it in every game
                                 BtEventInfo.script_no = script;
                                 BtEventInfo.ext_memory = false;
                                 gameTask = GAME_TASK_SCRIPT_START;
                             } else if (UserStatus->CheckLife() != 0 && BtActStatus.action_on == 0 && NowMonstorUnit->GetMonstorNum() <= 0 && (script = BtEventInfo.clear_script_no) != -1) {
+                                MoonModCoopScriptNotShared(); // MoonMod co-op: the room cleared, in every game
                                 BtEventInfo.script_no = script;
                                 BtEventInfo.ext_memory = BtEventInfo.clear_script_ext_memory;
                                 BtEventInfo.clear_script_no = -1;
@@ -2456,6 +2458,7 @@ void DunMoveChara() {
                     }
 
                     if (UserStatus->CheckLife() != 0 && NowMonstorUnit->GetMonstorNum() <= 0 && BtEventInfo.clear_script_no != -1) {
+                        MoonModCoopScriptNotShared(); // MoonMod co-op: the room cleared, in every game
                         BtEventInfo.script_no = BtEventInfo.clear_script_no;
                         BtEventInfo.ext_memory = BtEventInfo.clear_script_ext_memory;
                         BtEventInfo.clear_script_no = -1;

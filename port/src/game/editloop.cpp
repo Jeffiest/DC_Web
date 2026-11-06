@@ -2689,6 +2689,14 @@ void EditMainDraw() {
         }
 
         switch (GameMode) {
+            case ED_MODE_GEORAMA:
+            case ED_MODE_GEORAMA_MENU_INIT:
+            case ED_MODE_RETURN_MENU_GEORAMA:
+                // MoonMod co-op: Georama's editor draws no hero of its own, but the other players walking in the
+                // town are still there.
+                MoonModAvatarsStep();
+                MoonModAvatarsDraw(false);
+                break;
             case ED_MODE_RETURN_MENU_WALK:
             case ED_MODE_MENU_INIT: {
                 const auto step_start = draw_trace.Start();
