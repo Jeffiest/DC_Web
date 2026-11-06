@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -12,12 +13,14 @@ namespace {
 namespace fs = std::filesystem;
 namespace messages = moonmod::messages;
 
-// Two players' saves pointing at one shared folder (each save's messages-folder.txt), as a sync service would join them.
+// Two players' saves pointing at one shared folder (a random number in the name: ctest starts tests together, and on
+// Windows the clock alone named two alike, so one test's cleanup took the other's folder) (each save's messages-folder.txt), as a sync service would join them.
 struct SharedFolder {
     fs::path root, alice, bob, shared;
     SharedFolder() {
         root = fs::temp_directory_path() /
-               ("moonmod-messages-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+               ("moonmod-messages-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                std::to_string(std::random_device{}()));
         alice = root / "alice";
         bob = root / "bob";
         shared = root / "shared";
