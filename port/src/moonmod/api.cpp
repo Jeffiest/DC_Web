@@ -121,6 +121,8 @@ constexpr ApiOperationSpec kApiCatalog[] = {
     {"monsters.mirror_get", "monsters", "mirror_get", "simulation", "game.read", "Co-op host: the floor's monsters (slot, kind, state, life, place, motion) and the blows that landed on other players since the last call."},
     {"monsters.puppet_set", "monsters", "puppet_set", "simulation", "game.write", "Co-op guest: make this floor's monsters copies of the host's, by slot; a slot left out is gone on the host."},
     {"monsters.puppet_clear", "monsters", "puppet_clear", "simulation", "game.write", "Co-op guest: give the floor's monsters their own thoughts back."},
+    {"dungeons.shared_events_get", "dungeons", "shared_events_get", "simulation", "game.read", "Co-op: the scripts this player ran since the last call that changed the floor without leaving it (a door, a gate, a switch), to run for the other players."},
+    {"dungeons.shared_event_run", "dungeons", "shared_event_run", "simulation", "game.write", "Co-op: run another player's floor-changing script here, at its place, once the player is free; the key it asks for is taken as given."},
     {"monsters.mirror_hit", "monsters", "mirror_hit", "simulation", "game.write", "Co-op host: another player's blow on a monster, by slot; a kill dies here."},
     {"messages.post", "messages", "post", "any", "storage.write", "Leave a short message at a place this mod names, for the players who share the messages folder."},
     {"messages.list", "messages", "list", "any", "storage.read", "The messages this mod's players left at some places, best rated first."},

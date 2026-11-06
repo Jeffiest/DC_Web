@@ -22,6 +22,7 @@
 #include "dataread.hpp"
 #include "dngstatusdata.hpp"
 #include "dun/gameloop.hpp"
+#include "moonmod/coop_events.hpp"
 #include "dungeoneventman.hpp"
 #include "dungeonmap.hpp"
 #include "dungeonparts.hpp"
@@ -36,6 +37,7 @@
 #include "menu_dungeon.hpp"
 #include "menu_misc.hpp"
 #include "monstorunit.hpp"
+#include "moonmod/coop_events.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "nowload.hpp"
 #include "npcharacter.hpp"
@@ -319,6 +321,7 @@ int _GET_FLOOR_LEVEL(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_FLOOR_LEVEL(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     const int floor = moonmod::ChronicleScriptFloorLevel(selectMapNo, GetStackInt(stack)); // MoonMod: registered floors
     static_cast<CDngStatusData *>(UserStatus)->SetNowFloor(floor);
     return 1;
@@ -411,6 +414,7 @@ int _GET_OBJHDL(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_OBJHDL_POS(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(1); // MoonMod co-op: what this script does, for the other players
     int            index = GetStackInt(stack++);
     float          x = GetStackFloat(stack++);
     float          y = GetStackFloat(stack++);
@@ -429,6 +433,7 @@ int _SET_OBJHDL_POS(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_OBJHDL_ROT(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(1); // MoonMod co-op: what this script does, for the other players
     int            index = GetStackInt(stack++);
     float          x = GetStackFloat(stack++);
     float          y = GetStackFloat(stack++);
@@ -555,6 +560,7 @@ int _GET_OBJHDL_ROT(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _SET_URA_DUNGEON(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     BtEventInfo.request = BT_REQUEST_URA_DUNGEON;
     return 1;
 }
@@ -574,6 +580,7 @@ int _GET_EVENT_ROT(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _OPEN_ENTRANCE_WINDOW(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     if (stack->type != RS_PTR) {
         return 0;
     }
@@ -584,6 +591,7 @@ int _OPEN_ENTRANCE_WINDOW(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _OPEN_ESCAPE_WINDOW(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     if (stack->type != RS_PTR) {
         return 0;
     }
@@ -595,11 +603,13 @@ int _OPEN_ESCAPE_WINDOW(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _GO_DUNGEON(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     BtEventInfo.request = BT_REQUEST_GO_DUNGEON;
     return 1;
 }
 
 int _SET_DUNGEON_MAP(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     const std::string_view map_file = GetStackString(stack++);
     BtLoadMapType = GetStackInt(stack);
     *std::ranges::copy(map_file, BtLoadMapFileName.begin()).out = '\0';
@@ -608,6 +618,7 @@ int _SET_DUNGEON_MAP(RS_STACKDATA *stack, int /*argument_count*/) {
 }
 
 int _LOAD_DUNGEON_MAP2(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     CUserStatus *status = UserStatus;
     status->res_limit_zone_current = RES_LIMIT_ZONE_NONE;
     BtMapJumpLoad(BtLoadMapFileName.data());
@@ -621,6 +632,7 @@ int _LOAD_MONSTOR(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
 }
 
 int _SET_RANDOM_MAP(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     if (NowDngMap->map_type == 1) {
         BtCleatRandomMap();
     } else {
@@ -631,6 +643,7 @@ int _SET_RANDOM_MAP(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
 }
 
 int _SET_EVENT_SW(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(1); // MoonMod co-op: what this script does, for the other players
     int script_no = GetStackInt(stack++);
     NowEventMan->SearchDataSwitch(script_no, GetStackInt(stack));
     return 1;
@@ -822,6 +835,7 @@ int _USER_WEAPON_DRAW(RS_STACKDATA *stack, int argument_count) {
 }
 
 int _SET_MAIN_CHR2(RS_STACKDATA *stack, int argument_count) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     int chara = GetStackInt(stack++);
     int reload = 0;
 
@@ -845,6 +859,7 @@ int _SET_MAIN_CHR2(RS_STACKDATA *stack, int argument_count) {
 }
 
 int _RESET_MAIN_CHR(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     if (BtEventInfo.script_main_chr == -1) {
         return 1;
     }
@@ -920,6 +935,7 @@ int _END_BEE(RS_STACKDATA * /*stack*/, int /*argument_count*/) {
 }
 
 int _EASTKING_COMPLETE(RS_STACKDATA *stack, int /*argument_count*/) {
+    MoonModCoopScriptOp(2); // MoonMod co-op: what this script does, for the other players
     SetStack(stack, EastKingCheckComplete());
     return 1;
 }

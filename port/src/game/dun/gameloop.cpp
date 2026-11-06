@@ -112,6 +112,7 @@
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
 #include "moonmod/coop_avatars.hpp"
+#include "moonmod/coop_events.hpp"
 #include "moonmod/coop_monsters.hpp"
 #include "moonmod/target_hud.hpp"
 #include "data/data_read.hpp"
@@ -1989,6 +1990,7 @@ void GameInit() {
 }
 
 int GameLoop() {
+    MoonModCoopEventsPoll(); // MoonMod co-op: doors opened by one player open for all
     switch (BtGameModeFlag) {
         case BT_GAME_MODE_PLAY:
             // MoonMod combat.feel_set: a hit-stop holds the whole floor still (drawn, not stepped) for a few frames.
@@ -2959,6 +2961,7 @@ void DunMainDraw() {
             TexManager.ReloadTexture(Vif1Packet, 7);
             set2DSprite(Vif1Packet, NamedTexture("pause"), CRect_i_(0x100, 0xCC, 0x80, 0x28), 0, 0);
         }
+        MoonModAvatarsDrawNames(); // MoonMod co-op: the other players' names over their heroes
         MoonModBossCardDraw(); // MoonMod: a boss's entrance card
         MoonModMenuDraw();   // MoonMod: a mod's run menu, over the HUD
         MoonModChoiceDraw(); // MoonMod: a mod's choice panel, over the HUD

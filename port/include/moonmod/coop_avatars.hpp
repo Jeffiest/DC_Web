@@ -4,6 +4,8 @@
 // up to three other players on the dungeon floor, each a hero of its own with the weapon in its hand. A mod sets
 // where each one is as the network reports it, a few times a second; between reports it eases there, turns the
 // shortest way and plays the motion it was told. Each has its own model and texture arenas, taken only while it is up.
+#include <string>
+
 namespace dc::game {
 
 inline constexpr int kMoonModAvatars = 3;
@@ -15,6 +17,7 @@ struct MoonModAvatarState {
     float heading = 0.0f; // radians, as the player's frame turns
     int   motion = 0;
     float tint[3] = {-1.0f, -1.0f, -1.0f}; // the ambient it draws in (0..128), or -1 for the scene's own
+    std::string name;                        // shown over its head, or nothing
 };
 
 // slot 0..kMoonModAvatars-1. A new character or weapon loads on the next dungeon frame; a far jump (a new floor, a
@@ -26,5 +29,6 @@ bool MoonModAvatarShown(int slot);
 bool MoonModAvatarAt(int slot, float out[3]);
 void MoonModAvatarsStep();
 void MoonModAvatarsDraw(bool shadow);
+void MoonModAvatarsDrawNames(); // in the HUD pass: each name over its hero, fading with distance
 
 } // namespace dc::game

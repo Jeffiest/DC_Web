@@ -63,6 +63,7 @@
 #include "menuitemstep.hpp"
 #include "mglib.hpp"
 #include "monstorunit.hpp"
+#include "moonmod/coop_events.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/manager_ui.hpp"
 #include "motionmodel.hpp"
@@ -1769,6 +1770,8 @@ void DunMoveChara() {
             switch (BtEventInfo.request) {
                 case BT_REQUEST_ITEM_WINDOW:
                     BtEventInfo.request = BT_REQUEST_NONE;
+                    // MoonMod co-op: a door another player opened takes the key it asks for as given.
+                    if (MoonModCoopAutoItemSelect()) break;
                     // MoonMod: free back floors ask "enter at your own risk?" in place of the key window.
                     if (moonmod::ChronicleBackroomAsk()) {
                         MoonModChoiceStep();

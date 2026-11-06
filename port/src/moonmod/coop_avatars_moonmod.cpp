@@ -23,6 +23,7 @@
 #include "mglib.hpp"
 #include "playable_chara.hpp"
 #include "texture.hpp"
+#include "ui/framework.hpp"
 #include "userstatus.hpp"
 
 namespace dc::game {
@@ -252,6 +253,25 @@ void MoonModAvatarsDraw(bool shadow) {
             a.weapon.Draw();
         }
         if (tinted) MGSetAmbient(saved);
+    }
+}
+
+void MoonModAvatarsDrawNames() {
+    if (!InDungeon()) return;
+    for (int slot = 0; slot < kMoonModAvatars; ++slot) {
+        const Avatar &a = g_avatars[slot];
+        if (!a.wanted || !a.placed || a.loaded_character < 0 || a.target.name.empty()) continue;
+        const float far = std::hypot(a.at[0] - CharaMain.pos[0], a.at[2] - CharaMain.pos[2]);
+        if (far > 900.0f) continue;
+        sceVu0FVECTOR head = {a.at[0], a.at[1] + 72.0f, a.at[2], 1.0f};
+        int           screen[4] = {};
+        if (MGRotTransPers2D(screen, head, 0) == 0) continue;
+        // Full until six cells away, gone by nine.
+        const int alpha = far < 600.0f ? 128 : static_cast<int>(128.0f * (900.0f - far) / 300.0f);
+        ui::Label label(a.target.name, ui::ColorWhite, ui::Alignment::Center, true, 0.7f);
+        if (a.target.tint[0] >= 0.0f) label.SetCustomRgb(150, 186, 255); // a guest's name in their blue
+        label.SetOutline(2.0f, 10, 10, 20);
+        label.Draw(screen[0], screen[1] - 16, alpha);
     }
 }
 

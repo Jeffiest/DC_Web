@@ -18,6 +18,7 @@
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
 #include "moonmod/coop_avatars.hpp"
+#include "moonmod/coop_events.hpp"
 #include "moonmod/coop_monsters.hpp"
 #include "moonmod/net_session.hpp"
 #include "moonmod/coop_save.hpp"
@@ -13579,11 +13580,11 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     // world.avatar_set / avatar_clear: co-op's remote players on the dungeon floor (moonmod/coop_avatars.hpp).
     if (operation.path == "world.avatar_set") {
         static constexpr const char *kUsage =
-            "expected {slot = 1-3, character = a character id, weapon = item_no or nil, x, y, z, heading, motion, tint = {r, g, b} or nil}";
+            "expected {slot = 1-3, character = a character id, weapon = item_no or nil, x, y, z, heading, motion, tint = {r, g, b} or nil, name = text or nil}";
         if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(kUsage);
         const Json &request = args[0];
         for (auto field = request.begin(); field != request.end(); ++field) {
-            static constexpr std::array<std::string_view, 9> kFields = {"slot", "character", "weapon", "x", "y", "z", "heading", "motion", "tint"};
+            static constexpr std::array<std::string_view, 10> kFields = {"slot", "character", "weapon", "x", "y", "z", "heading", "motion", "tint", "name"};
             if (std::ranges::find(kFields, field.key()) == kFields.end()) return Invalid(std::string("unknown field: ") + field.key());
         }
         int slot = 0;
@@ -13611,6 +13612,10 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
                 if (!tint[c].is_number() || tint[c].get<float>() < 0.0f || tint[c].get<float>() > 128.0f) return Invalid("tint must be {r, g, b}, each 0-128");
                 state.tint[c] = tint[c].get<float>();
             }
+        }
+        if (request.contains("name") && !request["name"].is_null()) {
+            if (!request["name"].is_string() || request["name"].get_ref<const std::string &>().size() > 24) return Invalid("name must be text of 24 bytes at most");
+            state.name = request["name"].get<std::string>();
         }
         if (!MoonModAvatarSet(slot - 1, state)) return Failed("that character can't be shown");
         return {ApiCallStatus::Ok, {{"slot", slot}, {"shown", MoonModAvatarShown(slot - 1)}}, {}};
@@ -13683,6 +13688,40 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
             if (!named[slot] && MoonModCoopIsPuppet(slot)) MoonModCoopPuppetSet(slot, MoonModPuppet{});
         }
         return {ApiCallStatus::Ok, {{"followed", followed}, {"refused", refused}}, {}};
+    }
+    // dungeons.shared_events_get / shared_event_run: co-op's shared doors (moonmod/coop_events.hpp).
+    if (operation.path == "dungeons.shared_events_get") {
+        if (!args.is_array() || !args.empty()) return Invalid("expected no arguments");
+        Json events = Json::array();
+        for (const MoonModSharedEvent &e : MoonModCoopTakeEvents()) {
+            const auto round = [](float v) { return std::round(v * 100.0f) / 100.0f; };
+            events.push_back({{"script", e.script}, {"mode", e.mode}, {"ext", e.ext},
+                              {"pos", {round(e.pos[0]), round(e.pos[1]), round(e.pos[2])}},
+                              {"dir", {round(e.dir[0]), round(e.dir[1]), round(e.dir[2])}}});
+        }
+        return {ApiCallStatus::Ok, {{"events", events}}, {}};
+    }
+    if (operation.path == "dungeons.shared_event_run") {
+        static constexpr const char *kUsage = "expected {script, mode, ext, pos = {x, y, z}, dir = {x, y, z}} from dungeons.shared_events_get";
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(kUsage);
+        const Json &request = args[0];
+        MoonModSharedEvent e;
+        if (!ReadBoundedInt(request, "script", 0, 9999, e.script) || !ReadBoundedInt(request, "mode", 0, 2, e.mode) ||
+            !ReadBoundedInt(request, "ext", 0, 1, e.ext)) {
+            return Invalid(kUsage);
+        }
+        for (const char *key : {"pos", "dir"}) {
+            if (!request.contains(key) || !request[key].is_array() || request[key].size() != 3) return Invalid(kUsage);
+            float *out = std::string_view(key) == "pos" ? e.pos : e.dir;
+            for (int i = 0; i < 3; ++i) {
+                if (!request[key][i].is_number()) return Invalid(kUsage);
+                out[i] = request[key][i].get<float>();
+                if (!std::isfinite(out[i]) || std::fabs(out[i]) > 1.0e6f) return Invalid(kUsage);
+            }
+        }
+        if (mode != GAME_MODE_DUNGEON) return Failed("not on a dungeon floor");
+        if (!MoonModCoopRunEvent(e)) return Failed("busy: another player's door is already waiting to open here");
+        return {ApiCallStatus::Ok, {{"queued", true}}, {}};
     }
     if (operation.path == "monsters.puppet_clear") {
         if (!args.is_array() || !args.empty()) return Invalid("expected no arguments");
@@ -16934,6 +16973,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "save.player_export", "save.player_import", "save.account_get", "save.account_set",
                              "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear",
                              "monsters.mirror_get", "monsters.puppet_set", "monsters.puppet_clear", "monsters.mirror_hit",
+                             "dungeons.shared_events_get", "dungeons.shared_event_run",
                              "georama.town_export", "georama.town_import"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
