@@ -6,10 +6,17 @@
     "dev": "wrangler dev --port 8787",
     "test": "node test/relay.test.mjs",
     "deploy": "wrangler deploy",
-    "test:native": "sh test/native.sh"
+    "test:native": "sh test/native.sh",
+    "start": "node server.mjs",
+    "test:server": "RELAY_SERVER=node node test/relay.test.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.158.0",
+    "wrangler": "4.158.0"
+  },
+  "dependencies": {
     "ws": "8.18.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

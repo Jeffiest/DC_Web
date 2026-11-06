@@ -72,8 +72,28 @@ async function startDev() {
     throw new Error(`wrangler dev did not start:\n${output}`);
 }
 
-const dev = process.env.RELAY_URL ? null : await startDev();
-const base = process.env.RELAY_URL ?? 'ws://127.0.0.1:8787';
+// RELAY_SERVER=node: the private server (server.mjs) instead of the Worker.
+async function startServer() {
+    const server = spawn(process.execPath, ['server.mjs', '--port', '8788', '--host', '127.0.0.1', '--quiet'],
+        {stdio: ['ignore', 'pipe', 'pipe'], detached: true});
+    server.stop = () => server.kill();
+    for (let i = 0; i < 40; i++) {
+        await pause(250);
+        try {
+            if ((await fetch('http://127.0.0.1:8788/health')).ok) {
+                return server;
+            }
+        } catch {
+            // not up yet
+        }
+    }
+    server.kill();
+    throw new Error('server.mjs did not start');
+}
+
+const node = process.env.RELAY_SERVER === 'node';
+const dev = process.env.RELAY_URL ? null : node ? await startServer() : await startDev();
+const base = process.env.RELAY_URL ?? (node ? 'ws://127.0.0.1:8788' : 'ws://127.0.0.1:8787');
 const q = (name, proto = '1') => `?game=chronicle&proto=${proto}&name=${encodeURIComponent(name)}`;
 try {
     console.log('A room of four');

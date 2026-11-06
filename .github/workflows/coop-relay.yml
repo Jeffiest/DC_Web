@@ -1,6 +1,7 @@
-# The co-op relay (coop/relay/README.md) on Cloudflare Workers: tested under wrangler dev, deployed, then tested again
-# at its address. Deploying needs the repository secrets CLOUDFLARE_API_TOKEN (a token with "Edit Cloudflare
-# Workers") and CLOUDFLARE_ACCOUNT_ID; without them the tests run and the deploy is skipped.
+# The co-op relay (coop/relay/README.md): the Worker tested under wrangler dev, the private server (server.mjs) tested
+# and its Docker image built, then the Worker deployed to Cloudflare and tested again at its address. Deploying needs
+# the repository secrets CLOUDFLARE_API_TOKEN (a token with "Edit Cloudflare Workers") and CLOUDFLARE_ACCOUNT_ID;
+# without them the tests run and the deploy is skipped.
 name: coop-relay
 
 on:
@@ -35,6 +36,10 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Test under wrangler dev
         run: npm test
+      - name: Test the private server
+        run: npm run test:server
+      - name: Build the private server's image
+        run: docker build -t chronicle-coop-relay .
 
       - name: Deploy
         id: deploy

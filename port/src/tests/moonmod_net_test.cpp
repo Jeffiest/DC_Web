@@ -137,7 +137,7 @@ TEST(MoonModNet, OneSessionAtATimeAndOnlyToARelay) {
     Session     session(Fake(wire));
     std::string error;
     EXPECT_FALSE(session.Start("coop", "https://relay.example", "", "", "chronicle", 1, error));
-    EXPECT_FALSE(session.Start("coop", "ws://relay.example", "", "", "chronicle", 1, error));
+    EXPECT_FALSE(session.Start("coop", "ftp://relay.example", "", "", "chronicle", 1, error));
     EXPECT_FALSE(session.Start("coop", "", "", "", "chronicle", 1, error));
     ASSERT_TRUE(session.Start("coop", "ws://127.0.0.1:8787", "", "", "chronicle", 1, error)) << error;
     EXPECT_FALSE(session.Start("coop", "wss://relay.example", "", "", "chronicle", 1, error));
@@ -178,6 +178,8 @@ TEST(MoonModNet, Utf8AndEscaping) {
     EXPECT_FALSE(ValidUtf8("\xF5\x80\x80\x80"));
     EXPECT_EQ(Escape("a b/c?\xC3\xA9"), "a%20b%2Fc%3F%C3%A9");
     EXPECT_TRUE(ValidRelay("wss://chronicle-coop-relay.example.workers.dev"));
+    EXPECT_TRUE(ValidRelay("ws://192.168.1.20:7777")); // a private server at home
+    EXPECT_FALSE(ValidRelay("ws://"));
     EXPECT_FALSE(ValidRelay("wss://relay.example/?inject"));
     EXPECT_EQ(RelayAddress("wss://relay.example//"), "wss://relay.example");
 }

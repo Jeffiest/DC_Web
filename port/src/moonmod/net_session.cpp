@@ -69,9 +69,10 @@ std::string Escape(std::string_view text) {
 
 bool ValidRelay(const std::string &url) {
     if (url.size() > 200 || url.find_first_of(" ?#\\\"'<>") != std::string::npos) return false;
+    // wss:// anywhere; plain ws:// too, for a private server on a home network or a VPN (README.md in coop/relay).
+    // Browsers refuse ws:// from an https page, so web players need wss://.
     if (url.starts_with("wss://")) return url.size() > 6;
-    // Plain ws:// only to this machine, for a relay under wrangler dev.
-    return url.starts_with("ws://127.0.0.1:") || url.starts_with("ws://localhost:");
+    return url.starts_with("ws://") && url.size() > 5;
 }
 
 std::string RelayAddress(const std::string &asked) {
@@ -95,7 +96,7 @@ bool Session::Start(std::string_view owner, const std::string &relay, const std:
         return false;
     }
     if (!ValidRelay(relay)) {
-        error = relay.empty() ? "no relay address: this build has none, so pass one" : "the relay address must be wss://...";
+        error = relay.empty() ? "no relay address: this build has none, so pass one" : "the relay address must be wss://... or ws://...";
         return false;
     }
     std::string url = relay + (code.empty() ? std::string("/v1/host") : "/v1/join/" + code) + "?game=" + Escape(game) +
