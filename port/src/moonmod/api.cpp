@@ -296,6 +296,8 @@ constexpr ApiOperationSpec kApiCatalog[] = {
     {"save.world_import", "save", "world_import", "any", "game.write", "Co-op: during this mod's visit, take a world from save.world_export."},
     {"save.player_export", "save", "player_export", "any", "game.read", "Co-op: the player's own things (life, weapons, items, Gilda, the stock) as text."},
     {"save.player_import", "save", "player_import", "any", "game.write", "Co-op: during this mod's visit, take a player's things from save.player_export."},
+    {"save.player_extra_get", "save", "player_extra_get", "any", "game.read", "This mod's own things that came with the player's (a co-op guest's levels, say), or nothing."},
+    {"save.player_extra_set", "save", "player_extra_set", "any", "game.write", "Keep a value of this mod's with the player's things, so it travels with them (a co-op visit sends it to the host's save)."},
     {"save.account_get", "save", "account_get", "any", "game.read", "Co-op host: a guest's things this save keeps, by the guest's id, or {}."},
     {"save.account_set", "save", "account_set", "any", "game.write", "Co-op host: keep a guest's things (save.player_export text) in this save; written with its next save."},
     {"save.account_list", "save", "account_list", "any", "game.read", "Co-op host: the guests this save keeps, as {id, name}."},

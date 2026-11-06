@@ -1543,9 +1543,17 @@ ApiCallResult RegisterCharacter(std::string_view mod_id, const Json &args) {
 // A player's things for co-op: the save's (coop::ExportPlayer), then "|DCX1" and MoonMod's own beside the save that
 // travel with them: the gear (gear.hpp) and the charm slots (charm_slots.hpp), as their files hold them.
 constexpr std::string_view kPlayerExtrasTag = "|DCX1";
+// Mods' own things that travel with a player's (save.player_extra_set): a mod's levels, say. By mod id.
+std::map<std::string, Json, std::less<>> g_player_extras;
+constexpr std::size_t kPlayerExtraMax = 32 * 1024;
 
 std::string ExportChroniclePlayer() {
-    const Json extras = {{"gear", GearJson()}, {"charms", CharmSlotsJson()}};
+    Json extras = {{"gear", GearJson()}, {"charms", CharmSlotsJson()}};
+    if (!g_player_extras.empty()) {
+        Json mods = Json::object();
+        for (const auto &[id, data] : g_player_extras) mods[id] = data;
+        extras["mods"] = std::move(mods);
+    }
     return moonmod::coop::ExportPlayer(*SaveData) + std::string(kPlayerExtrasTag) + extras.dump();
 }
 
@@ -1565,6 +1573,12 @@ bool ImportChroniclePlayer(std::string_view text, std::string &error) {
     else ClearGear();
     if (extras.contains("charms") && extras["charms"].is_string()) CharmSlotsApply(extras["charms"].get<std::string>());
     else ClearCharmSlots();
+    g_player_extras.clear();
+    if (extras.contains("mods") && extras["mods"].is_object()) {
+        for (auto mod = extras["mods"].begin(); mod != extras["mods"].end(); ++mod) {
+            if (mod.value().dump().size() <= kPlayerExtraMax) g_player_extras[mod.key()] = mod.value();
+        }
+    }
     return true;
 }
 
@@ -13999,6 +14013,25 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         }
         return Invalid("unknown save.account operation");
     }
+    // save.player_extra_get / set: a mod's own things that travel with the player's (a co-op guest's levels, say).
+    if (operation.path == "save.player_extra_get") {
+        if (!args.is_array() || !args.empty()) return Invalid("save.player_extra_get takes no arguments");
+        const auto found = g_player_extras.find(mod_id);
+        if (found == g_player_extras.end()) return {ApiCallStatus::Ok, Json::object(), {}};
+        return {ApiCallStatus::Ok, {{"data", found->second}}, {}};
+    }
+    if (operation.path == "save.player_extra_set") {
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || (args[0].size() == 1 && !args[0].contains("data")) || args[0].size() > 1) {
+            return Invalid("expected {data = a value of this mod's (32 KB as JSON at most)}, or {} to drop it");
+        }
+        if (!args[0].contains("data") || args[0]["data"].is_null()) {
+            g_player_extras.erase(std::string(mod_id));
+            return {ApiCallStatus::Ok, {{"kept", false}}, {}};
+        }
+        if (args[0]["data"].dump().size() > kPlayerExtraMax) return Invalid("data is over 32 KB as JSON");
+        g_player_extras[std::string(mod_id)] = args[0]["data"];
+        return {ApiCallStatus::Ok, {{"kept", true}}, {}};
+    }
     if (operation.path == "save.world_import" || operation.path == "save.player_import") {
         if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 1 || !args[0].contains("data") ||
             !args[0]["data"].is_string()) {
@@ -14413,9 +14446,10 @@ bool StartChronicleVisit(const SandboxRequest &request) {
         return false;
     }
     if (request.player.empty()) {
-        // A new account starts with no gear or charms (not this game's last save's, which are its own).
+        // A new account starts with no gear or charms (not this game's last save's, which are its own), nor mods' things.
         ClearGear();
         ClearCharmSlots();
+        g_player_extras.clear();
     }
     constexpr int kStarterWeapons[6] = {ITEM_WEAPON_DAGGER, ITEM_WEAPON_WOODEN_SLINGSHOT, ITEM_WEAPON_MALLET,
                                         ITEM_WEAPON_GOLD_RING, ITEM_WEAPON_FIGHTING_STICK, ITEM_WEAPON_MACHINE_GUN};
@@ -17023,6 +17057,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "session.get", "session.start", "session.finish", "save.world_export", "save.world_import",
                              "save.player_export", "save.player_import", "save.account_get", "save.account_set",
                              "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear",
+                             "save.player_extra_get", "save.player_extra_set",
                              "monsters.mirror_get", "monsters.puppet_set", "monsters.puppet_clear", "monsters.mirror_hit",
                              "dungeons.shared_events_get", "dungeons.shared_event_run",
                              "georama.town_export", "georama.town_import"}) {
