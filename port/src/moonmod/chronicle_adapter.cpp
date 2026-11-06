@@ -2766,6 +2766,11 @@ ApiCallResult GetWorld(const Json &args) {
         result["monster_bonus_percent"] = DngMonsterBonusPercent;
         result["chest_bonus_percent"] = DngChestBonusPercent;
     }
+    if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT) {
+        // A town: its map, and whether the player is in Georama's edit mode (co-op sends a town once it's left).
+        result["town_map"] = MapNo;
+        result["editing"] = GameMode == ED_MODE_GEORAMA || GameMode == ED_MODE_GEORAMA_MENU_INIT || GameMode == ED_MODE_GEORAMA_MENU;
+    }
     return {ApiCallStatus::Ok, std::move(result), {}};
 }
 
@@ -13552,6 +13557,24 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         }
     }
     // world.ghost_get: {character, frames = {{x, y, z, heading, motion}, ...}} oldest first, every other frame.
+    // georama.town_export / town_import: one town's Georama for co-op (moonmod/coop_save.hpp). A town open in Georama's
+    // edit mode isn't imported over; a town the player walks in is walked into again, so it shows what came.
+    if (operation.path == "georama.town_export" || operation.path == "georama.town_import") {
+        const bool importing = operation.path == "georama.town_import";
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(importing ? "expected {town_id = 0-4, data}" : "expected {town_id = 0-4}");
+        int town = 0;
+        if (!ReadBoundedInt(args[0], "town_id", 0, TOWN_COUNT - 1, town)) return Invalid("town_id must be 0-" + std::to_string(TOWN_COUNT - 1));
+        if (SaveData == nullptr) return Failed("the game has no save data yet");
+        if (!importing) return {ApiCallStatus::Ok, {{"town_id", town}, {"data", moonmod::coop::ExportTown(*SaveData, town)}}, {}};
+        if (!args[0].contains("data") || !args[0]["data"].is_string()) return Invalid("data must be georama.town_export text");
+        const bool here = mode == GAME_MODE_EDIT && MapNo == town;
+        if (here && GameMode != ED_MODE_WALK) return Failed("busy: the player is editing or in a menu in that town; try again in a moment");
+        std::string error;
+        if (!moonmod::coop::ImportTown(args[0]["data"].get_ref<const std::string &>(), town, *SaveData, error)) return Invalid(error);
+        const bool reload = here && NextMapNo < 0;
+        if (reload) MapJump(town, -1);
+        return {ApiCallStatus::Ok, {{"town_id", town}, {"imported", true}, {"reloaded", reload}}, {}};
+    }
     // world.avatar_set / avatar_clear: co-op's remote players on the dungeon floor (moonmod/coop_avatars.hpp).
     if (operation.path == "world.avatar_set") {
         static constexpr const char *kUsage =
@@ -16825,7 +16848,8 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     for (const char *path : {"title.mode_register", "title.mode_set", "title.mode_remove",
                              "session.get", "session.start", "session.finish", "save.world_export", "save.world_import",
                              "save.player_export", "save.player_import", "save.account_get", "save.account_set",
-                             "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear"}) {
+                             "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear",
+                             "georama.town_export", "georama.town_import"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_resource_override_removal_guard = ChronicleModelOverrideRemovalGuard;

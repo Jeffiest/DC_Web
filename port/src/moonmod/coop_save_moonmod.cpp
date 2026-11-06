@@ -56,6 +56,14 @@ struct SaveAccess {
         };
     }
 
+    static constexpr int kTowns = static_cast<int>(sizeof(CSaveData::georama) / sizeof(CSaveData::georama[0]));
+    static std::vector<Field> Town(CSaveData &save, int town) {
+        return {
+            {1, &save.georama[town], sizeof(save.georama[town])},
+            {2, &save.elem_data[town], sizeof(save.elem_data[town])},
+        };
+    }
+
     static std::vector<Field> Player(CSaveData &save) {
         CDngStatusData &dng = save.dng_status;
         return {
@@ -136,12 +144,11 @@ std::string Export(const char *tag, const std::vector<Field> &fields) {
 // Reads every field first and writes none unless all of them fit: a refused import changes nothing.
 bool Import(const char *tag, std::string_view text, const std::vector<Field> &fields, std::string &error) {
     if (!text.starts_with(tag)) {
-        error = std::string("not ") + (tag == kWorldTag ? "a world" : "a player") + " from save." +
-                (tag == kWorldTag ? "world_export" : "player_export");
+        error = std::string("not ") + (tag == kWorldTag ? "a world from save.world_export" : tag == kPlayerTag ? "a player from save.player_export" : "that town's georama.town_export");
         return false;
     }
     std::string bytes;
-    if (!Unbase64(text.substr(4), bytes)) {
+    if (!Unbase64(text.substr(std::strlen(tag)), bytes)) {
         error = "the data is damaged (not base64)";
         return false;
     }
@@ -183,6 +190,26 @@ std::string ExportWorld(const CSaveData &save) { return Export(kWorldTag, SaveAc
 
 bool ImportWorld(std::string_view text, CSaveData &save, std::string &error) {
     return Import(kWorldTag, text, SaveAccess::World(save), error);
+}
+
+std::string ExportTown(const CSaveData &save, int town) {
+    constexpr int kTowns = SaveAccess::kTowns;
+    if (town < 0 || town >= kTowns) return {};
+    return Export(("DCT1" + std::to_string(town) + ":").c_str(), SaveAccess::Town(const_cast<CSaveData &>(save), town));
+}
+
+bool ImportTown(std::string_view text, int town, CSaveData &save, std::string &error) {
+    constexpr int kTowns = SaveAccess::kTowns;
+    if (town < 0 || town >= kTowns) {
+        error = "no such town";
+        return false;
+    }
+    const std::string tag = "DCT1" + std::to_string(town) + ":";
+    if (!text.starts_with(tag)) {
+        error = "not this town's georama.town_export";
+        return false;
+    }
+    return Import(tag.c_str(), text, SaveAccess::Town(save, town), error);
 }
 
 std::string ExportPlayer(const CSaveData &save) { return Export(kPlayerTag, SaveAccess::Player(const_cast<CSaveData &>(save))); }

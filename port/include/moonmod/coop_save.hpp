@@ -26,6 +26,11 @@ bool        ImportWorld(std::string_view text, dc::game::CSaveData &save, std::s
 std::string ExportPlayer(const dc::game::CSaveData &save);
 bool        ImportPlayer(std::string_view text, dc::game::CSaveData &save, std::string &error);
 
+// One town's Georama (georama.town_export/import): its record and its chips, for co-op to carry a town edited in one
+// game to the others. "DCT1", the town's number, then the bytes, base64.
+std::string ExportTown(const dc::game::CSaveData &save, int town);
+bool        ImportTown(std::string_view text, int town, dc::game::CSaveData &save, std::string &error);
+
 // The host's guests (save.account_*): each guest's own things, kept in the host's save, as coop_accounts.json in its
 // slot folder beside the save, written with every save of the slot and read with its load. A new game has none.
 struct Account {

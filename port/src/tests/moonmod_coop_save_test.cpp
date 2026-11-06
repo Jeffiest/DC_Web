@@ -79,6 +79,22 @@ TEST(MoonModCoopSave, DamagedOrMistakenDataChangesNothing) {
     EXPECT_EQ(moonmod::coop::ExportWorld(guest->save()) + moonmod::coop::ExportPlayer(guest->save()), before);
 }
 
+TEST(MoonModCoopSave, OneTownsGeoramaCrossesAlone) {
+    auto editor = std::make_unique<RawSave>(0x70);
+    auto other = std::make_unique<RawSave>(0x08);
+    const std::string before_world = moonmod::coop::ExportWorld(other->save());
+    const std::string town = moonmod::coop::ExportTown(editor->save(), 2);
+    ASSERT_TRUE(town.starts_with("DCT12:"));
+    std::string error;
+    EXPECT_FALSE(moonmod::coop::ImportTown(town, 3, other->save(), error)); // another town's
+    EXPECT_FALSE(moonmod::coop::ImportTown(town, 9, other->save(), error));
+    EXPECT_EQ(moonmod::coop::ExportWorld(other->save()), before_world);
+    ASSERT_TRUE(moonmod::coop::ImportTown(town, 2, other->save(), error)) << error;
+    EXPECT_EQ(moonmod::coop::ExportTown(other->save(), 2), town);
+    EXPECT_NE(moonmod::coop::ExportTown(other->save(), 1), moonmod::coop::ExportTown(editor->save(), 1)); // only town 2 came
+    EXPECT_TRUE(moonmod::coop::ExportTown(other->save(), 7).empty());
+}
+
 struct TempDir {
     std::filesystem::path path = std::filesystem::temp_directory_path() /
                                  ("moonmod-coop-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
