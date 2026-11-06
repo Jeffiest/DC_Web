@@ -350,7 +350,7 @@ void ExerciseApi(const std::string &game_id) {
           "{\"schema_version\":1,\"id\":\"test.content-probe\",\"name\":\"Content Probe\","
           "\"version\":\"1.0.0\",\"framework_api\":1,\"games\":[\"" + game_id +
               "\"],\"entry\":\"main.lua\",\"permissions\":[\"content.register\",\"game.read\","
-              "\"game.write\",\"storage.read\",\"storage.write\",\"scripts.override\",\"debug.inspect\"]}");
+              "\"game.write\",\"storage.read\",\"storage.write\",\"scripts.override\",\"debug.inspect\",\"net.session\"]}");
     const std::string binary_resource("\0\xff\x10\xff", 4);
     Write(package / "resources" / "probe.bin", std::string_view(binary_resource.data(), binary_resource.size()));
     const std::string oversized_resource(256 * 1024 + 1, 'x');

@@ -228,6 +228,11 @@ target_compile_definitions(dc_port PRIVATE DC_COOP_RELAY_DEFAULT="${DC_COOP_RELA
 set(DC_NET_LIBS)
 if(WIN32)
     set(DC_NET_LIBS winhttp)
+elseif(APPLE)
+    # The SDK's libcurl, linked by name: CURL::libcurl's include directory is the SDK's usr/include, which put ahead
+    # of libc++'s own headers breaks them.
+    target_compile_definitions(dc_port PRIVATE DC_HAVE_CURL)
+    set(DC_NET_LIBS curl)
 elseif(NOT EMSCRIPTEN AND NOT NINTENDO_SWITCH AND NOT ANDROID)
     find_package(CURL QUIET)
     if(CURL_FOUND)
