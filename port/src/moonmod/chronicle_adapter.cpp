@@ -17,6 +17,7 @@
 #include "itembombeffect.hpp"
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
+#include "moonmod/coop_avatars.hpp"
 #include "moonmod/net_session.hpp"
 #include "moonmod/coop_save.hpp"
 #include "moonmod/audio_api.hpp"
@@ -1572,6 +1573,7 @@ ApiCallResult GetPlayer(const Json &args) {
         float rotation[4]{};
         CharaMain.GetRotation(rotation);
         if (std::isfinite(rotation[1])) result["heading"] = rotation[1]; // the way the player faces: (sin, cos) in (x, z)
+        result["motion"] = CharaMain.motion_no; // the motion the hero plays (co-op's avatars play it on other screens)
     }
     return {ApiCallStatus::Ok, std::move(result), {}};
 }
@@ -13550,6 +13552,54 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         }
     }
     // world.ghost_get: {character, frames = {{x, y, z, heading, motion}, ...}} oldest first, every other frame.
+    // world.avatar_set / avatar_clear: co-op's remote players on the dungeon floor (moonmod/coop_avatars.hpp).
+    if (operation.path == "world.avatar_set") {
+        static constexpr const char *kUsage =
+            "expected {slot = 1-3, character = a character id, weapon = item_no or nil, x, y, z, heading, motion, tint = {r, g, b} or nil}";
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(kUsage);
+        const Json &request = args[0];
+        for (auto field = request.begin(); field != request.end(); ++field) {
+            static constexpr std::array<std::string_view, 9> kFields = {"slot", "character", "weapon", "x", "y", "z", "heading", "motion", "tint"};
+            if (std::ranges::find(kFields, field.key()) == kFields.end()) return Invalid(std::string("unknown field: ") + field.key());
+        }
+        int slot = 0;
+        if (!ReadBoundedInt(request, "slot", 1, kMoonModAvatars, slot)) return Invalid(kUsage);
+        MoonModAvatarState state;
+        if (!request.contains("character") || !request["character"].is_string()) return Invalid(kUsage);
+        const auto found = std::ranges::find(kCharacterIds, request["character"].get<std::string>());
+        if (found == kCharacterIds.end() || found - kCharacterIds.begin() >= CharaCount()) return Invalid("character must be a playable character id");
+        state.character = static_cast<int>(found - kCharacterIds.begin());
+        if (request.contains("weapon") && !request["weapon"].is_null()) {
+            if (!ReadBoundedInt(request, "weapon", ITEM_WEAPON_START, 1023, state.weapon)) return Invalid("weapon must be a weapon's item_no");
+        }
+        const auto number = [&request](const char *key, float &out) {
+            if (!request.contains(key)) return true;
+            if (!request[key].is_number()) return false;
+            out = request[key].get<float>();
+            return std::isfinite(out) && std::fabs(out) < 1.0e6f;
+        };
+        if (!number("x", state.x) || !number("y", state.y) || !number("z", state.z) || !number("heading", state.heading)) return Invalid(kUsage);
+        if (request.contains("motion") && !ReadBoundedInt(request, "motion", 0, 255, state.motion)) return Invalid("motion must be 0-255");
+        if (request.contains("tint") && !request["tint"].is_null()) {
+            const Json &tint = request["tint"];
+            if (!tint.is_array() || tint.size() != 3) return Invalid("tint must be {r, g, b}, each 0-128");
+            for (int c = 0; c < 3; ++c) {
+                if (!tint[c].is_number() || tint[c].get<float>() < 0.0f || tint[c].get<float>() > 128.0f) return Invalid("tint must be {r, g, b}, each 0-128");
+                state.tint[c] = tint[c].get<float>();
+            }
+        }
+        if (!MoonModAvatarSet(slot - 1, state)) return Failed("that character can't be shown");
+        return {ApiCallStatus::Ok, {{"slot", slot}, {"shown", MoonModAvatarShown(slot - 1)}}, {}};
+    }
+    if (operation.path == "world.avatar_clear") {
+        int slot = 0;
+        if (!args.is_array() || args.size() > 1 || (args.size() == 1 && (!args[0].is_object() ||
+            (args[0].contains("slot") && !ReadBoundedInt(args[0], "slot", 1, kMoonModAvatars, slot))))) {
+            return Invalid("expected {slot = 1-3}, or nothing for every one");
+        }
+        MoonModAvatarClear(slot - 1);
+        return {ApiCallStatus::Ok, {{"cleared", true}}, {}};
+    }
     if (operation.path == "world.ghost_get") {
         int  character = -1;
         Json frames = Json::array();
@@ -16775,7 +16825,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     for (const char *path : {"title.mode_register", "title.mode_set", "title.mode_remove",
                              "session.get", "session.start", "session.finish", "save.world_export", "save.world_import",
                              "save.player_export", "save.player_import", "save.account_get", "save.account_set",
-                             "save.account_list", "save.account_remove"}) {
+                             "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_resource_override_removal_guard = ChronicleModelOverrideRemovalGuard;

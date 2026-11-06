@@ -114,6 +114,8 @@ constexpr ApiOperationSpec kApiCatalog[] = {
     {"world.dungeon_npc_set", "world", "dungeon_npc_set", "simulation", "game.write", "Stand a town villager's model on the Chronicle dungeon floor, inside the exit gate or beside the player, until the floor changes."},
     {"world.ghost_get", "world", "ghost_get", "simulation", "game.read", "The player's last five seconds on this dungeon floor, to keep for a ghost."},
     {"world.ghost_play", "world", "ghost_play", "simulation", "game.write", "Play kept frames back on a pale, see-through hero."},
+    {"world.avatar_set", "world", "avatar_set", "simulation", "game.write", "Co-op: show another player (slot 1-3) on the dungeon floor as their hero and weapon, easing to where they are."},
+    {"world.avatar_clear", "world", "avatar_clear", "simulation", "game.write", "Co-op: take another player's hero away (one slot, or every one)."},
     {"messages.post", "messages", "post", "any", "storage.write", "Leave a short message at a place this mod names, for the players who share the messages folder."},
     {"messages.list", "messages", "list", "any", "storage.read", "The messages this mod's players left at some places, best rated first."},
     {"messages.rate", "messages", "rate", "any", "storage.write", "Rate another player's message good or poor, or take the rating back."},

@@ -111,6 +111,7 @@
 #include "moonmod/dungeon_npc.hpp"
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
+#include "moonmod/coop_avatars.hpp"
 #include "moonmod/target_hud.hpp"
 #include "data/data_read.hpp"
 
@@ -2148,6 +2149,7 @@ void Draw_MainUnitShadow() {
     }
 
     MoonModCompanionDraw(true);
+    MoonModAvatarsDraw(true);
     MoonModNpcDraw(true);
 
     if (CMonUnitHyde == 0 && BtEventMode == 0) {
@@ -2278,6 +2280,7 @@ void Draw_MainUnit() {
     MoonModCompanionDraw(false);
     MoonModNpcDraw(false);
     MoonModGhostDraw(false);
+    MoonModAvatarsDraw(false); // MoonMod co-op: the other players
 
     MGSetAmbient(saved_ambient);
     sceVu0CopyMatrix(light, saved_light);
@@ -3239,6 +3242,7 @@ void motionDrive() {
         MoonModCompanionStep(); // MoonMod: the Gauntlet's companion follows and fights
         MoonModNpcStep();       // MoonMod: a mod's figure on the floor (world.dungeon_npc_set)
         MoonModGhostStep();     // MoonMod: the player's last seconds kept, and a ghost played back (world.ghost_play)
+        MoonModAvatarsStep();   // MoonMod co-op: the other players, easing to where the network says they are
 
         if (BtActStatus.shadow_visible != 0) {
             CharaMain.ShadowStep();
