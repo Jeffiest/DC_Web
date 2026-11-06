@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "editatra.hpp"
+#include "moonmod/coop_save.hpp"
 #include "object.hpp"
 #include "playable_chara.hpp"
 
@@ -512,6 +513,8 @@ void CMenuCursor::InitPos() {
 
 void CSaveData::Initialize() {
     std::memset(static_cast<void *>(this), 0, sizeof(CSaveData));
+    // MoonMod co-op: a new game keeps no guests (a loaded save's come with it, moonmod/coop_save.hpp).
+    moonmod::coop::AccountsClear();
     this->unk_1CC = -1;
     this->now_time = 0.0f;
 

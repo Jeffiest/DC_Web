@@ -7,6 +7,10 @@
 #include "dngstatusdata.hpp"
 #include "stockitem.hpp"
 
+namespace moonmod::coop {
+struct SaveAccess;
+}
+
 namespace dc::game {
 
 /**
@@ -107,6 +111,8 @@ class CSaveData {
     friend void EdMoveChara();
     // The fish exchange debug shortcut records a Mardan Garayan catch.
     friend int FishingExchangeKey();
+    // MoonMod co-op (moonmod/coop_save.hpp) splits a save into the host's world and a guest's own things.
+    friend struct ::moonmod::coop::SaveAccess;
 
     s32             config[18];        /**< Contains the configuration values. */
     s16             chara_name[6][32]; /**< Contains the name of each character, as sixteen-bit characters. */

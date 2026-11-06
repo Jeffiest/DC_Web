@@ -137,11 +137,18 @@ struct SandboxRequest {
     int floor = -1;         // native floor number
     int party_size = 1;
     int character = 0;      // the active character at the start, 0 (Toan) to 5
+    // A co-op visit (session.start {visit = ...}): the host's world and the guest's own things in a fresh game, which
+    // starts in a town and may go anywhere; nothing of it is written to the guest's saves.
+    bool visit = false;
+    int map = -1;           // the town map a visit starts in
+    std::string world;      // save.world_export text
+    std::string player;     // save.player_export text, or empty for a new account
 };
 struct SandboxSession {
     std::string owner;
     std::string mode_id;
     int started_frame = 0;
+    bool visit = false;
 };
 
 // session.start validates the caller, then queues the request; the title loop fades out and the game loop
@@ -151,6 +158,8 @@ bool SandboxRequestPending();
 std::optional<SandboxRequest> TakeSandboxRequest();
 void BeginSandboxSession(const SandboxRequest &request);
 bool SandboxActive();
+// A co-op visit is running: the game must not write a save slot.
+bool VisitActive();
 const SandboxSession *ActiveSandbox();
 // Records why the session is ending ("defeat", "ended", "left_dungeon", "loaded_save"); the first reason wins.
 void NoteSandboxEnding(std::string_view reason);

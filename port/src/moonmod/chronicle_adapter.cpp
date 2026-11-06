@@ -18,6 +18,7 @@
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
 #include "moonmod/net_session.hpp"
+#include "moonmod/coop_save.hpp"
 #include "moonmod/audio_api.hpp"
 #include "moonmod/combat_formula.hpp"
 #include "moonmod/native_resource_overrides.hpp"
@@ -13129,11 +13130,46 @@ ApiCallResult OverrideDungeonLoot(const Json &args) {
 }
 
 // Sandbox sessions (title modes): session.start from the mod's open title mode screen, session.finish in play.
+// session.start {visit = {world, player?, map}}: a co-op visit to the host's world (moonmod/coop_save.hpp).
+ApiCallResult StartVisitSession(std::string_view mod_id, const Json &visit) {
+    if (!visit.is_object()) return Invalid("visit must be {world, player?, map}");
+    for (auto field = visit.begin(); field != visit.end(); ++field) {
+        if (field.key() != "world" && field.key() != "player" && field.key() != "map") return Invalid("visit accepts only world, player and map");
+    }
+    if (mode != GAME_MODE_TITLE) return Failed("a visit starts from the title screen");
+    const TitleMode *open = OpenTitleModeScreenMode();
+    if (open == nullptr || open->owner != mod_id) return Failed("start the visit from this mod's open title mode screen");
+    if (SandboxRequestPending()) return Failed("a session is already starting");
+    if (!visit.contains("world") || !visit["world"].is_string() || !visit["world"].get_ref<const std::string &>().starts_with("DCW1")) {
+        return Invalid("world must be the host's save.world_export text");
+    }
+    if (visit.contains("player") && (!visit["player"].is_string() || !visit["player"].get_ref<const std::string &>().starts_with("DCP1"))) {
+        return Invalid("player must be save.player_export text, or left out for a new account");
+    }
+    int map = 0;
+    if (!visit.contains("map") || !ReadBoundedInt(visit, "map", 0, TOWN_COUNT - 1, map)) {
+        return Invalid("map must be the town map to start in, 0-" + std::to_string(TOWN_COUNT - 1));
+    }
+    SandboxRequest queued;
+    queued.owner = std::string(mod_id);
+    queued.mode_id = open->id;
+    queued.visit = true;
+    queued.map = map;
+    queued.world = visit["world"].get<std::string>();
+    if (visit.contains("player")) queued.player = visit["player"].get<std::string>();
+    QueueSandboxRequest(std::move(queued));
+    return {ApiCallStatus::Ok, {{"queued", true}, {"visit", true}, {"map", map}, {"new_account", !visit.contains("player")}}, {}};
+}
+
 ApiCallResult StartSandboxSession(std::string_view mod_id, const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object()) {
-        return Invalid("expected {floor = registered floor id, party_size = 1..7, character = optional id}");
+        return Invalid("expected {floor = registered floor id, party_size = 1..7, character = optional id}, or {visit = ...}");
     }
     const Json &request = args[0];
+    if (request.contains("visit")) {
+        if (request.size() != 1) return Invalid("a visit takes only visit = {world, player?, map}");
+        return StartVisitSession(mod_id, request["visit"]);
+    }
     for (auto field = request.begin(); field != request.end(); ++field) {
         if (field.key() != "floor" && field.key() != "party_size" && field.key() != "character") {
             return Invalid("session.start accepts only floor, party_size and character");
@@ -13194,7 +13230,8 @@ ApiCallResult EndSandboxSessionApi(std::string_view mod_id, const Json &args) {
     const SandboxSession *session = ActiveSandbox();
     if (session == nullptr) return Failed("no sandbox session is running");
     if (session->owner != mod_id) return Failed("only the mod that started the sandbox session can end it");
-    if (mode != GAME_MODE_DUNGEON) return Failed("a sandbox session ends from its dungeon");
+    if (!session->visit && mode != GAME_MODE_DUNGEON) return Failed("a sandbox session ends from its dungeon");
+    if (session->visit && mode != GAME_MODE_DUNGEON && mode != GAME_MODE_EDIT) return Failed("a visit ends from a town or a dungeon");
     if (NextMapNo >= 0) return Failed("a native map transition is already pending");
     NoteSandboxEnding("ended");
     MapJump(800, -1);
@@ -13684,6 +13721,57 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "title.mode_register") return RegisterTitleMode(mod_id, args);
     if (operation.path == "title.mode_set") return SetTitleMode(mod_id, args);
     if (operation.path == "title.mode_remove") return RemoveTitleMode(mod_id, args);
+    // save.world_export / player_export and their imports: co-op's split of a save (moonmod/coop_save.hpp). Importing
+    // is a visit's alone, so no mod can write another game's world or things into a player's own save.
+    if (operation.path == "save.world_export" || operation.path == "save.player_export") {
+        if (!args.is_array() || !args.empty()) return Invalid(std::string(operation.path) + " takes no arguments");
+        if (SaveData == nullptr) return Failed("the game has no save data yet");
+        const bool world = operation.path == "save.world_export";
+        return {ApiCallStatus::Ok, {{"data", world ? moonmod::coop::ExportWorld(*SaveData) : moonmod::coop::ExportPlayer(*SaveData)}}, {}};
+    }
+    // save.account_*: the host's guests' things, kept in the host's save (moonmod/coop_save.hpp). Not during a visit: the
+    // guests' things belong to the host's game.
+    if (operation.path.starts_with("save.account")) {
+        if (VisitActive()) return Failed("a visit keeps no guests; the host's game does");
+        const Json  empty = Json::object();
+        const Json &request = args.is_array() && args.size() == 1 && args[0].is_object() ? args[0] : empty;
+        if (!args.is_array() || args.size() > 1 || (args.size() == 1 && !args[0].is_object())) return Invalid("expected one table, or none");
+        const std::string id = request.contains("id") && request["id"].is_string() ? request["id"].get<std::string>() : std::string();
+        if (operation.path == "save.account_list") {
+            Json list = Json::array();
+            for (const moonmod::coop::Account *account : moonmod::coop::Accounts()) list.push_back({{"id", account->id}, {"name", account->name}});
+            return {ApiCallStatus::Ok, {{"accounts", std::move(list)}}, {}};
+        }
+        if (!moonmod::coop::ValidAccountId(id)) return Invalid("id must be 8-64 of a-z, 0-9 and -");
+        if (operation.path == "save.account_get") {
+            const moonmod::coop::Account *account = moonmod::coop::AccountGet(id);
+            if (account == nullptr) return {ApiCallStatus::Ok, Json::object(), {}};
+            return {ApiCallStatus::Ok, {{"id", account->id}, {"name", account->name}, {"data", account->player}}, {}};
+        }
+        if (operation.path == "save.account_remove") return {ApiCallStatus::Ok, {{"removed", moonmod::coop::AccountRemove(id)}}, {}};
+        if (operation.path == "save.account_set") {
+            if (!request.contains("data") || !request["data"].is_string()) return Invalid("data must be save.player_export text");
+            std::string error;
+            if (!moonmod::coop::AccountSet({id, request.value("name", std::string()), request["data"].get<std::string>()}, error)) return Invalid(error);
+            return {ApiCallStatus::Ok, {{"kept", true}}, {}};
+        }
+        return Invalid("unknown save.account operation");
+    }
+    if (operation.path == "save.world_import" || operation.path == "save.player_import") {
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 1 || !args[0].contains("data") ||
+            !args[0]["data"].is_string()) {
+            return Invalid("expected {data = the export's text}");
+        }
+        const SandboxSession *session = ActiveSandbox();
+        if (session == nullptr || !session->visit || session->owner != mod_id) return Failed("only this mod's co-op visit imports");
+        if (SaveData == nullptr) return Failed("the game has no save data yet");
+        std::string error;
+        const std::string &data = args[0]["data"].get_ref<const std::string &>();
+        const bool ok = operation.path == "save.world_import" ? moonmod::coop::ImportWorld(data, *SaveData, error)
+                                                              : moonmod::coop::ImportPlayer(data, *SaveData, error);
+        if (!ok) return Invalid(error);
+        return {ApiCallStatus::Ok, {{"imported", true}}, {}};
+    }
     if (operation.path == "session.get") {
         if (!args.is_array() || !args.empty()) return Invalid("session.get takes no arguments");
         return {ApiCallStatus::Ok, SessionJson(mode == GAME_MODE_TITLE), {}};
@@ -14069,12 +14157,42 @@ void ResetChronicleSignatureForTests() {
     g_thirst_baseline = false;
 }
 
+// A co-op visit begins: the new game's save takes the host's world and the guest's own things (a new account keeps the
+// new game's), every character in the host's party gets a weapon if it has none, and the game walks into the town.
+bool StartChronicleVisit(const SandboxRequest &request) {
+    CDngStatusData *status = CurrentStatus();
+    std::string     error;
+    if (status == nullptr || SaveData == nullptr || request.map < 0 || request.map >= TOWN_COUNT ||
+        !moonmod::coop::ImportWorld(request.world, *SaveData, error) ||
+        (!request.player.empty() && !moonmod::coop::ImportPlayer(request.player, *SaveData, error))) {
+        std::fprintf(stderr, "MoonMod: the visit could not start: %s\n", error.c_str());
+        SharedRuntime().PublishToMod(request.owner, "game.session.failed", {{"kind", "visit"}, {"reason", error}});
+        CloseTitleModeScreen();
+        return false;
+    }
+    constexpr int kStarterWeapons[6] = {ITEM_WEAPON_DAGGER, ITEM_WEAPON_WOODEN_SLINGSHOT, ITEM_WEAPON_MALLET,
+                                        ITEM_WEAPON_GOLD_RING, ITEM_WEAPON_FIGHTING_STICK, ITEM_WEAPON_MACHINE_GUN};
+    const int party = std::clamp<int>(status->party_size, 1, CharaCount());
+    for (int character = 0; character < party; ++character) {
+        if (status->equipped_weapon_slot[character] >= 0 && status->chara_weapons[character][status->equipped_weapon_slot[character]].item_no >= ITEM_WEAPON_START) continue;
+        WEAPON_HAVE &owned = status->chara_weapons[character][0];
+        if (owned.item_no < ITEM_WEAPON_START) WepDataListToHaveCopy(kStarterWeapons[CombatChara(character)], &owned);
+        status->equipped_weapon_slot[character] = 0;
+    }
+    status->cur_chara = 0;
+    status->cur_georama = static_cast<s8>(request.map);
+    BeginSandboxSession(request);
+    MapJump(request.map, -1);
+    return true;
+}
+
 bool StartPendingChronicleSandbox() {
     std::optional<SandboxRequest> request = TakeSandboxRequest();
     if (!request) {
         CloseTitleModeScreen();
         return false;
     }
+    if (request->visit) return StartChronicleVisit(*request);
     CDngStatusData *status = CurrentStatus();
     if (status == nullptr || request->dungeon_id < 0 || request->dungeon_id >= DUNGEON_COUNT || request->floor < 0 ||
         request->floor >= maxFloorTbl__3[request->dungeon_id]) {
@@ -14104,6 +14222,15 @@ bool StartPendingChronicleSandbox() {
 
 bool RedirectChronicleSandboxMapJump() {
     if (!SandboxActive() || NextMapNo < 0) return false;
+    // A visit goes wherever the host's world goes; only the way to the title ends it.
+    if (VisitActive()) {
+        if (NextMapNo == 800) {
+            g_pending_dungeon_floor_entry.reset();
+            EndSandboxSession("left");
+            return true;
+        }
+        return false;
+    }
     if (NextMapNo >= 200 && NextMapNo < 300) return false; // another floor or dungeon: the session goes on
     NextMapNo = 800;
     g_pending_dungeon_floor_entry.reset();
@@ -16646,7 +16773,9 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     config.api_capabilities.push_back({"dungeons.set_modifiers", true, {}});
     config.api_capabilities.push_back({"combat.register_player_formula", true, {}});
     for (const char *path : {"title.mode_register", "title.mode_set", "title.mode_remove",
-                             "session.get", "session.start", "session.finish"}) {
+                             "session.get", "session.start", "session.finish", "save.world_export", "save.world_import",
+                             "save.player_export", "save.player_import", "save.account_get", "save.account_set",
+                             "save.account_list", "save.account_remove"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_resource_override_removal_guard = ChronicleModelOverrideRemovalGuard;

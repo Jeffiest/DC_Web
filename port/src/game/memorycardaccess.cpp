@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "chara_extras_save.hpp"
+#include "moonmod/coop_save.hpp"
+#include "moonmod/title_modes.hpp"
 #include "charm_slots.hpp"
 #include "gear.hpp"
 #include "dngstatusdata.hpp"
@@ -440,6 +442,10 @@ int CMemoryCardAccess::CheckFileNo(int file_no) {
 // another copy of the game or by hand since the list was read sends the save to the next free
 // folder instead, and file_no is then the file written.
 int CMemoryCardAccess::SaveToMc(int file_no) {
+    // A co-op visit plays the host's world: the host keeps the guest's things, and the guest's own saves stay as they were.
+    if (moonmod::VisitActive()) {
+        return -1;
+    }
     if (file_no < 0 || file_no >= 999999999) {
         return -1;
     }
@@ -480,6 +486,7 @@ int CMemoryCardAccess::SaveToMc(int file_no) {
     CharaExtrasSave(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
     CharmSlotsSave(SaveSlotDirectory(file_no)); // and the charm slots (charm_slots.hpp)
     GearSave(SaveSlotDirectory(file_no));       // and the gear (gear.hpp)
+    moonmod::coop::AccountsSave(SaveSlotDirectory(file_no)); // and the co-op guests' things (moonmod/coop_save.hpp)
     SaveState state;
     SaveStateRead(SaveStatePath(), state);
     const SaveState current = CurrentState();
@@ -513,6 +520,7 @@ int CMemoryCardAccess::LoadFromMc(int file_no) {
     CharaExtrasLoad(SaveSlotDirectory(file_no), *SaveData->GetDngStatus());
     CharmSlotsLoad(SaveSlotDirectory(file_no));
     GearLoad(SaveSlotDirectory(file_no));
+    moonmod::coop::AccountsLoad(SaveSlotDirectory(file_no));
 
     // The save screen keeps starting at the last numbered save.
     if (file_no == kSaveSlotAutosave) {
@@ -547,6 +555,7 @@ int CMemoryCardAccess::DeleteFile(int file_no) {
     CharaExtrasDelete(SaveSlotDirectory(file_no));
     CharmSlotsDelete(SaveSlotDirectory(file_no));
     GearDelete(SaveSlotDirectory(file_no));
+    moonmod::coop::AccountsDelete(SaveSlotDirectory(file_no));
     fs::remove(SaveSlotDirectory(file_no), error);
     if (error) return -1;
     SaveState state;
@@ -619,6 +628,7 @@ bool SaveSlotWriteAutosave() {
     CharaExtrasSave(SaveSlotDirectory(kSaveSlotAutosave), *SaveData->GetDngStatus());
     CharmSlotsSave(SaveSlotDirectory(kSaveSlotAutosave));
     GearSave(SaveSlotDirectory(kSaveSlotAutosave));
+    moonmod::coop::AccountsSave(SaveSlotDirectory(kSaveSlotAutosave));
     return true;
 }
 

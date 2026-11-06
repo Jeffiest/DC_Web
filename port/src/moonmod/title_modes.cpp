@@ -562,16 +562,17 @@ std::optional<SandboxRequest> TakeSandboxRequest() {
 }
 
 void BeginSandboxSession(const SandboxRequest &request) {
-    g_sandbox = SandboxSession{request.owner, request.mode_id, static_cast<int>(SharedRuntime().Frame())};
+    g_sandbox = SandboxSession{request.owner, request.mode_id, static_cast<int>(SharedRuntime().Frame()), request.visit};
     g_sandbox_ending.clear();
     g_open_mode.reset();
     SharedRuntime().Publish("game.session.started",
-                               {{"kind", "sandbox"}, {"owner", request.owner}, {"mode", request.mode_id},
-                                {"floor", request.floor_id}, {"party_size", request.party_size},
-                                {"frame", SharedRuntime().Frame()}});
+                               {{"kind", request.visit ? "visit" : "sandbox"}, {"owner", request.owner}, {"mode", request.mode_id},
+                                {"floor", request.visit ? Json(nullptr) : Json(request.floor_id)}, {"party_size", request.party_size},
+                                {"map", request.visit ? Json(request.map) : Json(nullptr)}, {"frame", SharedRuntime().Frame()}});
 }
 
 bool SandboxActive() { return g_sandbox.has_value(); }
+bool VisitActive() { return g_sandbox.has_value() && g_sandbox->visit; }
 const SandboxSession *ActiveSandbox() { return g_sandbox ? &*g_sandbox : nullptr; }
 
 void NoteSandboxEnding(std::string_view reason) {
@@ -587,7 +588,7 @@ std::string EndSandboxSession(std::string_view fallback_reason, bool reopen_mode
     if (reopen_mode && FindTitleMode(ended.mode_id) != nullptr) g_title_mode_return = ended.mode_id;
     // Published now, so mods hear the end before the title reopens the mode screen (game.title.opened).
     SharedRuntime().Publish("game.session.ended",
-                               {{"kind", "sandbox"}, {"owner", ended.owner}, {"mode", ended.mode_id},
+                               {{"kind", ended.visit ? "visit" : "sandbox"}, {"owner", ended.owner}, {"mode", ended.mode_id},
                                 {"reason", reason}, {"frame", SharedRuntime().Frame()}});
     return reason;
 }
@@ -600,7 +601,7 @@ std::optional<std::string> TakeTitleModeReturn() {
 
 Json SessionJson(bool in_title) {
     if (g_sandbox) {
-        return {{"kind", "sandbox"}, {"owner", g_sandbox->owner}, {"mode", g_sandbox->mode_id},
+        return {{"kind", g_sandbox->visit ? "visit" : "sandbox"}, {"owner", g_sandbox->owner}, {"mode", g_sandbox->mode_id},
                 {"ending", g_sandbox_ending.empty() ? Json(nullptr) : Json(g_sandbox_ending)}};
     }
     return {{"kind", in_title ? "title" : "story"}, {"owner", nullptr}, {"mode", nullptr},
