@@ -8,6 +8,8 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
+#include <type_traits>
 #include <cstdio>
 #include <vector>
 
@@ -57,6 +59,7 @@ struct SaveAccess {
     }
 
     static constexpr int kTowns = static_cast<int>(sizeof(CSaveData::georama) / sizeof(CSaveData::georama[0]));
+    static constexpr std::size_t kChips = sizeof(CSaveData::elem_data[0]) / sizeof(CSaveData::elem_data[0][0]);
     static std::vector<Field> Town(CSaveData &save, int town) {
         return {
             {1, &save.georama[town], sizeof(save.georama[town])},
@@ -210,6 +213,93 @@ bool ImportTown(std::string_view text, int town, CSaveData &save, std::string &e
         return false;
     }
     return Import(tag.c_str(), text, SaveAccess::Town(save, town), error);
+}
+
+namespace {
+
+// A town's two fields, decoded apart from any save.
+struct TownCopy {
+    dc::game::SV_GEORAMA_DATA geo{};
+    std::int16_t              chips[SaveAccess::kChips]{};
+    std::vector<Field>        Fields() { return {{1, &geo, sizeof(geo)}, {2, chips, sizeof(chips)}}; }
+};
+
+template <typename T> bool Same(const T &a, const T &b) { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+
+// Each record they changed takes their value.
+template <typename T, std::size_t N> void TakeChanged(T (&into)[N], const T (&base)[N], const T (&edited)[N]) {
+    for (std::size_t i = 0; i < N; ++i) {
+        if (!Same(base[i], edited[i])) into[i] = edited[i];
+    }
+}
+
+// The placed buildings, a list ended by part_id -1: theirs taken away, theirs added.
+std::vector<dc::game::SV_GRD_PART> Placed(const dc::game::SV_GEORAMA_DATA &geo) {
+    std::vector<dc::game::SV_GRD_PART> out;
+    for (const auto &part : geo.placed_parts) {
+        if (part.part_id == -1) break;
+        out.push_back(part);
+    }
+    return out;
+}
+
+} // namespace
+
+bool MergeTown(std::string_view base, std::string_view edited, int town, CSaveData &save, std::string &error) {
+    constexpr int kTowns = SaveAccess::kTowns;
+    if (town < 0 || town >= kTowns) {
+        error = "no such town";
+        return false;
+    }
+    const std::string tag = "DCT1" + std::to_string(town) + ":";
+    if (!base.starts_with(tag) || !edited.starts_with(tag)) {
+        error = "not this town's georama.town_export";
+        return false;
+    }
+    auto before = std::make_unique<TownCopy>(), after = std::make_unique<TownCopy>(), now = std::make_unique<TownCopy>();
+    if (!Import(tag.c_str(), base, before->Fields(), error) || !Import(tag.c_str(), edited, after->Fields(), error)) return false;
+    const std::vector<Field> live = SaveAccess::Town(save, town);
+    std::memcpy(&now->geo, live[0].data, sizeof(now->geo));
+    std::memcpy(now->chips, live[1].data, sizeof(now->chips));
+
+    auto &geo = now->geo;
+    const auto &was = before->geo, &is = after->geo;
+    if (was.request_count != is.request_count) geo.request_count = is.request_count;
+    if (was.request_event_flag != is.request_event_flag) geo.request_event_flag = is.request_event_flag;
+    TakeChanged(geo.request_complete, was.request_complete, is.request_complete);
+    TakeChanged(geo.parts_info, was.parts_info, is.parts_info);
+    TakeChanged(geo.npc, was.npc, is.npc);
+    TakeChanged(now->chips, before->chips, after->chips);
+
+    std::vector<dc::game::SV_GRD_PART> placed = Placed(geo), removed = Placed(was), added = Placed(is);
+    // what both lists hold is neither taken away nor added (one for one, as a building may stand twice)
+    for (auto it = removed.begin(); it != removed.end();) {
+        const auto kept = std::ranges::find_if(added, [&](const auto &part) { return Same(part, *it); });
+        if (kept != added.end()) {
+            added.erase(kept);
+            it = removed.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto &gone : removed) {
+        const auto found = std::ranges::find_if(placed, [&](const auto &part) { return Same(part, gone); });
+        if (found != placed.end()) placed.erase(found);
+    }
+    for (const auto &part : added) placed.push_back(part);
+    constexpr std::size_t kSlots = std::extent_v<decltype(dc::game::SV_GEORAMA_DATA::placed_parts)>;
+    if (placed.size() >= kSlots) placed.resize(kSlots - 1); // the list keeps its end
+    for (std::size_t i = 0; i < kSlots; ++i) {
+        if (i < placed.size()) {
+            geo.placed_parts[i] = placed[i];
+        } else {
+            geo.placed_parts[i] = {};
+            geo.placed_parts[i].part_id = -1;
+        }
+    }
+    std::memcpy(live[0].data, &now->geo, sizeof(now->geo));
+    std::memcpy(live[1].data, now->chips, sizeof(now->chips));
+    return true;
 }
 
 std::string ExportPlayer(const CSaveData &save) { return Export(kPlayerTag, SaveAccess::Player(const_cast<CSaveData &>(save))); }

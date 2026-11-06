@@ -13620,7 +13620,7 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     // edit mode isn't imported over; a town the player walks in is walked into again, so it shows what came.
     if (operation.path == "georama.town_export" || operation.path == "georama.town_import") {
         const bool importing = operation.path == "georama.town_import";
-        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(importing ? "expected {town_id = 0-4, data}" : "expected {town_id = 0-4}");
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(importing ? "expected {town_id = 0-4, data, base = optional}" : "expected {town_id = 0-4}");
         int town = 0;
         if (!ReadBoundedInt(args[0], "town_id", 0, TOWN_COUNT - 1, town)) return Invalid("town_id must be 0-" + std::to_string(TOWN_COUNT - 1));
         if (SaveData == nullptr) return Failed("the game has no save data yet");
@@ -13629,10 +13629,18 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         const bool here = mode == GAME_MODE_EDIT && MapNo == town;
         if (here && GameMode != ED_MODE_WALK) return Failed("busy: the player is editing or in a menu in that town; try again in a moment");
         std::string error;
-        if (!moonmod::coop::ImportTown(args[0]["data"].get_ref<const std::string &>(), town, *SaveData, error)) return Invalid(error);
+        // With base (the town as the editing game had it when its player opened the editor), only what they changed
+        // comes across, merged into this save's town (coop::MergeTown); without, the town is taken whole.
+        const std::string &data = args[0]["data"].get_ref<const std::string &>();
+        const bool merging = args[0].contains("base") && !args[0]["base"].is_null();
+        if (merging && !args[0]["base"].is_string()) return Invalid("base must be georama.town_export text");
+        if (merging ? !moonmod::coop::MergeTown(args[0]["base"].get_ref<const std::string &>(), data, town, *SaveData, error)
+                    : !moonmod::coop::ImportTown(data, town, *SaveData, error)) {
+            return Invalid(error);
+        }
         const bool reload = here && NextMapNo < 0;
         if (reload) MapJump(town, -1);
-        return {ApiCallStatus::Ok, {{"town_id", town}, {"imported", true}, {"reloaded", reload}}, {}};
+        return {ApiCallStatus::Ok, {{"town_id", town}, {"imported", true}, {"merged", merging}, {"reloaded", reload}}, {}};
     }
     // world.avatar_set / avatar_clear: co-op's remote players on the dungeon floor (moonmod/coop_avatars.hpp).
     if (operation.path == "world.avatar_set") {

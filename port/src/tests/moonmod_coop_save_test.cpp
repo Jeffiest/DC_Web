@@ -95,6 +95,105 @@ TEST(MoonModCoopSave, OneTownsGeoramaCrossesAlone) {
     EXPECT_TRUE(moonmod::coop::ExportTown(other->save(), 7).empty());
 }
 
+// A town as georama.town_export writes it, made and read here: field 1 the record, field 2 the chips.
+struct Town {
+    dc::game::SV_GEORAMA_DATA geo{};
+    std::int16_t              chips[128]{};
+    Town() {
+        for (auto &part : geo.placed_parts) part.part_id = -1;
+    }
+    void Place(std::int16_t id, float x) {
+        for (auto &part : geo.placed_parts) {
+            if (part.part_id == -1) {
+                part = {id, 0, x, 0.0f, 0.0f};
+                return;
+            }
+        }
+    }
+    std::vector<std::int16_t> Placed() const {
+        std::vector<std::int16_t> out;
+        for (const auto &part : geo.placed_parts) {
+            if (part.part_id == -1) break;
+            out.push_back(part.part_id);
+        }
+        return out;
+    }
+    std::string Text(int town) const {
+        std::string bytes;
+        const auto field = [&bytes](std::uint16_t id, const void *data, std::uint32_t size) {
+            bytes.push_back(static_cast<char>(id & 0xFF));
+            bytes.push_back(static_cast<char>(id >> 8));
+            for (int shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<char>((size >> shift) & 0xFF));
+            bytes.append(static_cast<const char *>(data), size);
+        };
+        field(1, &geo, sizeof(geo));
+        field(2, chips, sizeof(chips));
+        static constexpr char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out = "DCT1" + std::to_string(town) + ":";
+        for (std::size_t i = 0; i < bytes.size(); i += 3) {
+            const auto     at = [&bytes](std::size_t k) { return static_cast<unsigned>(static_cast<unsigned char>(bytes[k])); };
+            const unsigned v = (at(i) << 16) | ((i + 1 < bytes.size() ? at(i + 1) : 0) << 8) | (i + 2 < bytes.size() ? at(i + 2) : 0);
+            out.push_back(kTable[(v >> 18) & 63]);
+            out.push_back(kTable[(v >> 12) & 63]);
+            out.push_back(i + 1 < bytes.size() ? kTable[(v >> 6) & 63] : '=');
+            out.push_back(i + 2 < bytes.size() ? kTable[v & 63] : '=');
+        }
+        return out;
+    }
+    static Town Read(const std::string &text) {
+        std::string bytes;
+        unsigned    value = 0;
+        int         bits = 0;
+        for (char c : text.substr(text.find(':') + 1)) {
+            int digit = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' ? 62 : c == '/' ? 63 : -1;
+            if (digit < 0) break;
+            value = (value << 6) | static_cast<unsigned>(digit);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                bytes.push_back(static_cast<char>((value >> bits) & 0xFF));
+            }
+        }
+        Town town;
+        std::memcpy(&town.geo, bytes.data() + 6, sizeof(town.geo));
+        std::memcpy(town.chips, bytes.data() + 6 + sizeof(town.geo) + 6, sizeof(town.chips));
+        return town;
+    }
+};
+
+TEST(MoonModCoopSave, TwoBuildingInOneTownBothKeepTheirWork) {
+    auto host = std::make_unique<RawSave>(0x00);
+    std::string error;
+    Town start;
+    start.Place(10, 1.0f); // a house
+    start.Place(11, 2.0f); // a mill
+    ASSERT_TRUE(moonmod::coop::ImportTown(start.Text(2), 2, host->save(), error)) << error;
+    const std::string base = moonmod::coop::ExportTown(host->save(), 2); // the guest opens the editor here
+
+    // Meanwhile the host puts up a shop and paints chip 6.
+    Town hosts = Town::Read(base);
+    hosts.Place(12, 3.0f);
+    hosts.chips[6] = 77;
+    ASSERT_TRUE(moonmod::coop::ImportTown(hosts.Text(2), 2, host->save(), error)) << error;
+
+    // The guest took the house down, put up a well, painted chip 5 and finished plot 4.
+    Town guests = Town::Read(base);
+    guests.geo.placed_parts[0] = guests.geo.placed_parts[1];
+    guests.geo.placed_parts[1].part_id = -1;
+    guests.Place(13, 4.0f);
+    guests.chips[5] = 55;
+    guests.geo.parts_info[4].placed = 1;
+
+    ASSERT_TRUE(moonmod::coop::MergeTown(base, guests.Text(2), 2, host->save(), error)) << error;
+    const Town merged = Town::Read(moonmod::coop::ExportTown(host->save(), 2));
+    EXPECT_EQ(merged.Placed(), (std::vector<std::int16_t>{11, 12, 13})); // the house gone, the shop and the well both up
+    EXPECT_EQ(merged.chips[5], 55);
+    EXPECT_EQ(merged.chips[6], 77);
+    EXPECT_EQ(merged.geo.parts_info[4].placed, 1);
+
+    EXPECT_FALSE(moonmod::coop::MergeTown(base, guests.Text(3), 2, host->save(), error)); // another town's
+}
+
 struct TempDir {
     std::filesystem::path path = std::filesystem::temp_directory_path() /
                                  ("moonmod-coop-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +

@@ -30,6 +30,11 @@ bool        ImportPlayer(std::string_view text, dc::game::CSaveData &save, std::
 // game to the others. "DCT1", the town's number, then the bytes, base64.
 std::string ExportTown(const dc::game::CSaveData &save, int town);
 bool        ImportTown(std::string_view text, int town, dc::game::CSaveData &save, std::string &error);
+// Another game's edit of a town, merged into this save's: base is the town as that game had it when its player opened
+// the editor, edited as they left it. Only what they changed comes across: a plot, a villager, a chip or a request
+// they changed takes their value, the buildings they put up are added and those they took down taken away; anything
+// they left alone stays as this save has it now, so two players building at once both keep their work.
+bool MergeTown(std::string_view base, std::string_view edited, int town, dc::game::CSaveData &save, std::string &error);
 
 // The host's guests (save.account_*): each guest's own things, kept in the host's save, as coop_accounts.json in its
 // slot folder beside the save, written with every save of the slot and read with its load. A new game has none.
