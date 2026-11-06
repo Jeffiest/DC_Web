@@ -1,6 +1,7 @@
 #include "monstorunit.hpp"
 
 #include "moonmod/game_hooks.hpp"
+#include "moonmod/coop_monsters.hpp"
 
 #include <libvu0.h>
 
@@ -1003,7 +1004,8 @@ void CMonstorUnit::CheckViewLevel() {
         character->GetPosition(monster_position);
         monster_position[3] = 1;
         player_position[3] = 1;
-        float distance = DistVector(player_position, monster_position);
+        // MoonMod co-op: the nearest player wakes it, an avatar too.
+        float distance = MoonModCoopNearestDistance(player_position, monster_position);
         monster[i].player_distance = distance;
 
         if (monster[i].state == 1 && distance < monster[i].clip_distance) {
@@ -2025,6 +2027,7 @@ void CMonstorUnit::Step(int pause) {
     for (int i = 0; i < MONSTOR_SLOT_MAX; i++) {
         if (monster[i].state == 2) {
             current_monster = i;
+            MoonModCoopMonsterTarget(i); // MoonMod co-op: its turn sees the nearest player as the player
 
             if (monster[current_monster].motion_reset_pending != 0) {
                 monster[current_monster].requested_motion_flags &= ~4;
@@ -2117,7 +2120,12 @@ void CMonstorUnit::Step(int pause) {
                     // program afresh once the hold ends.
                     const int held = moonmod::ChronicleMonsterHeld(this, current_monster);
                     if (held == 2) script_state[current_monster] = 0;
-                    if (held == 1) {
+                    if (MoonModCoopIsPuppet(current_monster)) {
+                        // MoonMod co-op: a guest's copy of the host's monster: no thoughts of its own; it stands
+                        // where the host's does (MoonModCoopPuppetsStep).
+                        monster[current_monster].movement_speed = 0.0f;
+                        monster[current_monster].knockback[0] = 0.0f;
+                    } else if (held == 1) {
                         // held: its pair motion plays on
                     } else if (moonmod::ChronicleMonsterDefeatFading(this, current_monster)) {
                         // MoonMod: a boss whose defeat scene can't run here fades out, its script held, and dies

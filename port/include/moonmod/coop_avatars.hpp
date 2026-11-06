@@ -22,6 +22,8 @@ struct MoonModAvatarState {
 bool MoonModAvatarSet(int slot, const MoonModAvatarState &state);
 void MoonModAvatarClear(int slot); // -1 clears every one
 bool MoonModAvatarShown(int slot);
+// Where a shown avatar stands on this floor now (co-op's monsters see it as a player); false when it isn't here.
+bool MoonModAvatarAt(int slot, float out[3]);
 void MoonModAvatarsStep();
 void MoonModAvatarsDraw(bool shadow);
 

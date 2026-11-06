@@ -112,6 +112,7 @@
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
 #include "moonmod/coop_avatars.hpp"
+#include "moonmod/coop_monsters.hpp"
 #include "moonmod/target_hud.hpp"
 #include "data/data_read.hpp"
 
@@ -3149,7 +3150,10 @@ void motionDrive() {
     }
 
     if (BtEventMode == 0) {
+        MoonModCoopMonstersStepBegin(); // MoonMod co-op: each monster sees the nearest player, an avatar too
         NowMonstorUnit->Step(driveStepHold | CMonUnitHold);
+        MoonModCoopMonstersStepEnd();
+        MoonModCoopPuppetsStep(); // MoonMod co-op: on a guest, the monsters are the host's
     }
 
     if (BtActStatus.player_visible != 0 && EdEventInfo.player_draw != 0) {

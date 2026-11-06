@@ -172,6 +172,12 @@ bool MoonModAvatarShown(int slot) {
     return slot >= 0 && slot < kMoonModAvatars && g_avatars[slot].wanted && g_avatars[slot].loaded_character >= 0;
 }
 
+bool MoonModAvatarAt(int slot, float out[3]) {
+    if (!MoonModAvatarShown(slot) || !g_avatars[slot].placed || !InDungeon()) return false;
+    std::copy(g_avatars[slot].at, g_avatars[slot].at + 3, out);
+    return true;
+}
+
 // Once a frame from the dungeon loop.
 void MoonModAvatarsStep() {
     if (!InDungeon()) {

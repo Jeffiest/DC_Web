@@ -18,6 +18,7 @@
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
 #include "moonmod/coop_avatars.hpp"
+#include "moonmod/coop_monsters.hpp"
 #include "moonmod/net_session.hpp"
 #include "moonmod/coop_save.hpp"
 #include "moonmod/audio_api.hpp"
@@ -13623,6 +13624,89 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         MoonModAvatarClear(slot - 1);
         return {ApiCallStatus::Ok, {{"cleared", true}}, {}};
     }
+    // monsters.mirror_get / puppet_set / puppet_clear / mirror_hit: co-op's monsters (moonmod/coop_monsters.hpp).
+    if (operation.path == "monsters.mirror_get") {
+        if (!args.is_array() || !args.empty()) return Invalid("expected no arguments");
+        Json monsters = Json::array();
+        Json hits = Json::array();
+        if (mode == GAME_MODE_DUNGEON && NowMonstorUnit != nullptr) {
+            for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
+                const MONSTOR &m = NowMonstorUnit->monster[slot];
+                if (m.state == -1 || m.revealed == 0) continue;
+                CCharacter &body = NowMonstorUnit->chara[slot][0];
+                float       at[4] = {}, rotation[4] = {};
+                body.GetPosition(at);
+                body.GetRotation(rotation);
+                const auto round = [](float v) { return std::round(v * 10.0f) / 10.0f; };
+                monsters.push_back({{"slot", slot}, {"kind", m.kind}, {"state", m.state}, {"hp", m.hp}, {"max_hp", m.max_hp},
+                                    {"x", round(at[0])}, {"y", round(at[1])}, {"z", round(at[2])},
+                                    {"heading", std::round(rotation[1] * 1000.0f) / 1000.0f}, {"motion", body.motion_no}});
+            }
+        }
+        for (const MoonModAvatarHit &hit : MoonModCoopTakeAvatarHits()) {
+            hits.push_back({{"avatar", hit.avatar}, {"slot", hit.monster}, {"damage", hit.damage}, {"kind", hit.kind}, {"flags", hit.flags}});
+        }
+        return {ApiCallStatus::Ok, {{"monsters", monsters}, {"hits", hits}}, {}};
+    }
+    if (operation.path == "monsters.puppet_set") {
+        static constexpr const char *kUsage = "expected {monsters = {{slot, kind, state, hp, max_hp, x, y, z, heading, motion}, ...}}";
+        // An empty Lua table may come as an object: none listed.
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("monsters") ||
+            !(args[0]["monsters"].is_array() || (args[0]["monsters"].is_object() && args[0]["monsters"].empty()))) {
+            return Invalid(kUsage);
+        }
+        if (mode != GAME_MODE_DUNGEON || NowMonstorUnit == nullptr) return Failed("not on a dungeon floor");
+        std::array<bool, MONSTOR_SLOT_MAX> named{};
+        Json followed = Json::array(), refused = Json::array();
+        for (const Json &entry : args[0]["monsters"]) {
+            int slot = 0;
+            MoonModPuppet puppet;
+            if (!entry.is_object() || !ReadBoundedInt(entry, "slot", 0, MONSTOR_SLOT_MAX - 1, slot) ||
+                !ReadBoundedInt(entry, "kind", -1, 32767, puppet.kind) || !ReadBoundedInt(entry, "state", -1, 2, puppet.state) ||
+                !ReadBoundedInt(entry, "hp", -1000000, 1000000, puppet.hp)) {
+                return Invalid(kUsage);
+            }
+            if (entry.contains("max_hp") && !ReadBoundedInt(entry, "max_hp", 0, 1000000, puppet.max_hp)) return Invalid(kUsage);
+            if (entry.contains("motion") && !ReadBoundedInt(entry, "motion", -1, 1023, puppet.motion)) return Invalid(kUsage);
+            const auto number = [&entry](const char *key, float &out) {
+                if (!entry.contains(key)) return true;
+                if (!entry[key].is_number()) return false;
+                out = entry[key].get<float>();
+                return std::isfinite(out) && std::fabs(out) < 1.0e6f;
+            };
+            if (!number("x", puppet.x) || !number("y", puppet.y) || !number("z", puppet.z) || !number("heading", puppet.heading)) return Invalid(kUsage);
+            named[slot] = true;
+            (MoonModCoopPuppetSet(slot, puppet) ? followed : refused).push_back(slot);
+        }
+        // A slot the host no longer lists is gone there.
+        for (int slot = 0; slot < MONSTOR_SLOT_MAX; ++slot) {
+            if (!named[slot] && MoonModCoopIsPuppet(slot)) MoonModCoopPuppetSet(slot, MoonModPuppet{});
+        }
+        return {ApiCallStatus::Ok, {{"followed", followed}, {"refused", refused}}, {}};
+    }
+    if (operation.path == "monsters.puppet_clear") {
+        if (!args.is_array() || !args.empty()) return Invalid("expected no arguments");
+        MoonModCoopPuppetsClear();
+        return {ApiCallStatus::Ok, {{"cleared", true}}, {}};
+    }
+    if (operation.path == "monsters.mirror_hit") {
+        int slot = 0, damage = 0;
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !ReadBoundedInt(args[0], "slot", 0, MONSTOR_SLOT_MAX - 1, slot) ||
+            !ReadBoundedInt(args[0], "damage", 1, 1000000, damage)) {
+            return Invalid("expected {slot, damage}");
+        }
+        if (mode != GAME_MODE_DUNGEON || NowMonstorUnit == nullptr) return Failed("not on a dungeon floor");
+        MONSTOR &monster = NowMonstorUnit->monster[slot];
+        if (monster.state == -1 || monster.hp <= 0 || monster.revealed == 0) return {ApiCallStatus::Ok, {{"slot", slot}, {"damage", 0}, {"killed", false}}, {}};
+        // Another player's blow, as their game measured it: the life goes, the monster wakes, and a kill dies here.
+        const int dealt = std::min(damage, monster.hp);
+        monster.hp -= dealt;
+        monster.state = 2;
+        monster.last_attacker = -1;
+        monster.last_hit_damage = dealt;
+        QueueChronicleMonsterDamageResult(NowMonstorUnit, slot, static_cast<int>(monster.hp == 0 ? MonsterDamageResult::Killed : MonsterDamageResult::Hit));
+        return {ApiCallStatus::Ok, {{"slot", slot}, {"damage", dealt}, {"killed", monster.hp == 0}}, {}};
+    }
     if (operation.path == "world.ghost_get") {
         int  character = -1;
         Json frames = Json::array();
@@ -16849,6 +16933,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "session.get", "session.start", "session.finish", "save.world_export", "save.world_import",
                              "save.player_export", "save.player_import", "save.account_get", "save.account_set",
                              "save.account_list", "save.account_remove", "world.avatar_set", "world.avatar_clear",
+                             "monsters.mirror_get", "monsters.puppet_set", "monsters.puppet_clear", "monsters.mirror_hit",
                              "georama.town_export", "georama.town_import"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
