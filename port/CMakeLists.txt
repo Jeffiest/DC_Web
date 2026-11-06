@@ -114,7 +114,10 @@ set(GAME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/game)
 set(PORT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS ${GAME_DIR}/*.cpp)
 file(GLOB_RECURSE PORT_SOURCES CONFIGURE_DEPENDS ${PORT_DIR}/*.cpp)
-list(FILTER PORT_SOURCES EXCLUDE REGEX "/tests/|^${GAME_DIR}/")
+# The game's own units are dc_ps2's. Removed by name, not by a regex built from the path: a checkout under a
+# folder with regex characters in its name (Program Files (x86)) would keep them, and every one would be linked twice.
+list(REMOVE_ITEM PORT_SOURCES ${GAME_SOURCES})
+list(FILTER PORT_SOURCES EXCLUDE REGEX "/tests/")
 if(NINTENDO_SWITCH OR EMSCRIPTEN)
     list(FILTER PORT_SOURCES EXCLUDE REGEX "/platform/(discord|firstrun)\.cpp$")
 endif()
