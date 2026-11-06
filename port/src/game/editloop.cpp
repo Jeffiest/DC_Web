@@ -90,6 +90,7 @@
 #include "vutext.hpp"
 #include "weaponlevelup.hpp"
 #include "wind.hpp"
+#include "moonmod/coop_avatars.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/game_hooks.hpp"
 #include "moonmod/choice_panel.hpp"
@@ -2803,6 +2804,8 @@ void EditMainDraw() {
                 draw_trace.Finish(GameDrawPhase::CharacterLights, lights_start);
                 const auto draw_start = draw_trace.Start();
                 EdDrawCharacter(Chara, detail, 0xA, EdVillager, marks, shadow_on, event);
+                MoonModAvatarsStep();      // MoonMod co-op: the other players walking in this town
+                MoonModAvatarsDraw(false);
                 draw_trace.Finish(GameDrawPhase::CharacterDraw, draw_start);
                 break;
             }
@@ -3520,6 +3523,7 @@ void DrawSysGra() {
             set2DSprite(GetVif1Packet(), pause, screen, texel, 0x80);
         }
     }
+    MoonModAvatarsDrawNames(); // MoonMod co-op: the other players' names
     MoonModMapDraw(); // MoonMod: a mod's map screen
     MoonModChoiceDraw(); // and choice panel
 }

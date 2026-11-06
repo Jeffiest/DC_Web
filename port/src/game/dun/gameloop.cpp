@@ -4357,6 +4357,7 @@ static void GuardChip(int damage) {
 }
 
 int BtCheckDamageProc() {
+    MoonModCoopAvatarHitsScan(); // MoonMod co-op: what strikes another player's hero here goes to their game
     sceVu0FVECTOR pos;
     sceVu0FVECTOR from;
     sceVu0FVECTOR blow;

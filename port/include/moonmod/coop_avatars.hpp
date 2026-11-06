@@ -1,7 +1,7 @@
 #pragma once
 
 // Co-op's remote players (world.avatar_set / avatar_clear), drawn and driven by src/moonmod/coop_avatars_moonmod.cpp:
-// up to three other players on the dungeon floor, each a hero of its own with the weapon in its hand. A mod sets
+// up to three other players on the dungeon floor or walking in the town, each a hero of its own with the weapon in its hand. A mod sets
 // where each one is as the network reports it, a few times a second; between reports it eases there, turns the
 // shortest way and plays the motion it was told. Each has its own model and texture arenas, taken only while it is up.
 #include <string>

@@ -17,6 +17,9 @@
 #include "dataalloc.hpp"
 #include "dataread.hpp"
 #include "dun/gameloop.hpp"
+#include "editground.hpp"
+#include "editloop.hpp"
+#include "editmapscript.hpp"
 #include "gamemode.hpp"
 #include "itemdata.hpp"
 #include "main.hpp"
@@ -39,7 +42,7 @@ constexpr int    kFirstTextureBlock = 0x64;
 constexpr size_t kFileBytes = 6 * 1024 * 1024;
 constexpr size_t kModelBytes = 8 * 1024 * 1024;
 // Past this from where it stands, an avatar jumps instead of easing (a warp, the stairs, a new floor).
-constexpr float kJump = 480.0f;
+constexpr float kJump = 160.0f;
 
 struct Avatar {
     bool               wanted = false;
@@ -63,6 +66,30 @@ unsigned char *Aligned(unsigned char *raw) {
 }
 
 bool InDungeon() { return mode == GAME_MODE_DUNGEON && UserStatus != nullptr && CharaMain.frame != nullptr; }
+bool InTown() {
+    return mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT && Chara != nullptr && Chara->frame != nullptr &&
+           (GameMode == ED_MODE_WALK || GameMode == ED_MODE_TALK || GameMode == ED_MODE_EVENT || GameMode == ED_MODE_FISHING ||
+            GameMode == ED_MODE_TIME_CHANGE || GameMode == ED_MODE_DOOR_OPEN);
+}
+bool InPlace() { return InDungeon() || InTown(); }
+// Where the avatars are: a dungeon, or a town by its map. A new place loads them afresh (its own arenas and textures).
+int Place() { return mode == GAME_MODE_DUNGEON ? 1000 : mode == GAME_MODE_EDIT ? MapNo : -1; }
+int g_place = -1;
+
+void PlayerAt(float out[4]) {
+    if (mode == GAME_MODE_DUNGEON) {
+        std::copy(CharaMain.pos, CharaMain.pos + 4, out);
+    } else if (Chara != nullptr) {
+        Chara->GetPosition(out);
+    }
+}
+
+// A town hero walks with the town's motions (Toan's own town model numbers them 0-10); the avatars' models are the
+// dungeon's, whose numbers the town maps them to (as party.town_set_active does for the others).
+int TownMotion(int motion) {
+    static constexpr int kMap[11] = {0, 1, 2, 0, 0, 34, 35, 31, 32, 0, 0};
+    return motion >= 0 && motion < 11 ? kMap[motion] : motion;
+}
 
 void Unload(int slot) {
     Avatar &a = g_avatars[slot];
@@ -87,6 +114,9 @@ unsigned int *ReadPack(const char *path, unsigned char *&at, unsigned char *end)
     at += ((size >> 6) + 1) << 6;
     return buffer;
 }
+
+// A town's heroes carry no weapon.
+int WeaponHere(const Avatar &a) { return mode == GAME_MODE_EDIT ? -1 : a.target.weapon; }
 
 bool Load(int slot) {
     Avatar &a = g_avatars[slot];
@@ -122,9 +152,10 @@ bool Load(int slot) {
     a.loaded_character = chara;
     a.loaded_weapon = -1;
     a.weapon.Initialize();
-    if (a.target.weapon >= ITEM_WEAPON_START) {
+    const int weapon = WeaponHere(a);
+    if (weapon >= ITEM_WEAPON_START) {
         std::array<char, 64> file{}, cfg{};
-        BtGetWeaponNamePath3(file.data(), cfg.data(), a.target.weapon);
+        BtGetWeaponNamePath3(file.data(), cfg.data(), weapon);
         const std::string path = std::string("commenu/weapon/") + file.data();
         if (unsigned int *weapon = file[0] != 0 ? ReadPack(path.c_str(), at, end) : nullptr) {
             a.weapon.LoadPackData3(weapon, cfg.data(), &a.arena, a.BodyBlock(slot) + 1, &a.arena, 1, 0);
@@ -136,7 +167,7 @@ bool Load(int slot) {
         }
     }
     // Loaded even without a weapon that fits: a weapon that won't load isn't tried again until it changes.
-    a.loaded_weapon = a.target.weapon;
+    a.loaded_weapon = weapon;
     a.placed = false;
     return true;
 }
@@ -174,24 +205,23 @@ bool MoonModAvatarShown(int slot) {
 }
 
 bool MoonModAvatarAt(int slot, float out[3]) {
-    if (!MoonModAvatarShown(slot) || !g_avatars[slot].placed || !InDungeon()) return false;
+    if (!MoonModAvatarShown(slot) || !g_avatars[slot].placed || !InDungeon() || g_place != Place()) return false;
     std::copy(g_avatars[slot].at, g_avatars[slot].at + 3, out);
     return true;
 }
 
-// Once a frame from the dungeon loop.
+// Once a frame from the dungeon loop, or a town's while walking.
 void MoonModAvatarsStep() {
-    if (!InDungeon()) {
-        // Out of the dungeon the arenas go; the mod's wishes stay, for the next floor.
-        if (mode != GAME_MODE_DUNGEON) {
-            for (int i = 0; i < kMoonModAvatars; ++i) Unload(i);
-        }
-        return;
+    if (Place() != g_place) {
+        // Another place: the arenas go; the mod's wishes stay, for wherever comes next.
+        for (int i = 0; i < kMoonModAvatars; ++i) Unload(i);
+        g_place = Place();
     }
+    if (!InPlace()) return;
     for (int slot = 0; slot < kMoonModAvatars; ++slot) {
         Avatar &a = g_avatars[slot];
         if (!a.wanted) continue;
-        if (a.loaded_character != a.target.character || a.loaded_weapon != a.target.weapon) {
+        if (a.loaded_character != a.target.character || a.loaded_weapon != WeaponHere(a)) {
             if (!Load(slot)) {
                 a.wanted = false; // a character that can't load isn't tried every frame
                 continue;
@@ -213,7 +243,7 @@ void MoonModAvatarsStep() {
         a.body.SetPosition(p);
         a.body.frame->SetRotation(0.0f, a.heading, 0.0f);
         a.body.SetRotation(0.0f, a.heading, 0.0f);
-        int motion = a.target.motion;
+        int motion = mode == GAME_MODE_EDIT ? TownMotion(a.target.motion) : a.target.motion;
         if (motion < 0 || motion >= a.body.motion_end[0]) motion = 0;
         if (motion != a.motion) {
             a.body.motion_no = motion;
@@ -230,7 +260,7 @@ void MoonModAvatarsStep() {
 }
 
 void MoonModAvatarsDraw(bool shadow) {
-    if (!InDungeon()) return;
+    if (!InPlace() || g_place != Place()) return;
     for (int slot = 0; slot < kMoonModAvatars; ++slot) {
         Avatar &a = g_avatars[slot];
         if (!a.wanted || a.loaded_character < 0 || a.body.frame == nullptr) continue;
@@ -257,21 +287,23 @@ void MoonModAvatarsDraw(bool shadow) {
 }
 
 void MoonModAvatarsDrawNames() {
-    if (!InDungeon()) return;
+    if (!InPlace() || g_place != Place()) return;
+    float player[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    PlayerAt(player);
     for (int slot = 0; slot < kMoonModAvatars; ++slot) {
         const Avatar &a = g_avatars[slot];
         if (!a.wanted || !a.placed || a.loaded_character < 0 || a.target.name.empty()) continue;
-        const float far = std::hypot(a.at[0] - CharaMain.pos[0], a.at[2] - CharaMain.pos[2]);
-        if (far > 900.0f) continue;
-        sceVu0FVECTOR head = {a.at[0], a.at[1] + 72.0f, a.at[2], 1.0f};
+        const float far = std::hypot(a.at[0] - player[0], a.at[2] - player[2]);
+        if (far > 260.0f) continue;
+        sceVu0FVECTOR head = {a.at[0], a.at[1] + 20.0f, a.at[2], 1.0f}; // just over the head (CharaHeight is 14-18)
         int           screen[4] = {};
         if (MGRotTransPers2D(screen, head, 0) == 0) continue;
-        // Full until six cells away, gone by nine.
-        const int alpha = far < 600.0f ? 128 : static_cast<int>(128.0f * (900.0f - far) / 300.0f);
+        // Full nearby, gone toward where monsters stop being drawn (300).
+        const int alpha = far < 160.0f ? 128 : static_cast<int>(128.0f * (260.0f - far) / 100.0f);
         ui::Label label(a.target.name, ui::ColorWhite, ui::Alignment::Center, true, 0.7f);
         if (a.target.tint[0] >= 0.0f) label.SetCustomRgb(150, 186, 255); // a guest's name in their blue
         label.SetOutline(2.0f, 10, 10, 20);
-        label.Draw(screen[0], screen[1] - 16, alpha);
+        label.Draw(screen[0], screen[1] - 30, alpha); // where the game's damage numbers rise from, above them
     }
 }
 

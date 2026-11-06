@@ -1576,6 +1576,20 @@ ApiCallResult GetPlayer(const Json &args) {
         CharaMain.GetRotation(rotation);
         if (std::isfinite(rotation[1])) result["heading"] = rotation[1]; // the way the player faces: (sin, cos) in (x, z)
         result["motion"] = CharaMain.motion_no; // the motion the hero plays (co-op's avatars play it on other screens)
+    } else if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT && GameMode == ED_MODE_WALK && Chara != nullptr &&
+               Chara->frame != nullptr) {
+        // Walking in a town: where the town's hero is, and which one it is (party.town_set_active).
+        float position[4]{}, rotation[4]{};
+        Chara->GetPosition(position);
+        Chara->GetRotation(rotation);
+        if (std::isfinite(position[0]) && std::isfinite(position[1]) && std::isfinite(position[2])) {
+            result["position"] = {{"x", position[0]}, {"y", position[1]}, {"z", position[2]}};
+            if (std::isfinite(rotation[1])) result["heading"] = rotation[1];
+            result["motion"] = Chara->motion_no;
+            if (g_town_loaded_character >= 0 && g_town_loaded_character < static_cast<int>(kCharacterIds.size())) {
+                result["town_character"] = kCharacterIds[g_town_loaded_character];
+            }
+        }
     }
     return {ApiCallStatus::Ok, std::move(result), {}};
 }
@@ -2772,6 +2786,7 @@ ApiCallResult GetWorld(const Json &args) {
         // A town: its map, and whether the player is in Georama's edit mode (co-op sends a town once it's left).
         result["town_map"] = MapNo;
         result["editing"] = GameMode == ED_MODE_GEORAMA || GameMode == ED_MODE_GEORAMA_MENU_INIT || GameMode == ED_MODE_GEORAMA_MENU;
+        result["walking"] = GameMode == ED_MODE_WALK;
     }
     return {ApiCallStatus::Ok, std::move(result), {}};
 }

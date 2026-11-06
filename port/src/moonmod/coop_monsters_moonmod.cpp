@@ -12,6 +12,7 @@
 #include "gamemode.hpp"
 #include "main.hpp"
 #include "monstorunit.hpp"
+#include "collisiondata.hpp"
 #include "moonmod/coop_avatars.hpp"
 #include "moonmod/game_hooks.hpp"
 
@@ -28,6 +29,8 @@ struct Puppet {
     int           motion = -1;
 };
 std::array<Puppet, MONSTOR_SLOT_MAX> g_puppets;
+
+constexpr float kAvatarHeight = 16.0f; // a hero's height for a hit, as the player's (CharaHeight)
 
 bool InDungeon() { return mode == GAME_MODE_DUNGEON && NowMonstorUnit != nullptr; }
 
@@ -111,7 +114,7 @@ void MoonModCoopPuppetsStep() {
         if (p.host.max_hp > 0) m.max_hp = p.host.max_hp;
         m.hp = std::clamp(p.host.hp, 1, std::max(1, m.max_hp));
         const float to[3] = {p.host.x, p.host.y, p.host.z};
-        if (!p.placed || std::hypot(to[0] - p.at[0], to[2] - p.at[2]) > 480.0f) {
+        if (!p.placed || std::hypot(to[0] - p.at[0], to[2] - p.at[2]) > 160.0f) {
             std::copy(to, to + 3, p.at);
             p.heading = p.host.heading;
             p.placed = true;
@@ -180,36 +183,30 @@ void MoonModCoopMonsterTarget(int slot) {
 void MoonModCoopMonstersStepEnd() {
     if (g_swapped) std::copy(g_saved, g_saved + 4, CharaMain.pos);
     g_swapped = false;
-    if (!InDungeon()) return;
+}
+
+void MoonModCoopAvatarHitsScan() {
+    if (!InDungeon() || NowColData == nullptr) return;
     std::array<std::array<float, 3>, kMoonModAvatars> at{};
     std::array<bool, kMoonModAvatars>                 here{};
     if (Avatars(at, here) == 0) return;
-    // A blow whose sphere overlaps an avatar, as the game measures one on the player.
+    // Whatever would strike the player (a monster's blow, its shot or spell, a trap), measured on each hero as the
+    // game measures it on the player (CCollisionData::CheckHitUser).
     for (int a = 0; a < kMoonModAvatars; ++a) {
         if (g_hit_cooldown[a] > 0) {
             --g_hit_cooldown[a];
             continue;
         }
         if (!here[a] || g_hits.size() >= 8) continue;
-        bool hit = false;
-        for (int i = 0; i < MONSTOR_SLOT_MAX && !hit; ++i) {
-            const MONSTOR &m = NowMonstorUnit->monster[i];
-            if (m.state != 2 || m.hp <= 0 || m.stop_timer > 0) continue;
-            const MONSTOR_EFFECT_STATE2 &e = NowMonstorUnit->effect2[i];
-            const float time = NowMonstorUnit->chara[i][0].motion_type.state.time;
-            for (int k = 0; k < 16; ++k) {
-                if (e.active[k] == 0 || !(e.motion_start[k] < time) || e.motion_end[k] <= time) continue;
-                const float dx = e.position[k][0] - at[a][0], dz = e.position[k][2] - at[a][2];
-                const float dy = e.position[k][1] - at[a][1];
-                const float reach = e.radius[k] + 14.0f;
-                if (dx * dx + dz * dz <= reach * reach && dy > -e.radius[k] - 10.0f && dy < 55.0f + e.radius[k]) {
-                    g_hits.push_back({a + 1, i, e.damage[k] * (m.anger_timer > 0 ? 2 : 1), e.kind[k], e.flags[k]});
-                    g_hit_cooldown[a] = 60; // about the game's own grace after a hit
-                    hit = true;
-                    break;
-                }
-            }
-        }
+        float feet[4] = {at[a][0], at[a][1], at[a][2], 1.0f};
+        const int i = NowColData->CheckHitUser(feet, 1, kAvatarHeight);
+        if (i < 0) continue;
+        const COLLISION_HIT &hit = NowColData->hit[i];
+        int monster = hit.monster_no;
+        if (monster < 0 && hit.owner >= 200) monster = (hit.owner - 200) / 5;
+        const int damage = moonmod::ChronicleMonsterHitDamage(hit.damage, hit.owner, hit.monster_no);
+        g_hits.push_back({a + 1, monster, damage, hit.kind, hit.flags});
+        g_hit_cooldown[a] = 60; // about the game's own grace after a hit
     }
 }
 

@@ -34,10 +34,13 @@ void  MoonModCoopMonstersStepBegin();
 void  MoonModCoopMonsterTarget(int slot);
 void  MoonModCoopMonstersStepEnd();
 
+// Host: what would strike the player that lands on a hero instead, from the player's own damage check each frame.
+void MoonModCoopAvatarHitsScan();
+
 struct MoonModAvatarHit {
     int avatar = 0;  // 1..3, as world.avatar_set numbers them
     int monster = 0; // its slot
-    int damage = 0, kind = 0, flags = 0;
+    int damage = 0, kind = 0, flags = 0; // kind: 2 a small hit, 3 a blow, 4 a heavy blow (COLLISION_HIT)
 };
 std::vector<MoonModAvatarHit> MoonModCoopTakeAvatarHits();
 
