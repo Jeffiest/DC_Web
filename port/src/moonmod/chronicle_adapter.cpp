@@ -1540,6 +1540,34 @@ ApiCallResult RegisterCharacter(std::string_view mod_id, const Json &args) {
     return {ApiCallStatus::Ok, ModCharacterJson(g_mod_characters.at(id)), {}};
 }
 
+// A player's things for co-op: the save's (coop::ExportPlayer), then "|DCX1" and MoonMod's own beside the save that
+// travel with them: the gear (gear.hpp) and the charm slots (charm_slots.hpp), as their files hold them.
+constexpr std::string_view kPlayerExtrasTag = "|DCX1";
+
+std::string ExportChroniclePlayer() {
+    const Json extras = {{"gear", GearJson()}, {"charms", CharmSlotsJson()}};
+    return moonmod::coop::ExportPlayer(*SaveData) + std::string(kPlayerExtrasTag) + extras.dump();
+}
+
+bool ImportChroniclePlayer(std::string_view text, std::string &error) {
+    const std::size_t split = text.find(kPlayerExtrasTag);
+    Json extras;
+    if (split != std::string_view::npos) {
+        extras = Json::parse(text.substr(split + kPlayerExtrasTag.size()), nullptr, false);
+        if (extras.is_discarded() || !extras.is_object()) {
+            error = "the player's gear and charms are damaged";
+            return false;
+        }
+    }
+    if (!moonmod::coop::ImportPlayer(text.substr(0, split), *SaveData, error)) return false;
+    // Things from before the gear travelled (or none worn) leave none; a bad file leaves none, as a bad gear.json does.
+    if (extras.contains("gear") && extras["gear"].is_string()) GearApply(extras["gear"].get<std::string>());
+    else ClearGear();
+    if (extras.contains("charms") && extras["charms"].is_string()) CharmSlotsApply(extras["charms"].get<std::string>());
+    else ClearCharmSlots();
+    return true;
+}
+
 ApiCallResult GetPlayer(const Json &args) {
     if (!args.is_array() || !args.empty()) {
         return Invalid("player.get takes no arguments");
@@ -13941,7 +13969,7 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         if (!args.is_array() || !args.empty()) return Invalid(std::string(operation.path) + " takes no arguments");
         if (SaveData == nullptr) return Failed("the game has no save data yet");
         const bool world = operation.path == "save.world_export";
-        return {ApiCallStatus::Ok, {{"data", world ? moonmod::coop::ExportWorld(*SaveData) : moonmod::coop::ExportPlayer(*SaveData)}}, {}};
+        return {ApiCallStatus::Ok, {{"data", world ? moonmod::coop::ExportWorld(*SaveData) : ExportChroniclePlayer()}}, {}};
     }
     // save.account_*: the host's guests' things, kept in the host's save (moonmod/coop_save.hpp). Not during a visit: the
     // guests' things belong to the host's game.
@@ -13982,7 +14010,7 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         std::string error;
         const std::string &data = args[0]["data"].get_ref<const std::string &>();
         const bool ok = operation.path == "save.world_import" ? moonmod::coop::ImportWorld(data, *SaveData, error)
-                                                              : moonmod::coop::ImportPlayer(data, *SaveData, error);
+                                                              : ImportChroniclePlayer(data, error);
         if (!ok) return Invalid(error);
         return {ApiCallStatus::Ok, {{"imported", true}}, {}};
     }
@@ -14378,11 +14406,16 @@ bool StartChronicleVisit(const SandboxRequest &request) {
     std::string     error;
     if (status == nullptr || SaveData == nullptr || request.map < 0 || request.map >= TOWN_COUNT ||
         !moonmod::coop::ImportWorld(request.world, *SaveData, error) ||
-        (!request.player.empty() && !moonmod::coop::ImportPlayer(request.player, *SaveData, error))) {
+        (!request.player.empty() && !ImportChroniclePlayer(request.player, error))) {
         std::fprintf(stderr, "MoonMod: the visit could not start: %s\n", error.c_str());
         SharedRuntime().PublishToMod(request.owner, "game.session.failed", {{"kind", "visit"}, {"reason", error}});
         CloseTitleModeScreen();
         return false;
+    }
+    if (request.player.empty()) {
+        // A new account starts with no gear or charms (not this game's last save's, which are its own).
+        ClearGear();
+        ClearCharmSlots();
     }
     constexpr int kStarterWeapons[6] = {ITEM_WEAPON_DAGGER, ITEM_WEAPON_WOODEN_SLINGSHOT, ITEM_WEAPON_MALLET,
                                         ITEM_WEAPON_GOLD_RING, ITEM_WEAPON_FIGHTING_STICK, ITEM_WEAPON_MACHINE_GUN};
