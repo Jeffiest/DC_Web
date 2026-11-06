@@ -1,0 +1,54 @@
+# The co-op relay (coop/relay/README.md) on Cloudflare Workers: tested under wrangler dev, deployed, then tested again
+# at its address. Deploying needs the repository secrets CLOUDFLARE_API_TOKEN (a token with "Edit Cloudflare
+# Workers") and CLOUDFLARE_ACCOUNT_ID; without them the tests run and the deploy is skipped.
+name: coop-relay
+
+on:
+  push:
+    branches: [main]
+    paths: ['coop/relay/**', '.github/workflows/coop-relay.yml']
+  pull_request:
+    paths: ['coop/relay/**', '.github/workflows/coop-relay.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coop-relay-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: coop/relay
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Test under wrangler dev
+        run: npm test
+
+      - name: Deploy
+        id: deploy
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::No CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets: the relay is tested but not deployed."
+            exit 0
+          fi
+          npx wrangler deploy 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Co-op relay deployed: \`${url/https:/wss:}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test the deployed relay
+        if: steps.deploy.outputs.url != ''
+        run: RELAY_URL="$(echo '${{ steps.deploy.outputs.url }}' | sed 's/^https:/wss:/')" npm test

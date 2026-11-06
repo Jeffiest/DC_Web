@@ -118,6 +118,12 @@ constexpr ApiOperationSpec kApiCatalog[] = {
     {"messages.list", "messages", "list", "any", "storage.read", "The messages this mod's players left at some places, best rated first."},
     {"messages.rate", "messages", "rate", "any", "storage.write", "Rate another player's message good or poor, or take the rating back."},
     {"messages.remove", "messages", "remove", "any", "storage.write", "Take back one of this player's own messages."},
+    {"net.host", "net", "host", "any", "net.session", "Open an online room through the co-op relay; net.receive's connected event names its code."},
+    {"net.join", "net", "join", "any", "net.session", "Join another player's online room by its five-letter code."},
+    {"net.leave", "net", "leave", "any", "net.session", "Leave the online room (a host leaving ends it for everyone)."},
+    {"net.status", "net", "status", "any", "net.session", "The online session: state, this player's id, the room code and the other players."},
+    {"net.send", "net", "send", "any", "net.session", "Send text (at most 16 KiB) to one player, by id, or to all the others."},
+    {"net.receive", "net", "receive", "any", "net.session", "Take what came: connected, joined, left, message and closed events, oldest first."},
     {"world.dungeon_npc_clear", "world", "dungeon_npc_clear", "simulation", "game.write", "Take this mod's figure off the dungeon floor."},
     {"ui.run_menu_set", "ui", "run_menu_set", "simulation", "game.write", "Set this mod's Chronicle run menu: tabs of rows, opened from Start in a dungeon in place of the pause."},
     {"ui.run_menu_clear", "ui", "run_menu_clear", "simulation", "game.write", "Take back this mod's run menu; Start pauses as retail does again."},
@@ -443,9 +449,9 @@ constexpr EventSpec kEventCatalog[] = {
     {"skills.unlocked", "skills", "both", "A skill's rank first became positive."},
 };
 
-constexpr std::array<std::string_view, 8> kKnownPermissions = {
+constexpr std::array<std::string_view, 9> kKnownPermissions = {
     "storage.read", "storage.write", "game.read", "game.write", "content.register", "scripts.override",
-    "debug.inspect", "native.extension",
+    "debug.inspect", "native.extension", "net.session",
 };
 
 } // namespace

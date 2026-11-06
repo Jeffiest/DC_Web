@@ -17,6 +17,7 @@
 #include "itembombeffect.hpp"
 #include "moonmod/companion.hpp"
 #include "moonmod/ghost.hpp"
+#include "moonmod/net_session.hpp"
 #include "moonmod/audio_api.hpp"
 #include "moonmod/combat_formula.hpp"
 #include "moonmod/native_resource_overrides.hpp"
@@ -13200,6 +13201,115 @@ ApiCallResult EndSandboxSessionApi(std::string_view mod_id, const Json &args) {
     return {ApiCallStatus::Ok, {{"queued", true}, {"mode", session->mode_id}}, {}};
 }
 
+// net.*: one online session for the game, owned by the mod that opened it (moonmod/net_session.hpp).
+Json NetStatusJson() {
+    moonmod::net::Session &session = moonmod::net::Shared();
+    Json peers = Json::array();
+    for (const moonmod::net::Peer &peer : session.peers()) peers.push_back({{"id", peer.id}, {"name", peer.name}});
+    Json out = {{"state", std::string(moonmod::net::StateName(session.state()))}, {"available", session.available()},
+                {"peers", std::move(peers)}};
+    if (session.id() >= 0) out["id"] = session.id();
+    if (!session.code().empty()) out["code"] = session.code();
+    if (!session.owner().empty()) out["owner"] = session.owner();
+    return out;
+}
+
+ApiCallResult NetCall(std::string_view mod_id, const ApiOperationSpec &operation, const Json &args) {
+    moonmod::net::Session &session = moonmod::net::Shared();
+    const bool            no_args = args.is_array() && (args.empty() || (args.size() == 1 && args[0].is_object() && args[0].empty()));
+    const Json            empty = Json::object();
+    const Json           &request = args.is_array() && args.size() == 1 && args[0].is_object() ? args[0] : empty;
+    if (!args.is_array() || args.size() > 1 || (args.size() == 1 && !args[0].is_object())) return Invalid("expected one table, or none");
+    const auto text_of = [&request](const char *key) {
+        return request.contains(key) && request[key].is_string() ? request[key].get<std::string>() : std::string();
+    };
+    if (operation.path == "net.status") {
+        if (!no_args) return Invalid("net.status takes no arguments");
+        session.Pump();
+        return {ApiCallStatus::Ok, NetStatusJson(), {}};
+    }
+    const bool mine = session.owner() == mod_id;
+    if (!session.owner().empty() && !mine) return Failed("another mod's online session is open (" + session.owner() + ")");
+    if (operation.path == "net.host" || operation.path == "net.join") {
+        for (auto field = request.begin(); field != request.end(); ++field) {
+            const std::string &key = field.key();
+            if (key != "name" && key != "relay" && key != "version" && key != "code") return Invalid("unknown field: " + key);
+        }
+        const bool  join = operation.path == "net.join";
+        std::string code = text_of("code");
+        if (join) {
+            std::ranges::transform(code, code.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (code.size() != 5 || !std::ranges::all_of(code, [](unsigned char c) { return std::isalnum(c) != 0; })) {
+                return Invalid("code must be the room's five letters and digits");
+            }
+        } else if (request.contains("code")) {
+            return Invalid("net.host takes no code: the relay gives the room one");
+        }
+        if (!request.contains("version") || !request["version"].is_number_integer() || request["version"].get<int>() < 1 ||
+            request["version"].get<int>() > 9999) {
+            return Invalid("version must be the mod's message protocol number, 1-9999: players on other numbers can't join");
+        }
+        std::string name = text_of("name");
+        if (name.size() > 24 || !moonmod::net::ValidUtf8(name)) return Invalid("name must be text of at most 24 bytes");
+        const std::string relay = moonmod::net::RelayAddress(text_of("relay"));
+        std::string       error;
+        if (!session.Start(mod_id, relay, join ? code : std::string(), name, "chronicle", request["version"].get<int>(), error)) {
+            return session.available() ? Failed(error) : ApiCallResult{ApiCallStatus::Unsupported, {}, error};
+        }
+        return {ApiCallStatus::Ok, NetStatusJson(), {}};
+    }
+    if (operation.path == "net.leave") {
+        if (!no_args) return Invalid("net.leave takes no arguments");
+        const bool was_open = session.state() != moonmod::net::State::Idle;
+        if (mine) session.Leave();
+        return {ApiCallStatus::Ok, {{"left", was_open && mine}}, {}};
+    }
+    if (operation.path == "net.send") {
+        for (auto field = request.begin(); field != request.end(); ++field) {
+            if (field.key() != "to" && field.key() != "data") return Invalid("unknown field: " + field.key());
+        }
+        if (!request.contains("data") || !request["data"].is_string()) return Invalid("data must be text");
+        int to = -1;
+        if (request.contains("to") && request["to"].is_string() && request["to"].get<std::string>() == "all") {
+            to = moonmod::net::kBroadcast;
+        } else if (request.contains("to") && request["to"].is_number_integer()) {
+            to = request["to"].get<int>();
+        } else {
+            return Invalid("to must be a player's id or \"all\"");
+        }
+        if (!mine) return Failed("not in an online session");
+        std::string error;
+        if (!session.Send(to, request["data"].get_ref<const std::string &>(), error)) return Failed(error);
+        return {ApiCallStatus::Ok, {{"sent", true}}, {}};
+    }
+    if (operation.path == "net.receive") {
+        for (auto field = request.begin(); field != request.end(); ++field) {
+            if (field.key() != "max") return Invalid("unknown field: " + field.key());
+        }
+        std::size_t max = 256;
+        if (request.contains("max")) {
+            if (!request["max"].is_number_integer() || request["max"].get<int>() < 1 || request["max"].get<int>() > 1024) {
+                return Invalid("max must be 1-1024");
+            }
+            max = static_cast<std::size_t>(request["max"].get<int>());
+        }
+        Json events = Json::array();
+        if (mine) {
+            for (moonmod::net::Event &event : session.Receive(max)) {
+                Json entry = {{"kind", event.kind}};
+                if (event.peer >= 0) entry["peer"] = event.peer;
+                if (event.kind == "message") entry["data"] = std::move(event.data);
+                if (event.kind == "connected") entry["code"] = std::move(event.data);
+                if (event.kind == "closed") entry["reason"] = std::move(event.data);
+                if (!event.name.empty()) entry["name"] = std::move(event.name);
+                events.push_back(std::move(entry));
+            }
+        }
+        return {ApiCallStatus::Ok, {{"events", std::move(events)}}, {}};
+    }
+    return Invalid("unknown net operation");
+}
+
 ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_root,
                    const ApiOperationSpec &operation, const Json &args) {
     if (operation.path == "save.slot_id") {
@@ -13351,6 +13461,9 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         if (!dc::game::MoonModNpcSet(std::string(mod_id), id, model, place == "exit" ? 0 : 1)) return Failed("another mod has a figure on this floor");
         return {ApiCallStatus::Ok, {{"id", id}}, {}};
     }
+    // net.*: online play through the co-op relay (moonmod/net_session.hpp). One session at a time, owned by the mod that
+    // opened it; the others may read net.status but not use the session.
+    if (operation.path.starts_with("net.")) return NetCall(mod_id, operation, args);
     // messages.*: notes players leave for each other through the messages folder (moonmod/messages_moonmod.hpp). The
     // folder is the player's choice, never a mod's: no call takes a path.
     if (operation.path.starts_with("messages.")) {
@@ -16487,6 +16600,12 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     for (const char *path : {"messages.post", "messages.list", "messages.rate", "messages.remove"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
+    {
+        const bool online = moonmod::net::Shared().available();
+        for (const char *path : {"net.host", "net.join", "net.leave", "net.status", "net.send", "net.receive"}) {
+            config.api_capabilities.push_back({path, online, online ? std::string() : "this build has no network socket (no libcurl was found)"});
+        }
+    }
     config.api_capabilities.push_back({"characters.register_playable", true, {}});
     config.api_capabilities.push_back({"render.camera_get", true, {}});
     config.api_capabilities.push_back({"render.camera_set", true, {}});
@@ -16543,6 +16662,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_owner_unloaded = [](std::string_view mod_id) {
+        if (moonmod::net::Shared().owner() == mod_id) moonmod::net::Shared().Leave("the mod left");
         const std::string prefix = std::string(mod_id) + ":";
         InputUnbindModActionsByPrefix(prefix);
         g_input_contexts.UnloadOwner(mod_id);

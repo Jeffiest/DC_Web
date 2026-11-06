@@ -220,6 +220,24 @@ elseif(EMSCRIPTEN)
 endif()
 target_link_libraries(dc_port PRIVATE dc_options SDL3::SDL3 Vulkan::Vulkan nlohmann_json::nlohmann_json fastgltf::fastgltf kz_port_headers)
 target_link_libraries(dc_port PRIVATE moonmod_lua ${CMAKE_DL_LIBS})
+# Online play's socket (moonmod/net_session.hpp, coop/relay): the browser's WebSocket on the web (web.cmake links
+# Emscripten's), WinHTTP on Windows, libcurl's TLS connection on Linux and macOS where it is found. Without one,
+# net.* reports itself unsupported. DC_COOP_RELAY_DEFAULT is the relay a mod's net.host/join use unless it names one.
+set(DC_COOP_RELAY_DEFAULT "" CACHE STRING "The co-op relay (wss://...) online play uses by default")
+target_compile_definitions(dc_port PRIVATE DC_COOP_RELAY_DEFAULT="${DC_COOP_RELAY_DEFAULT}")
+set(DC_NET_LIBS)
+if(WIN32)
+    set(DC_NET_LIBS winhttp)
+elseif(NOT EMSCRIPTEN AND NOT NINTENDO_SWITCH AND NOT ANDROID)
+    find_package(CURL QUIET)
+    if(CURL_FOUND)
+        target_compile_definitions(dc_port PRIVATE DC_HAVE_CURL)
+        target_link_libraries(dc_port PRIVATE CURL::libcurl)
+        set(DC_NET_LIBS CURL::libcurl)
+    else()
+        message(STATUS "libcurl not found: this build has no online play")
+    endif()
+endif()
 # port/src, the generated headers, dcdata's header-only core and the stb directories: captionfont.cpp
 # rasterizes with stb_truetype and platform/png_image.cpp decodes with stb_image, which Kazarov stages
 # (or fetches) for dc_host.
@@ -268,7 +286,7 @@ endif()
 function(dc_link_game target)
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:dc_port> $<TARGET_OBJECTS:dc_ps2>)
     target_link_libraries(${target} PRIVATE dc_options dc_host kz_port_headers SDL3::SDL3 Vulkan::Vulkan fastgltf::fastgltf
-        nlohmann_json::nlohmann_json moonmod_lua ${CMAKE_DL_LIBS})
+        nlohmann_json::nlohmann_json moonmod_lua ${DC_NET_LIBS} ${CMAKE_DL_LIBS})
     target_include_directories(${target} PRIVATE ${PORT_DIR} ${CMAKE_SOURCE_DIR}/tools/dcdata)
     target_compile_options(${target} PRIVATE -Wall -Wno-mismatched-tags -Wno-unused-label
         -Wno-overloaded-virtual -Wno-unused-function)

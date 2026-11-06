@@ -18,6 +18,8 @@ finish-args:
   - --socket=pulseaudio
   # hidraw, for the 2026 Steam Controller.
   - --device=all
+  # Online play, through the co-op relay (coop/relay).
+  - --share=network
   # Discord Rich Presence.
   - --filesystem=xdg-run/discord-ipc-0
   - --filesystem=xdg-run/app/com.discordapp.Discord:create

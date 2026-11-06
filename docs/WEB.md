@@ -91,6 +91,10 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
   stay); a built-in mod the player removes stays removed until "Restore the built-in mods", and one they add
   themselves is theirs and left alone. `moonmod-mods.yml` moves the pin to MoonMod's main each hour its `mods/`
   folder has changed, and builds the page; a pin set by hand works too.
+- **Online play** (`net.*`, `coop/relay`): the browser's WebSocket (Emscripten's `websocket.h`, `-lwebsocket.js`,
+  `port/src/moonmod/net_transport_web.cpp`) to the co-op relay. The socket lives on the page's main thread and queues
+  frames for the game's thread. The relay is a Cloudflare Worker (`coop/relay/README.md`), deployed by
+  `coop-relay.yml`; PC builds reach the same relay, so web and PC players share rooms.
 - **Play on your PC.** The page offers the game for the player's own computer: the newest `build-<commit>`
   release with a file for the system they pick (found through GitHub's API; its releases page if that can't be
   asked), and the built-in mods for it, all in `mods/builtin/darkcloud-mods.zip` or each on its own. `builds.yml`

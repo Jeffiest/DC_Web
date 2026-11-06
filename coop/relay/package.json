@@ -1,0 +1,15 @@
+{
+  "name": "chronicle-coop-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "test": "node test/relay.test.mjs",
+    "deploy": "wrangler deploy",
+    "test:native": "sh test/native.sh"
+  },
+  "devDependencies": {
+    "wrangler": "4.158.0",
+    "ws": "8.18.3"
+  }
+}
