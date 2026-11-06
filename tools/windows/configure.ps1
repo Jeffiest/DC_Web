@@ -1,5 +1,5 @@
 param([string]$Root, [string]$BuildDirectory, [switch]$Tests, [string]$BuildType = 'Debug',
-      [string]$VulkanLibrary = "$env:SystemRoot/System32/vulkan-1.dll")
+      [string]$VulkanLibrary = "$env:SystemRoot/System32/vulkan-1.dll", [int]$TestTimeout = 0)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/common.ps1"
 $root = (Resolve-WindowsRoot $Root).Replace('\', '/')
@@ -17,6 +17,8 @@ if (!(Test-Path -LiteralPath "$rust/rustc.exe") -or !(Test-Path -LiteralPath "$r
 $env:CARGO_HOME = "$root/deps/rust/cargo-home"
 $env:PATH = "$rust;$llvm;$env:PATH"
 $testOption = if ($Tests) { 'ON' } else { 'OFF' }
+# Seconds a test case may run (DC_TEST_TIMEOUT); 0 keeps port/src/tests/CMakeLists.txt's default.
+$timeoutOption = if ($TestTimeout -gt 0) { @("-DDC_TEST_TIMEOUT=$TestTimeout") } else { @() }
 & $cmake -S $source -B $build -G Ninja `
     -DPLATFORM=PC "-DCMAKE_BUILD_TYPE=$BuildType" "-DDC_BUILD_TESTS=$testOption" `
     "-DCMAKE_CXX_COMPILER=$llvm/clang++.exe" "-DCMAKE_RC_COMPILER=$llvm/windres.exe" `
@@ -28,5 +30,5 @@ $testOption = if ($Tests) { 'ON' } else { 'OFF' }
     "-DGLSLANG_VALIDATOR=$root/deps/glslang/bin/glslang.exe" `
     "-DRust_COMPILER=$rust/rustc.exe" "-DRust_CARGO=$rust/cargo.exe" `
     "-DRust_CARGO_TARGET=x86_64-pc-windows-gnullvm" "-DINSTALLED_CXXBRIDGE=$rust/cxxbridge.exe" `
-    "-DFETCHCONTENT_SOURCE_DIR_CORROSION=$corrosion"
+    "-DFETCHCONTENT_SOURCE_DIR_CORROSION=$corrosion" @timeoutOption
 exit $LASTEXITCODE

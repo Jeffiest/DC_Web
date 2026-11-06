@@ -110,7 +110,7 @@ jobs:
       - name: Configure
         run: |
           ./tools/windows/configure.ps1 -Root $env:RUNNER_TEMP -BuildDirectory $env:GITHUB_WORKSPACE/port/build/windows -Tests `
-            -VulkanLibrary $env:VULKAN_RUNTIME/vulkan-1.dll
+            -VulkanLibrary $env:VULKAN_RUNTIME/vulkan-1.dll -TestTimeout 60
 
       # Beside the executables, the downloaded loader is found before any in System32.
       - name: Build
