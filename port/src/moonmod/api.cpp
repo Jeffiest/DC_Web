@@ -135,6 +135,10 @@ constexpr ApiOperationSpec kApiCatalog[] = {
     {"net.status", "net", "status", "any", "net.session", "The online session: state, this player's id, the room code and the other players."},
     {"net.send", "net", "send", "any", "net.session", "Send text (at most 16 KiB) to one player, by id, or to all the others."},
     {"net.receive", "net", "receive", "any", "net.session", "Take what came: connected, joined, left, message and closed events, oldest first."},
+    {"mods.list", "mods", "list", "any", "game.read", "The mods loaded this session, in load order: id, name, version, author and co-op role (required, host_only or local)."},
+    {"mods.settings_get", "mods", "settings_get", "any", "game.read", "A loaded mod's effective setting values; another mod's need mods.settings."},
+    {"mods.settings_overlay", "mods", "settings_overlay", "any", "mods.settings", "Give a loaded mod setting values for this session only (co-op: the host's): never saved, gone when the session ends."},
+    {"mods.settings_overlay_clear", "mods", "settings_overlay_clear", "any", "mods.settings", "Drop session-only setting values: one mod's, or every mod's."},
     {"world.dungeon_npc_clear", "world", "dungeon_npc_clear", "simulation", "game.write", "Take this mod's figure off the dungeon floor."},
     {"ui.run_menu_set", "ui", "run_menu_set", "simulation", "game.write", "Set this mod's Chronicle run menu: tabs of rows, opened from Start in a dungeon in place of the pause."},
     {"ui.run_menu_clear", "ui", "run_menu_clear", "simulation", "game.write", "Take back this mod's run menu; Start pauses as retail does again."},
@@ -471,9 +475,9 @@ constexpr EventSpec kEventCatalog[] = {
     {"skills.unlocked", "skills", "both", "A skill's rank first became positive."},
 };
 
-constexpr std::array<std::string_view, 9> kKnownPermissions = {
+constexpr std::array<std::string_view, 10> kKnownPermissions = {
     "storage.read", "storage.write", "game.read", "game.write", "content.register", "scripts.override",
-    "debug.inspect", "native.extension", "net.session",
+    "debug.inspect", "native.extension", "net.session", "mods.settings",
 };
 
 } // namespace
@@ -487,7 +491,8 @@ const ApiOperationSpec *FindApiOperation(std::string_view path) {
 }
 
 bool IsCoreApiOperation(std::string_view path) {
-    return path == "info.get" || path == "compat.list" || path == "compat.supports" ||
+    return path == "mods.list" || path == "mods.settings_get" || path == "mods.settings_overlay" ||
+           path == "mods.settings_overlay_clear" || path == "info.get" || path == "compat.list" || path == "compat.supports" ||
            path == "api.list" || path == "api.supports" || path == "api.call" ||
            path == "events.list" || path == "events.subscribe" || path == "events.unsubscribe" ||
            path == "save.get" || path == "save.set" ||

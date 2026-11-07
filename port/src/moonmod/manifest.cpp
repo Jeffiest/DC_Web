@@ -286,7 +286,8 @@ std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_roo
     }
     if (!RejectUnknownFields(document, {"schema_version", "id", "name", "version", "author", "description",
                                         "framework_api", "games", "entry", "dependencies", "optional_dependencies",
-                                        "load_after", "load_before", "permissions", "settings", "native_extension"}, error)) {
+                                        "load_after", "load_before", "permissions", "settings", "native_extension", "coop"},
+                            error)) {
         return std::nullopt;
     }
 
@@ -302,7 +303,15 @@ std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_roo
         !ReadString(document, "version", manifest.version, 64, true, error) ||
         !ReadString(document, "author", manifest.author, 96, false, error) ||
         !ReadString(document, "description", manifest.description, 1024, false, error) ||
-        !ReadString(document, "entry", manifest.entry, 128, true, error)) {
+        !ReadString(document, "entry", manifest.entry, 128, true, error) ||
+        !ReadString(document, "coop", manifest.coop, 16, false, error)) {
+        return std::nullopt;
+    }
+    // Online co-op: "required" (the default) every player has the mod at the host's version and the host's settings;
+    // "host_only" only the host needs it; "local" each player's own, never asked for.
+    if (manifest.coop.empty()) manifest.coop = "required";
+    if (manifest.coop != "required" && manifest.coop != "host_only" && manifest.coop != "local") {
+        error = "coop must be required, host_only, or local";
         return std::nullopt;
     }
     if (!IsValidModId(manifest.id)) {

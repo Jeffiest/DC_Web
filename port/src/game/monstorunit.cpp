@@ -1274,7 +1274,8 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
         }
     }
 
-    if (monster[current_monster].invincible_timer > 0) {
+    // MoonMod: entities.set_stats vulnerable lands blows through the monster's script invincibility
+    if (monster[current_monster].invincible_timer > 0 && !moonmod::ChronicleMonsterVulnerable(this, current_monster)) {
         return result;
     }
 
@@ -1612,6 +1613,8 @@ MonsterDamageResult CMonstorUnit::CheckDmg() {
                         if (moonmod::ChronicleMonsterHitShare(this, index)) {
                             for (int c = 0; c < 6; ++c) multiplier = std::max(multiplier, effect[index].parameter[i][c]);
                         }
+                        // MoonMod: entities.set_stats vulnerable (a sphere no hero hurts takes the blow whole)
+                        if (multiplier <= 0 && moonmod::ChronicleMonsterVulnerable(this, index)) multiplier = 100;
                         auto  damage_scale = static_cast<float>(multiplier);
                         damage = damage / 100.0f * damage_scale;
 

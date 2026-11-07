@@ -1133,7 +1133,9 @@ local core = {
   ["debug.profile"] = true,
   ["ui.navigate"] = true,
   ["ui.open_skills"] = true,
-  ["ui.sheet_set"] = true, ["ui.sheet_clear"] = true, ["ui.sheet_open"] = true
+  ["ui.sheet_set"] = true, ["ui.sheet_clear"] = true, ["ui.sheet_open"] = true,
+  ["mods.list"] = true, ["mods.settings_get"] = true, ["mods.settings_overlay"] = true,
+  ["mods.settings_overlay_clear"] = true
 }
 local dispatched = 0
 for _, operation in ipairs(catalog) do

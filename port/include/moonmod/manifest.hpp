@@ -45,6 +45,7 @@ struct ModManifest {
     std::string author;
     std::string description;
     std::string entry;
+    std::string coop = "required"; // online co-op: required, host_only, or local
     int         schema_version = 1;
     int         framework_api = 1;
     std::vector<std::string> games;

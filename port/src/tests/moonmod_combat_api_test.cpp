@@ -8,6 +8,7 @@
 #include "monstorunit.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/combat_formula.hpp"
+#include "moonmod/game_hooks.hpp"
 #include "savedata.hpp"
 
 namespace dc::game {}
@@ -247,6 +248,27 @@ TEST(MoonModCombatApi, AppliesGenerationCheckedDamageAndQueuesNativeHitOrDeathEv
     ASSERT_EQ(blocked.status, moonmod::ApiCallStatus::Ok) << blocked.message;
     EXPECT_TRUE(blocked.value.at("blocked").get<bool>());
     EXPECT_EQ(unit->monster[0].hp, 25);
+
+    // entities.set_stats vulnerable: the script's invincibility (MUTEKI) no longer turns the blow away
+    const moonmod::ApiOperationSpec *stats_operation = moonmod::FindApiOperation("entities.set_stats");
+    ASSERT_NE(stats_operation, nullptr);
+    EXPECT_FALSE(moonmod::ChronicleMonsterVulnerable(unit.get(), 0));
+    EXPECT_EQ(config.api_handler("test.moonmod.combat-probe", *stats_operation,
+                                 moonmod::Json::array({moonmod::Json{{"entity", handle}, {"vulnerable", 1}}})).status,
+              moonmod::ApiCallStatus::InvalidArgument);
+    const moonmod::ApiCallResult made_vulnerable = config.api_handler(
+        "test.moonmod.combat-probe", *stats_operation,
+        moonmod::Json::array({moonmod::Json{{"entity", handle}, {"vulnerable", true}}}));
+    ASSERT_EQ(made_vulnerable.status, moonmod::ApiCallStatus::Ok) << made_vulnerable.message;
+    EXPECT_TRUE(made_vulnerable.value.at("current").at("vulnerable").get<bool>());
+    EXPECT_TRUE(moonmod::ChronicleMonsterVulnerable(unit.get(), 0));
+    const moonmod::ApiCallResult landed = config.api_handler(
+        "test.moonmod.combat-probe", *damage_operation,
+        moonmod::Json::array({moonmod::Json{{"entity", handle}, {"amount", 5}}}));
+    ASSERT_EQ(landed.status, moonmod::ApiCallStatus::Ok) << landed.message;
+    EXPECT_FALSE(landed.value.at("blocked").get<bool>());
+    EXPECT_EQ(unit->monster[0].hp, 20);
+    unit->monster[0].hp = 25;
     unit->monster[0].invincible_timer = 0;
 
     const moonmod::ApiCallResult healed = config.api_handler(
@@ -258,12 +280,16 @@ TEST(MoonModCombatApi, AppliesGenerationCheckedDamageAndQueuesNativeHitOrDeathEv
     EXPECT_EQ(healed.value.at("restored"), 35);
 
     moonmod::ChronicleMonsterActorCreated(unit.get(), 0);
+    EXPECT_FALSE(moonmod::ChronicleMonsterVulnerable(unit.get(), 0)); // a new actor in the slot starts without it
     unit->monster[0].hp = 6;
     unit->alive_count = 1;
     const moonmod::ApiCallResult refreshed = config.api_handler(
         "test.moonmod.combat-probe", *combat_operation, moonmod::Json::array());
     ASSERT_EQ(refreshed.status, moonmod::ApiCallStatus::Ok) << refreshed.message;
     const std::string fresh_handle = refreshed.value.at("enemies")[0].at("entity_id").get<std::string>();
+    ASSERT_EQ(config.api_handler("test.moonmod.combat-probe", *stats_operation,
+                                 moonmod::Json::array({moonmod::Json{{"entity", fresh_handle}, {"vulnerable", true}}})).status,
+              moonmod::ApiCallStatus::Ok);
     const moonmod::ApiCallResult stale = config.api_handler(
         "test.moonmod.combat-probe", *damage_operation,
         moonmod::Json::array({moonmod::Json{{"entity", handle}, {"amount", 2}}}));
@@ -286,7 +312,10 @@ TEST(MoonModCombatApi, AppliesGenerationCheckedDamageAndQueuesNativeHitOrDeathEv
         "test.moonmod.combat-probe", *heal_operation,
         moonmod::Json::array({moonmod::Json{{"entity", handle}, {"amount", 5}}}));
     EXPECT_EQ(stale_heal.status, moonmod::ApiCallStatus::Failed);
+    EXPECT_TRUE(moonmod::ChronicleMonsterVulnerable(unit.get(), 0));
     moonmod::ChronicleMonstersCleared(unit.get());
+    // a floor change clears it, so no later monster in the slot inherits it
+    EXPECT_FALSE(moonmod::ChronicleMonsterVulnerable(unit.get(), 0));
     moonmod::ResetChronicleCharactersForTests();
 }
 

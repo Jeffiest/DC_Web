@@ -2246,6 +2246,40 @@ struct LuaMod::Impl {
     }
 
 
+    // mods.*: what this session loaded, and other mods' settings (co-op's required mods and the host's values).
+    ApiCallResult ModsApi(std::string_view path, const Json &arguments) {
+        const Json none = Json::object();
+        if (!arguments.is_array() || arguments.size() > 1 || (arguments.size() == 1 && !arguments[0].is_object())) {
+            return {ApiCallStatus::InvalidArgument, nullptr, std::string(path) + " takes one table or nothing"};
+        }
+        const Json &args = arguments.empty() ? none : arguments[0];
+        if (!config.mods_handler) return {ApiCallStatus::Unsupported, nullptr, "this runtime lists no mods"};
+        if (path == "mods.list") return config.mods_handler(path, {}, none);
+        const auto id_field = args.find("id");
+        const bool has_id = id_field != args.end();
+        if (has_id && (!id_field->is_string() || !IsValidModId(id_field->get_ref<const std::string &>()))) {
+            return {ApiCallStatus::InvalidArgument, nullptr, "id must be a mod id"};
+        }
+        const std::string id = has_id ? id_field->get<std::string>() : std::string();
+        if (path == "mods.settings_get") {
+            const std::string target = id.empty() ? manifest.id : id;
+            if (target != manifest.id && !HasPermission(manifest, "mods.settings")) {
+                return {ApiCallStatus::PermissionDenied, nullptr, "manifest permission is required: mods.settings"};
+            }
+            return config.mods_handler(path, target, none);
+        }
+        if (path == "mods.settings_overlay") {
+            if (id.empty()) return {ApiCallStatus::InvalidArgument, nullptr, "settings_overlay needs the mod's id"};
+            const auto values = args.find("values");
+            if (values == args.end()) return {ApiCallStatus::InvalidArgument, nullptr, "settings_overlay needs values"};
+            return config.mods_handler(path, id, *values);
+        }
+        if (path == "mods.settings_overlay_clear") {
+            return config.mods_handler(path, id, none);
+        }
+        return {ApiCallStatus::Unsupported, nullptr, "unknown API operation"};
+    }
+
     ApiCallResult InvokeApi(std::string_view path, const Json &arguments) {
         const ApiOperationSpec *operation = FindApiOperation(path);
         if (operation == nullptr) {
@@ -2269,6 +2303,7 @@ struct LuaMod::Impl {
                                {"day", static_cast<unsigned>(today.day())}}}},
                     {}};
         }
+        if (path.starts_with("mods.")) return ModsApi(path, arguments);
         if (path == "events.list") {
             if (!arguments.is_array() || !arguments.empty()) {
                 return {ApiCallStatus::InvalidArgument, nullptr, "events.list does not accept arguments"};

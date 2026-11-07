@@ -271,6 +271,9 @@ int   ChronicleMonsterHitDamage(int damage, int owner, int monster_no);
 float ChronicleMonsterHitReach(CMonstorUnit *unit, int slot);
 // entities.set_stats hit_share: each body sphere of the monster in `slot` takes its best character's share of a blow.
 bool  ChronicleMonsterHitShare(CMonstorUnit *unit, int slot);
+// entities.set_stats vulnerable: blows land on the monster in `slot` through its own script's invincibility (MUTEKI),
+// and a body sphere no hero's blow hurts takes them whole.
+bool  ChronicleMonsterVulnerable(CMonstorUnit *unit, int slot);
 void  ChronicleMonstersCleared(CMonstorUnit *unit);
 void  QueueChronicleMonsterDamageResult(CMonstorUnit *unit, int slot, int result);
 int   TakeChronicleMonsterDamageResult(CMonstorUnit *unit, int slot);

@@ -73,6 +73,8 @@ struct RuntimeConfig {
     ScriptFunctionCallHandler script_function_handler;
     ScriptFunctionListHandler script_function_list_handler;
     ScriptHookOriginalCallHandler script_hook_original_call_handler;
+    // mods.* (the runtime sets it): path, the target mod's id (empty: every mod, for an overlay clear), its values.
+    std::function<ApiCallResult(std::string_view path, std::string_view mod_id, const Json &values)> mods_handler;
     std::function<std::string(std::string_view mod_id, const Json &arguments)> api_resource_override_removal_guard;
     std::function<void(std::string_view mod_id)> api_owner_unloaded;
     std::function<void(std::string_view level, std::string_view mod_id, std::string_view message)> log;
@@ -104,6 +106,12 @@ public:
     bool                      SetEnabled(std::string_view id, bool enabled, std::string &error);
     bool                      SetNativeTrusted(std::string_view id, bool trusted, std::string &error);
     Json                      Setting(std::string_view mod_id, std::string_view setting_id) const;
+    // mods.*: the loaded mods (id, name, version, author, coop role), a mod's effective settings, and session-only
+    // setting values (co-op's, the host's) that are never saved and end with the session.
+    Json                      ModList() const;
+    ApiCallResult             ModSettings(std::string_view mod_id) const;
+    ApiCallResult             OverlayModSettings(std::string_view mod_id, const Json &values);
+    void                      ClearModSettingsOverlay(std::string_view mod_id);
     ApiCallResult              Quests(std::string_view mod_id) const;
     ApiCallResult              Skills(std::string_view mod_id) const;
     Json                        CombatDamageBonuses() const;

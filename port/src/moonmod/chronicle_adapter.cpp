@@ -756,6 +756,9 @@ std::array<float, MONSTOR_SLOT_MAX> g_monster_hit_reach{};
 // entities.set_stats hit_share: each body sphere takes from every character the share of a blow it takes from the
 // character it suits best (a story boss hurt only by the hero the story brought, met by any party). Reset as above.
 std::array<bool, MONSTOR_SLOT_MAX> g_monster_hit_share{};
+// entities.set_stats vulnerable: hits land through the monster's script invincibility (a roaming boss part that its
+// own fight keeps invincible). A new actor in the slot, or a new floor, clears it.
+std::array<bool, MONSTOR_SLOT_MAX> g_monster_vulnerable{};
 std::array<int, MONSTOR_MODEL_MAX> g_loaded_monster_model_ids = [] {
     std::array<int, MONSTOR_MODEL_MAX> ids{};
     ids.fill(-1);
@@ -4615,14 +4618,14 @@ ApiCallResult GetEntity(const Json &args) {
 ApiCallResult SetEntityStats(const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !args[0].contains("entity")) {
         return Invalid("expected {entity = generation_checked_handle, hp?, max_hp?, defense?, reward_exp?, reward_money?, drop_item?, "
-                       "damage_scale?, hit_reach?, hit_share?}");
+                       "damage_scale?, hit_reach?, hit_share?, vulnerable?}");
     }
     const Json &request = args[0];
     for (auto field = request.begin(); field != request.end(); ++field) {
         if (field.key() != "entity" && field.key() != "hp" && field.key() != "max_hp" &&
             field.key() != "defense" && field.key() != "reward_exp" && field.key() != "reward_money" &&
             field.key() != "drop_item" && field.key() != "damage_scale" && field.key() != "hit_reach" &&
-            field.key() != "hit_share") {
+            field.key() != "hit_share" && field.key() != "vulnerable") {
             return Invalid("entities.set_stats contains an unsupported field");
         }
     }
@@ -4661,6 +4664,9 @@ ApiCallResult SetEntityStats(const Json &args) {
     const bool set_hit_share = request.contains("hit_share");
     if (set_hit_share && !request["hit_share"].is_boolean()) return Invalid("hit_share must be true or false");
     const bool requested_hit_share = set_hit_share && request["hit_share"].get<bool>();
+    const bool set_vulnerable = request.contains("vulnerable");
+    if (set_vulnerable && !request["vulnerable"].is_boolean()) return Invalid("vulnerable must be true or false");
+    const bool requested_vulnerable = set_vulnerable && request["vulnerable"].get<bool>();
     int requested_hp = 0, requested_max_hp = 0, requested_defense = 0;
     int requested_exp = 0, requested_money = 0;
     int requested_drop = -1;
@@ -4704,6 +4710,7 @@ ApiCallResult SetEntityStats(const Json &args) {
     const float damage_scale_before = g_monster_damage_scales[slot];
     const float hit_reach_before = g_monster_hit_reach[slot];
     const bool hit_share_before = g_monster_hit_share[slot];
+    const bool vulnerable_before = g_monster_vulnerable[slot];
     const int final_max_hp = set_max_hp ? requested_max_hp : monster.max_hp;
     if (set_hp && requested_hp > final_max_hp) return Invalid("hp cannot exceed the enemy's resulting max_hp");
     int final_hp = monster.hp;
@@ -4723,20 +4730,22 @@ ApiCallResult SetEntityStats(const Json &args) {
     if (set_damage_scale) g_monster_damage_scales[slot] = requested_damage_scale;
     if (set_hit_reach) g_monster_hit_reach[slot] = requested_hit_reach;
     if (set_hit_share) g_monster_hit_share[slot] = requested_hit_share;
+    if (set_vulnerable) g_monster_vulnerable[slot] = requested_vulnerable;
     const bool changed = hp_before != monster.hp || max_hp_before != monster.max_hp ||
                          defense_before != monster.defense || exp_before != monster.exp || money_before != monster.money ||
                          drop_before != monster.drop_item || damage_scale_before != g_monster_damage_scales[slot] ||
-                         hit_reach_before != g_monster_hit_reach[slot] || hit_share_before != g_monster_hit_share[slot];
+                         hit_reach_before != g_monster_hit_reach[slot] || hit_share_before != g_monster_hit_share[slot] ||
+                         vulnerable_before != g_monster_vulnerable[slot];
     return {ApiCallStatus::Ok,
             {{"entity", handle}, {"changed", changed},
              {"previous", {{"hp", hp_before}, {"max_hp", max_hp_before}, {"defense", defense_before},
                            {"reward_exp", exp_before}, {"reward_money", money_before}, {"drop_item", drop_before},
                            {"damage_scale", damage_scale_before}, {"hit_reach", hit_reach_before},
-                           {"hit_share", hit_share_before}}},
+                           {"hit_share", hit_share_before}, {"vulnerable", vulnerable_before}}},
              {"current", {{"hp", monster.hp}, {"max_hp", monster.max_hp}, {"defense", monster.defense},
                            {"reward_exp", monster.exp}, {"reward_money", monster.money}, {"drop_item", monster.drop_item},
                            {"damage_scale", g_monster_damage_scales[slot]}, {"hit_reach", g_monster_hit_reach[slot]},
-                           {"hit_share", g_monster_hit_share[slot]}}}}, {}};
+                           {"hit_share", g_monster_hit_share[slot]}, {"vulnerable", g_monster_vulnerable[slot]}}}}, {}};
 }
 
 // A boss cast's shared script integers (SET_GLOBAL_INT), through a live member: what a part of the fight would have
@@ -5317,7 +5326,7 @@ ApiCallResult DamageCombatEnemy(const Json &args) {
     if (monster.state != 2 || monster.hp <= 0 || monster.max_hp <= 0 || monster.hp > monster.max_hp) {
         return Failed("the selected entity is not a live, valid enemy");
     }
-    if (monster.invincible_timer > 0 || monster.revealed == 0) {
+    if ((monster.invincible_timer > 0 && !g_monster_vulnerable[slot]) || monster.revealed == 0) {
         return {ApiCallStatus::Ok,
                 {{"entity", handle}, {"hp_before", monster.hp}, {"hp_after", monster.hp},
                  {"damage", 0}, {"changed", false}, {"blocked", true}},
@@ -5574,6 +5583,7 @@ void PrepareMonsterHandleUnit(CMonstorUnit *unit) {
     g_monster_damage_scales.fill(1.0f);
     g_monster_hit_reach.fill(0.0f);
     g_monster_hit_share.fill(false);
+    g_monster_vulnerable.fill(false);
     g_loaded_monster_model_ids.fill(-1);
     for (int slot = 0; slot < static_cast<int>(g_monster_handle_generations.size()); ++slot) {
         AdvanceMonsterHandleGeneration(slot);
@@ -9414,6 +9424,8 @@ std::string g_backroom_owner, g_backroom_title, g_backroom_text;
 bool        g_backroom_stay = false;
 std::vector<std::string> g_backroom_lines;
 int         g_backroom_key = 0, g_backroom_key_count = 0, g_backroom_key_frames = 0;
+// where the taken key comes back: below (going down) or above (going back up)
+bool        g_backroom_key_below = true;
 // Set when the player chose to go down from the entrance's panel; the next frame of play starts the swap, and once
 // below the party is stood at the back floor's own way in (the entrance's script, which would place it, never runs).
 bool        g_backroom_descend = false, g_backroom_place = false;
@@ -14708,6 +14720,7 @@ void ChronicleMonsterActorCreated(dc::game::CMonstorUnit *unit, int slot) {
     g_monster_damage_scales[slot] = 1.0f;
     g_monster_hit_reach[slot] = 0.0f;
     g_monster_hit_share[slot] = false;
+    g_monster_vulnerable[slot] = false;
     g_monster_idle_generation[slot] = 0;
 }
 
@@ -14718,6 +14731,10 @@ float ChronicleMonsterHitReach(dc::game::CMonstorUnit *unit, int slot) {
 
 bool ChronicleMonsterHitShare(dc::game::CMonstorUnit *unit, int slot) {
     return unit != nullptr && unit == g_monster_handle_unit && slot >= 0 && slot < MONSTOR_SLOT_MAX && g_monster_hit_share[slot];
+}
+
+bool ChronicleMonsterVulnerable(dc::game::CMonstorUnit *unit, int slot) {
+    return unit != nullptr && unit == g_monster_handle_unit && slot >= 0 && slot < MONSTOR_SLOT_MAX && g_monster_vulnerable[slot];
 }
 
 int ChronicleMonsterHitDamage(int damage, int owner, int monster_no) {
@@ -15017,6 +15034,7 @@ void ChronicleMonstersCleared(dc::game::CMonstorUnit *unit) {
         g_loaded_monster_model_ids.fill(-1);
     }
     g_arena_slots.fill({});
+    g_monster_vulnerable.fill(false);
     for (int slot = 0; slot < static_cast<int>(g_monster_handle_generations.size()); ++slot) {
         AdvanceMonsterHandleGeneration(slot);
     }
@@ -16627,7 +16645,42 @@ bool ChronicleStoryExitAsk(const char *marker) {
     return dc::game::MoonModChoiceOpen(std::move(choice));
 }
 
+// A free back floor's stairs up: the script's key window becomes "go back up?", and the key it wants is handed over
+// (and given back once the party is above). Without it the way back read as locked.
+bool ChronicleBackroomUpAsk() {
+    if (g_backroom_owner.empty() || BtUraDongeon == 0 || NowDngMap == nullptr || BtEventInfo.item_select_result == 0 ||
+        PortItemSelectResult == nullptr || BtEventInfo.item_select_list[0] <= 0 || !NearBackroomEntrance()) {
+        return false;
+    }
+    const int key = BtEventInfo.item_select_list[0];
+    dc::game::MoonModChoice choice;
+    choice.owner = g_backroom_owner;
+    choice.id = "backroom_up";
+    choice.title = "GO BACK UP?";
+    choice.subtitle = "The stairs lead back to the floor above.";
+    choice.cancel = true;
+    choice.options.push_back({"Go up", "Back to the floor above", {{"The way down stays open.", 3}}});
+    choice.options.push_back({"Not now", "Stay down here", {{"The stairs stay open.", 3}}});
+    choice.resume_task = GAME_TASK_SCRIPT_RUN;
+    const std::string owner = g_backroom_owner;
+    choice.done = [key, owner](int index) {
+        CDngStatusData *status = CurrentStatus();
+        if (index == 0 && status != nullptr) {
+            g_backroom_key = key;
+            g_backroom_key_count = status->CheckItemGet(key);
+            g_backroom_key_frames = 1800;
+            g_backroom_key_below = false;
+            if (g_backroom_key_count <= 0) status->GetItem(key, 0);
+        }
+        PortItemSelectResult->i = index == 0 ? key : -1;
+        BtEventInfo.item_select_result = 0;
+        SharedRuntime().PublishToMod(owner, "game.dungeon.backroom", {{"entered", false}, {"left", index == 0}, {"frame", SharedRuntime().Frame()}});
+    };
+    return dc::game::MoonModChoiceOpen(std::move(choice));
+}
+
 bool ChronicleBackroomAsk() {
+    if (ChronicleBackroomUpAsk()) return true;
     if (g_backroom_owner.empty() || BtUraDongeon != 0 || NowDngMap == nullptr || BtEventInfo.item_select_result == 0 ||
         PortItemSelectResult == nullptr) {
         return false;
@@ -16667,6 +16720,7 @@ bool ChronicleBackroomAsk() {
             g_backroom_key = key;
             g_backroom_key_count = status->CheckItemGet(key);
             g_backroom_key_frames = 1800;
+            g_backroom_key_below = true;
             if (g_backroom_key_count <= 0) status->GetItem(key, 0);
         }
         PortItemSelectResult->i = index == 0 && !stay ? key : -1;
@@ -16684,8 +16738,10 @@ void RestoreBackroomKey() {
         g_backroom_key = 0;
         return;
     }
-    if (BtUraDongeon == 0) return;
-    while (status->CheckItemGet(g_backroom_key) < std::max(1, g_backroom_key_count)) {
+    if ((BtUraDongeon != 0) != g_backroom_key_below) return;
+    // going up gives back only what was held (a key handed over for the stairs alone is not kept)
+    const int want = g_backroom_key_below ? std::max(1, g_backroom_key_count) : g_backroom_key_count;
+    while (status->CheckItemGet(g_backroom_key) < want) {
         if (status->GetItem(g_backroom_key, 0) < 0) break;
     }
     g_backroom_key = 0;
@@ -16707,7 +16763,10 @@ void ChronicleCompanionStrike(int slot, int amount, int character) {
     CMonstorUnit *unit = NowMonstorUnit;
     if (unit == nullptr || slot < 0 || slot >= MONSTOR_SLOT_MAX || amount <= 0) return;
     MONSTOR &monster = unit->monster[slot];
-    if (monster.state != 2 || monster.hp <= 0 || monster.revealed == 0 || monster.invincible_timer > 0) return;
+    if (monster.state != 2 || monster.hp <= 0 || monster.revealed == 0 ||
+        (monster.invincible_timer > 0 && !ChronicleMonsterVulnerable(unit, slot))) {
+        return;
+    }
     PrepareMonsterHandleUnit(unit);
     const std::uint32_t generation = EnsureMonsterHandleGeneration(unit, slot);
     // A helper's blow, not a second hero's: 60% of its weapon's attack, less the monster's defence as a hit takes it.

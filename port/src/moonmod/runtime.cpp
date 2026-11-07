@@ -344,6 +344,9 @@ struct Runtime::Impl {
             it->second->Unload();
         }
         modules.clear();
+        // Session-only setting values die with the mods that set them (mods unload together, here).
+        setting_overlay.clear();
+        pending_setting_events.clear();
     }
 
     void Discover() {
@@ -580,38 +583,77 @@ struct Runtime::Impl {
         return found == record.manifest.settings.end() ? nullptr : &*found;
     }
 
-    Json SettingValue(const ModRecord &record, const SettingDefinition &setting) const {
-        const auto mod_settings = profile["settings"].find(record.id);
-        if (mod_settings == profile["settings"].end() || !mod_settings->is_object()) return setting.default_value;
-        const auto value = mod_settings->find(setting.id);
-        if (value == mod_settings->end()) return setting.default_value;
-        const Json &candidate = *value;
+    // A value the setting accepts, or nullptr.
+    static Json ValidSettingValue(const SettingDefinition &setting, const Json &candidate) {
         switch (setting.type) {
             case SettingType::Boolean:
-                return candidate.is_boolean() ? candidate : setting.default_value;
+                return candidate.is_boolean() ? candidate : Json(nullptr);
             case SettingType::Integer:
                 if (candidate.is_number_integer()) {
                     const double number = candidate.get<double>();
                     if (number >= setting.minimum && number <= setting.maximum) return candidate;
                 }
-                return setting.default_value;
+                return nullptr;
             case SettingType::Number:
                 if (candidate.is_number() && std::isfinite(candidate.get<double>()) &&
                     candidate.get<double>() >= setting.minimum && candidate.get<double>() <= setting.maximum) {
                     return candidate;
                 }
-                return setting.default_value;
+                return nullptr;
             case SettingType::String:
-                return candidate.is_string() && candidate.get_ref<const std::string &>().size() <= 256
-                           ? candidate
-                           : setting.default_value;
+                return candidate.is_string() && candidate.get_ref<const std::string &>().size() <= 256 ? candidate
+                                                                                                        : Json(nullptr);
             case SettingType::Choice:
                 return candidate.is_string() &&
                                std::ranges::find(setting.choices, candidate.get<std::string>()) != setting.choices.end()
                            ? candidate
-                           : setting.default_value;
+                           : Json(nullptr);
         }
-        return setting.default_value;
+        return nullptr;
+    }
+
+    Json SettingValue(const ModRecord &record, const SettingDefinition &setting) const {
+        // Another game's values for this session (co-op: the host's), never saved, come first.
+        if (const auto held = setting_overlay.find(record.id); held != setting_overlay.end()) {
+            if (const auto value = held->second.find(setting.id); value != held->second.end()) return *value;
+        }
+        const auto mod_settings = profile["settings"].find(record.id);
+        if (mod_settings == profile["settings"].end() || !mod_settings->is_object()) return setting.default_value;
+        const auto value = mod_settings->find(setting.id);
+        if (value == mod_settings->end()) return setting.default_value;
+        Json valid = ValidSettingValue(setting, *value);
+        return valid.is_null() ? setting.default_value : valid;
+    }
+
+    // Session-only setting values by mod id (mods.settings_overlay), and the settings.changed each change owes its mod.
+    std::map<std::string, Json, std::less<>> setting_overlay;
+    std::vector<std::pair<std::string, Json>> pending_setting_events;
+
+    void ClearSettingOverlay(std::string_view mod_id) {
+        for (auto it = setting_overlay.begin(); it != setting_overlay.end();) {
+            if (!mod_id.empty() && it->first != mod_id) {
+                ++it;
+                continue;
+            }
+            const std::string id = it->first;
+            const Json held = std::move(it->second);
+            it = setting_overlay.erase(it);
+            const ModRecord *record = Find(id);
+            if (record == nullptr) continue;
+            for (const auto &[setting_id, value] : held.items()) {
+                const SettingDefinition *setting = FindSetting(*record, setting_id);
+                if (setting == nullptr) continue;
+                Json now = SettingValue(*record, *setting);
+                if (now != value) pending_setting_events.push_back({id, {{"id", setting_id}, {"value", now}}});
+            }
+        }
+    }
+
+    void DrainSettingEvents() {
+        if (pending_setting_events.empty()) return;
+        auto events = std::move(pending_setting_events);
+        pending_setting_events.clear();
+        for (const auto &[mod_id, payload] : events) EmitTo(mod_id, "settings.changed", payload);
     }
 
     bool PersistSetting(const ModRecord &record, const SettingDefinition &setting, Json value, std::string &error) {
@@ -965,6 +1007,16 @@ bool Runtime::Start(RuntimeConfig config, std::string &error) {
                                                                               std::string_view hook_id) {
         return runtime->CallNativeScriptOriginal(caller_id, hook_id);
     };
+    impl_->config.mods_handler = [this](std::string_view path, std::string_view mod_id, const Json &values) {
+        if (path == "mods.list") return ApiCallResult{ApiCallStatus::Ok, {{"mods", ModList()}}, {}};
+        if (path == "mods.settings_get") return ModSettings(mod_id);
+        if (path == "mods.settings_overlay") return OverlayModSettings(mod_id, values);
+        if (path == "mods.settings_overlay_clear") {
+            ClearModSettingsOverlay(mod_id);
+            return ApiCallResult{ApiCallStatus::Ok, {{"cleared", true}}, {}};
+        }
+        return ApiCallResult{ApiCallStatus::Unsupported, nullptr, "unknown API operation"};
+    };
     impl_->frame = 0;
     impl_->observed_world_location = nullptr;
     std::string profile_error;
@@ -998,6 +1050,7 @@ void Runtime::Pump() {
     AdvanceManagerUi();
     ++impl_->frame;
     impl_->ObserveWorldLocation();
+    impl_->DrainSettingEvents();
     impl_->DrainQueuedEvents();
     impl_->Emit("game.tick", {{"frame", impl_->frame}});
 }
@@ -1005,6 +1058,8 @@ void Runtime::Pump() {
 void Runtime::Publish(std::string_view event_name, const Json &payload) {
     if (!impl_ || !impl_->running || event_name.empty()) return;
     impl_->Emit(event_name, payload);
+    // A session's borrowed settings (co-op's, the host's) end with it.
+    if (event_name == "game.session.ended" || event_name == "game.session.failed") impl_->ClearSettingOverlay({});
 }
 
 void Runtime::ObserveWorldLocationNow() {
@@ -1095,6 +1150,61 @@ bool Runtime::SetNativeTrusted(std::string_view id, bool trusted, std::string &e
     impl_->Discover();
     impl_->LoadEnabled();
     return true;
+}
+
+Json Runtime::ModList() const {
+    Json mods = Json::array();
+    if (!impl_) return mods;
+    for (const std::string &id : LoadedModOrder()) {
+        const ModRecord *record = impl_->Find(id);
+        if (record == nullptr || !record->valid_manifest) continue;
+        mods.push_back({{"id", record->id}, {"name", record->manifest.name}, {"version", record->manifest.version},
+                        {"author", record->manifest.author}, {"coop", record->manifest.coop}});
+    }
+    return mods;
+}
+
+ApiCallResult Runtime::ModSettings(std::string_view mod_id) const {
+    const ModRecord *record = impl_ ? impl_->Find(mod_id) : nullptr;
+    if (record == nullptr || !record->valid_manifest) return {ApiCallStatus::Failed, nullptr, "no such mod"};
+    Json values = Json::object();
+    for (const SettingDefinition &setting : record->manifest.settings) {
+        values[setting.id] = impl_->SettingValue(*record, setting);
+    }
+    const bool overlaid = impl_->setting_overlay.contains(record->id);
+    return {ApiCallStatus::Ok, {{"id", record->id}, {"values", std::move(values)}, {"overlaid", overlaid}}, {}};
+}
+
+ApiCallResult Runtime::OverlayModSettings(std::string_view mod_id, const Json &values) {
+    const ModRecord *record = impl_ ? impl_->Find(mod_id) : nullptr;
+    if (record == nullptr || !record->valid_manifest) return {ApiCallStatus::Failed, nullptr, "no such mod"};
+    if (!values.is_object()) {
+        return {ApiCallStatus::InvalidArgument, nullptr, "values must be a table of setting id = value"};
+    }
+    Json taken = Json::object();
+    Json refused = Json::array();
+    for (const auto &[setting_id, value] : values.items()) {
+        const SettingDefinition *setting = impl_->FindSetting(*record, setting_id);
+        Json valid = setting == nullptr ? Json(nullptr) : Impl::ValidSettingValue(*setting, value);
+        if (valid.is_null()) refused.push_back(setting_id);
+        else taken[setting_id] = std::move(valid);
+    }
+    if (taken.empty()) return {ApiCallStatus::Ok, {{"id", record->id}, {"applied", 0}, {"refused", std::move(refused)}}, {}};
+    for (const auto &[setting_id, value] : taken.items()) {
+        const SettingDefinition *setting = impl_->FindSetting(*record, setting_id);
+        const Json before = impl_->SettingValue(*record, *setting);
+        Json &held = impl_->setting_overlay[record->id];
+        if (!held.is_object()) held = Json::object();
+        held[setting_id] = value;
+        if (before != value) {
+            impl_->pending_setting_events.push_back({record->id, {{"id", setting_id}, {"value", value}}});
+        }
+    }
+    return {ApiCallStatus::Ok, {{"id", record->id}, {"applied", taken.size()}, {"refused", std::move(refused)}}, {}};
+}
+
+void Runtime::ClearModSettingsOverlay(std::string_view mod_id) {
+    if (impl_) impl_->ClearSettingOverlay(mod_id);
 }
 
 Json Runtime::Setting(std::string_view mod_id, std::string_view setting_id) const {
