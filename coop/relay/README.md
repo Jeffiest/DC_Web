@@ -7,6 +7,9 @@ messages between the players' games and keeps no game state: the host's game is 
 what the messages mean. The game reaches it through `net.*` (`port/include/moonmod/net_session.hpp`): the browser's
 WebSocket on the web, WinHTTP on Windows, libcurl's TLS connection on Linux and macOS.
 
+The public relay is at `wss://chronicle-coop-relay.jeffery-s-rose.workers.dev`, deployed by `coop-relay.yml`; the
+builds use it unless the co-op mod's Server setting names another (`DC_COOP_RELAY_DEFAULT` in `port/CMakeLists.txt`).
+
 ## Protocol (version 1 of the path)
 
     wss://<relay>/v1/host?game=chronicle&proto=<n>&name=<name>        opens a room

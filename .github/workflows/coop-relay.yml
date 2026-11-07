@@ -63,4 +63,10 @@ jobs:
 
       - name: Test the deployed relay
         if: steps.deploy.outputs.url != ''
-        run: RELAY_URL="$(echo '${{ steps.deploy.outputs.url }}' | sed 's/^https:/wss:/')" npm test
+        run: |
+          # A new workers.dev address can take a minute or two to answer after its first deploy.
+          for i in $(seq 1 24); do
+            if curl -fsS -m 10 '${{ steps.deploy.outputs.url }}' >/dev/null; then break; fi
+            echo "waiting for the relay to answer ($i)"; sleep 5
+          done
+          RELAY_URL="$(echo '${{ steps.deploy.outputs.url }}' | sed 's/^https:/wss:/')" npm test
