@@ -122,6 +122,24 @@ void Draw3DSweepVisuals() {
     });
 }
 
+void Draw3DForgetVisuals(const void *begin, const void *end) {
+    if (begin == nullptr || end <= begin) {
+        return;
+    }
+    const auto *lo = static_cast<const unsigned char *>(begin);
+    const auto *hi = static_cast<const unsigned char *>(end);
+    const auto inside = [lo, hi](auto &entry) {
+        const auto *block = static_cast<const unsigned char *>(entry.first);
+        if (block < lo || block >= hi) {
+            return false;
+        }
+        Release(*entry.second);
+        return true;
+    };
+    std::erase_if(g_visuals, inside);
+    std::erase_if(g_transient, inside);
+}
+
 void Draw3DFinishVisual(Draw3DVisual &visual) {
     const dc::platform::load_profile::Span profile(dc::platform::load_profile::Kind::Mesh);
     if (visual.immediate) {

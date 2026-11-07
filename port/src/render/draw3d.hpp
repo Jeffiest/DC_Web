@@ -301,6 +301,12 @@ Draw3DVisual &Draw3DRegisterVisual(unsigned int *block, bool transient);
 void Draw3DSweepVisuals();
 
 /**
+ * Releases every record whose block lies in [begin, end). Call it before freeing memory that held visuals (a heap
+ * arena of MoonMod's own): the sweep and lookups read a block's tag, and freed memory may be unmapped.
+ */
+void Draw3DForgetVisuals(const void *begin, const void *end);
+
+/**
  * Uploads the record's vertices and indices as a mesh, or keeps them for immediate draws.
  */
 void Draw3DFinishVisual(Draw3DVisual &visual);

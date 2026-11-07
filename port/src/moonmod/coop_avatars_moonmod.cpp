@@ -26,6 +26,7 @@
 #include "main.hpp"
 #include "mglib.hpp"
 #include "playable_chara.hpp"
+#include "render/draw3d.hpp"
 #include "texture.hpp"
 #include "ui/framework.hpp"
 #include "userstatus.hpp"
@@ -99,6 +100,14 @@ int TownMotion(int motion) {
     return motion >= 0 && motion < 11 ? kMap[motion] : motion;
 }
 
+// The renderer keeps a record for each model block it has built, keyed by the block's address, and reads the block
+// to see whether it is still there: one in an arena about to be freed must go first (freed memory may be unmapped,
+// and the next frame's sweep crashed when another player left the place).
+void ForgetArenas(Avatar &a) {
+    if (a.models) dc::render::Draw3DForgetVisuals(a.models.get(), a.models.get() + kModelBytes + 64);
+    if (a.files) dc::render::Draw3DForgetVisuals(a.files.get(), a.files.get() + kFileBytes + 64);
+}
+
 void Unload(int slot) {
     Avatar &a = g_avatars[slot];
     if (a.loaded_character < 0) return;
@@ -111,6 +120,7 @@ void Unload(int slot) {
     a.loaded_character = a.loaded_weapon = -1;
     a.motion = -1;
     a.placed = false;
+    ForgetArenas(a);
     a.files.reset();
     a.models.reset();
 }
@@ -148,6 +158,7 @@ bool Load(int slot) {
     a.body.InitializeTexAnime(a.anime, 64);
     a.body.LoadPackData2(pack, const_cast<char *>("base.cfg"), &a.arena, a.BodyBlock(slot), &a.arena, 0);
     if (a.body.frame == nullptr) {
+        ForgetArenas(a);
         a.files.reset();
         a.models.reset();
         return false;

@@ -240,4 +240,26 @@ TEST(ChroniclePresentation, MdtRemakeTracksMaterialChangesAndAlwaysUpdatesVertic
     Draw3DSweepVisuals();
 }
 
+// A heap arena of MoonMod's own (a co-op avatar's models) is freed while its blocks are still registered: forgetting
+// the range first means neither a lookup nor the sweep reads the freed blocks (it crashed when a player left town).
+TEST(ChroniclePresentation, ForgottenArenaVisualsAreNotReadAgain) {
+    auto arena = std::make_unique<unsigned int[]>(kDraw3DBlockQuads * std::size_t{4} * 2);
+    auto keep = std::make_unique<unsigned int[]>(kDraw3DBlockQuads * std::size_t{4});
+    unsigned int *first = arena.get(), *second = arena.get() + kDraw3DBlockQuads * 4;
+    Draw3DRegisterVisual(first, false);
+    Draw3DRegisterVisual(second, false);
+    Draw3DRegisterVisual(keep.get(), false);
+    ASSERT_NE(Draw3DFindVisual(first), nullptr);
+    Draw3DForgetVisuals(arena.get(), arena.get() + kDraw3DBlockQuads * 4 * 2);
+    // the tags are still there, so only the forget can have dropped them
+    EXPECT_EQ(Draw3DFindVisual(first), nullptr);
+    EXPECT_EQ(Draw3DFindVisual(second), nullptr);
+    EXPECT_NE(Draw3DFindVisual(keep.get()), nullptr);
+    arena.reset();
+    for (int i = 0; i < 32; ++i) Draw3DSweepVisuals();
+    EXPECT_NE(Draw3DFindVisual(keep.get()), nullptr);
+    keep[8] = 0;
+    Draw3DSweepVisuals();
+}
+
 } // namespace dc::test
