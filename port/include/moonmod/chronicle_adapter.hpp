@@ -161,6 +161,10 @@ void ResetChronicleSignatureForTests();
 void ChronicleTick();
 void ApplyChronicleTownCamera();
 void LoadChronicleTownCharacter();
+// Co-op: a town imported into the save while the player stands in it (georama.town_import) is newer than the town the
+// editor holds; leaving it must not write the old one back over it. Cleared when the town is loaded again.
+bool ChronicleTownSaveHeld(int map_no);
+void ChronicleTownLoaded(int map_no);
 void ApplyChronicleTownPartySwitch();
 int ChronicleTownMotionRemap(CCharacter *character, int motion_no);
 int RefreshChronicleWheelMode();

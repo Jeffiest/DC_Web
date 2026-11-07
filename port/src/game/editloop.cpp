@@ -603,7 +603,8 @@ int FadeOutToEvent(int event_no, int level) {
 void EditSave() {
     int map_no = MapNo;
 
-    if (map_no < TOWN_COUNT && map_no >= 0) {
+    // MoonMod co-op: unless another player's change to this town came in since it loaded (it is in the save already).
+    if (map_no < TOWN_COUNT && map_no >= 0 && !moonmod::ChronicleTownSaveHeld(map_no)) {
         pEditGround->Save(NowEditMap, SaveData);
         EditPartsInfo.Save(NowEditMap, SaveData);
     }
@@ -622,6 +623,7 @@ void EditLoad() {
     if (MapNo < TOWN_COUNT) {
         EditPartsInfo.Load(NowEditMap, SaveData, 0);
         pEditGround->Load(NowEditMap, SaveData);
+        moonmod::ChronicleTownLoaded(MapNo);
     }
 
     EditPartsObjectOnOff();

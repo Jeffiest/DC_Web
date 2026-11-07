@@ -17,6 +17,7 @@
 #include "dataalloc.hpp"
 #include "dataread.hpp"
 #include "dun/gameloop.hpp"
+#include "dungeon.h"
 #include "editground.hpp"
 #include "editloop.hpp"
 #include "editmapscript.hpp"
@@ -72,7 +73,8 @@ bool Editing() {
 }
 
 bool InTown() {
-    return mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT && Chara != nullptr && Chara->frame != nullptr &&
+    // a town or one of its houses (the dungeons' maps start at DUNGEON_MAP_BASE)
+    return mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < DUNGEON_MAP_BASE && Chara != nullptr && Chara->frame != nullptr &&
            (GameMode == ED_MODE_WALK || GameMode == ED_MODE_TALK || GameMode == ED_MODE_EVENT || GameMode == ED_MODE_FISHING ||
             GameMode == ED_MODE_TIME_CHANGE || GameMode == ED_MODE_DOOR_OPEN || GameMode == ED_MODE_RETURN_MENU_WALK ||
             GameMode == ED_MODE_MENU_INIT || Editing());

@@ -64,6 +64,8 @@
 #include "btmisc.hpp"
 #include "btactstatus.hpp"
 #include "battlemenu.hpp"
+#include "text/gametext.hpp"
+#include "menuetc.hpp"
 #include "savedata.hpp"
 #include "main.hpp"
 #include "mainselect.hpp"
@@ -186,6 +188,7 @@ void RefreshPlayerTuning() {
 std::vector<std::pair<std::string, int>> g_wheel_mode_requests;
 int g_town_character = CHARA_TOAN;
 int g_town_loaded_character = CHARA_TOAN;
+std::array<bool, TOWN_COUNT> g_town_save_held{}; // co-op: a town newer in the save than on screen (ChronicleTownSaveHeld)
 bool g_town_character_reload = false;
 std::vector<std::pair<std::string, int>> g_enemy_survival_requests;
 std::array<std::uint32_t, MONSTOR_SLOT_MAX> g_enemy_survival_attempted_generation{};
@@ -1618,7 +1621,7 @@ ApiCallResult GetPlayer(const Json &args) {
         CharaMain.GetRotation(rotation);
         if (std::isfinite(rotation[1])) result["heading"] = rotation[1]; // the way the player faces: (sin, cos) in (x, z)
         result["motion"] = CharaMain.motion_no; // the motion the hero plays (co-op's avatars play it on other screens)
-    } else if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT && GameMode == ED_MODE_WALK && Chara != nullptr &&
+    } else if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < DUNGEON_MAP_BASE && GameMode == ED_MODE_WALK && Chara != nullptr &&
                Chara->frame != nullptr) {
         // Walking in a town: where the town's hero is, and which one it is (party.town_set_active).
         float position[4]{}, rotation[4]{};
@@ -2824,6 +2827,7 @@ ApiCallResult GetWorld(const Json &args) {
         result["monster_bonus_percent"] = DngMonsterBonusPercent;
         result["chest_bonus_percent"] = DngChestBonusPercent;
     }
+    if (mode == GAME_MODE_EDIT && MapNo >= 0) result["map_no"] = MapNo; // the town, house or field the player is in
     if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT) {
         // A town: its map, and whether the player is in Georama's edit mode (co-op sends a town once it's left).
         result["town_map"] = MapNo;
@@ -7521,6 +7525,28 @@ ApiCallResult UpgradeWeapon(const Json &args) {
              {"synthesis_count", target->synthesis_count}, {"upgraded", true},
              {"changed", true}, {"ready", true}},
             {}};
+}
+
+// An item's name as its menus show it (the system messages, as the battle menu decodes it), or "Item n".
+std::string OwnedItemName(int item_no) {
+    std::string name;
+    if (SystemMes != nullptr) {
+        if (const COM_ITEM_INFO *info = GetCommonItemInfo(item_no); info != nullptr && info->msg > 0) {
+            short *saved = CommonMenuMes3.buff;
+            CommonMenuMes3.buff = SystemMes;
+            const short *codes = CommonMenuMes3.GetTextLineDataTop(info->msg + 0x64);
+            CommonMenuMes3.buff = saved;
+            if (codes != nullptr) name = dc::text::GameTextDecode(codes);
+        }
+    }
+    for (std::size_t at = 0; (at = name.find('{', at)) != std::string::npos;) {
+        const std::size_t end = name.find('}', at);
+        if (end == std::string::npos) break;
+        name.erase(at, end - at + 1);
+    }
+    if (const std::size_t newline = name.find('\n'); newline != std::string::npos) name.resize(newline);
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\r')) name.pop_back();
+    return name.empty() ? "Item " + std::to_string(item_no) : name;
 }
 
 ApiCallResult GiveItems(const Json &args) {
@@ -13618,6 +13644,21 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     // world.ghost_get: {character, frames = {{x, y, z, heading, motion}, ...}} oldest first, every other frame.
     // georama.town_export / town_import: one town's Georama for co-op (moonmod/coop_save.hpp). A town open in Georama's
     // edit mode isn't imported over; a town the player walks in is walked into again, so it shows what came.
+    // world.enter_map({map_no}): walk into a town or one of its houses (as world.get's map_no names it), from walking in a
+    // town or playing on a dungeon floor; co-op's way to join another player there.
+    if (operation.path == "world.enter_map") {
+        int target = -1;
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || !ReadBoundedInt(args[0], "map_no", 0, DUNGEON_MAP_BASE - 1, target)) {
+            return Invalid("expected {map_no = a town or house's map number (world.get().map_no)}");
+        }
+        const bool walking = mode == GAME_MODE_EDIT && GameMode == ED_MODE_WALK;
+        const bool playing = mode == GAME_MODE_DUNGEON && gameTask == GAME_TASK_PLAY && BtGameModeFlag == BT_GAME_MODE_PLAY;
+        if (!walking && !playing) return Failed("busy: the player isn't walking in a town or playing on a floor");
+        if (NextMapNo >= 0) return Failed("busy: a map change is already on its way");
+        if (mode == GAME_MODE_EDIT && MapNo == target) return {ApiCallStatus::Ok, {{"map_no", target}, {"queued", false}}, {}};
+        MapJump(target, -1);
+        return {ApiCallStatus::Ok, {{"map_no", target}, {"queued", true}}, {}};
+    }
     if (operation.path == "georama.town_export" || operation.path == "georama.town_import") {
         const bool importing = operation.path == "georama.town_import";
         if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(importing ? "expected {town_id = 0-4, data, base = optional}" : "expected {town_id = 0-4}");
@@ -13638,6 +13679,8 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
                     : !moonmod::coop::ImportTown(data, town, *SaveData, error)) {
             return Invalid(error);
         }
+        // The town on screen is the old one: leaving it (EditSave) must not write it back over what came.
+        if (here) g_town_save_held[town] = true;
         const bool reload = here && NextMapNo < 0;
         if (reload) MapJump(town, -1);
         return {ApiCallStatus::Ok, {{"town_id", town}, {"imported", true}, {"merged", merging}, {"reloaded", reload}}, {}};
@@ -14102,6 +14145,27 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "items.icon_set") return SetBuiltinItemIcon(mod_id, args);
     if (operation.path == "items.use") return UseItem(args);
     if (operation.path == "items.quick_slots") return GetQuickItemSlots(args);
+    // items.owned: the items the player carries (the bag and the quick slots), each with its name, as a trade lists them.
+    if (operation.path == "items.owned") {
+        if (!args.is_array() || !args.empty()) return Invalid("items.owned takes no arguments");
+        CDngStatusData *status = CurrentStatus();
+        if (status == nullptr) return Failed("the game has no active save inventory");
+        std::vector<int> seen;
+        const auto note = [&seen](int item_no) {
+            if (item_no >= ITEM_DUNGEON_START && item_no < ITEM_WEAPON_START && std::ranges::find(seen, item_no) == seen.end()) seen.push_back(item_no);
+        };
+        const int capacity = std::clamp<int>(status->item_pack.num, 0, 103);
+        for (int index = 0; index < capacity; ++index) note(status->item_pack.item[index]);
+        for (int index = 0; index < 3; ++index) note(status->item_pack.quick_item_slot[index]);
+        Json items = Json::array();
+        for (const int item_no : seen) {
+            const int count = GetNowItemNum(static_cast<short>(item_no), &status->item_pack);
+            if (count <= 0) continue;
+            items.push_back({{"id", ItemStableId(item_no)}, {"item_no", item_no}, {"count", count},
+                             {"name", OwnedItemName(item_no)}});
+        }
+        return {ApiCallStatus::Ok, {{"items", std::move(items)}}, {}};
+    }
     if (operation.path == "items.charm_slots") return GetCharmSlots(args);
     if (operation.path == "items.charm_slots_set") return SetCharmSlots(args);
     if (operation.path == "items.gear") return GetGear(args);
@@ -14197,6 +14261,11 @@ int RefreshChronicleWheelMode() {
     const int effective = requested == 0 && live_dungeon_play ? 0 : 1;
     InputSetWheelMode(effective);
     return effective;
+}
+
+bool ChronicleTownSaveHeld(int map_no) { return map_no >= 0 && map_no < TOWN_COUNT && g_town_save_held[map_no]; }
+void ChronicleTownLoaded(int map_no) {
+    if (map_no >= 0 && map_no < TOWN_COUNT) g_town_save_held[map_no] = false;
 }
 
 void LoadChronicleTownCharacter() {
@@ -17008,7 +17077,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "models.remove", "animations.register", "animations.play", "animations.stop", "debug.inspect", "debug.overlay_register",
                              "entities.get", "entities.set_stats", "entities.scale_set", "entities.script_int_set", "entities.spawn", "entities.despawn", "entities.set_active_limit", "characters.spawn",
                              "physics.query", "physics.velocity_get", "physics.velocity_set",
-                             "items.list", "items.get", "items.register", "items.give", "items.remove", "items.icon_set", "items.use", "items.quick_slots", "items.quick_slot_select", "items.quick_slot_use", "items.charm_slots", "items.charm_slots_set", "items.gear", "items.gear_give", "items.gear_stock_set", "items.gear_page_set", "items.gear_equip", "items.gear_unequip", "items.gear_remove",
+                             "items.list", "items.get", "items.register", "items.give", "items.remove", "items.icon_set", "items.use", "items.quick_slots", "items.owned", "items.quick_slot_select", "items.quick_slot_use", "items.charm_slots", "items.charm_slots_set", "items.gear", "items.gear_give", "items.gear_stock_set", "items.gear_page_set", "items.gear_equip", "items.gear_unequip", "items.gear_remove",
                              "content.list", "content.register", "content.unregister"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
@@ -17068,7 +17137,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
                              "save.player_extra_get", "save.player_extra_set",
                              "monsters.mirror_get", "monsters.puppet_set", "monsters.puppet_clear", "monsters.mirror_hit",
                              "dungeons.shared_events_get", "dungeons.shared_event_run",
-                             "georama.town_export", "georama.town_import"}) {
+                             "georama.town_export", "georama.town_import", "world.enter_map"}) {
         config.api_capabilities.push_back({path, true, {}});
     }
     config.api_resource_override_removal_guard = ChronicleModelOverrideRemovalGuard;
