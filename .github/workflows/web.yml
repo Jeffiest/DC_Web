@@ -1,5 +1,7 @@
 # The browser build (PLATFORM WEB, docs/WEB.md): Emscripten, then the build log pushed to the ci-logs
-# branch so it can be read with git alone.
+# branch so it can be read with git alone. Each game link (Asyncify and wasm-opt over the whole game) takes about
+# a quarter of an hour, so the WebGPU build (build) and the WebGL2 one (build-gl) link on runners of their own, side
+# by side, and deploy puts the site together from both.
 name: web
 
 on:
@@ -90,7 +92,7 @@ jobs:
           mkdir -p ci
           emcc --version | head -1 | tee ci/build.log
           set +e
-          cmake --preset web 2>&1 | tee -a ci/build.log
+          cmake --preset web -DDC_WEB_GL_IN_ALL=OFF 2>&1 | tee -a ci/build.log
           configure=${PIPESTATUS[0]}
           build=1
           if [ "$configure" -eq 0 ]; then
@@ -143,10 +145,7 @@ jobs:
           timeout 300 node browser_smoke.mjs http://localhost:8000/index.html /smoke-data.zip \
             "$GITHUB_WORKSPACE/ci/browser.log" --headless --offscreen --frames 30
           echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser.log"
-          # The same on WebGL2.
-          timeout 300 node browser_smoke.mjs "http://localhost:8000/index.html?renderer=gl" /smoke-data.zip \
-            "$GITHUB_WORKSPACE/ci/browser_gl.log" --headless --offscreen --frames 30
-          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser_gl.log"
+          # The WebGL2 build's run is build-gl's.
 
       # Kazarov's renderer tests against Vulkan on WebGPU and on WebGL2, built apart so their failures leave the
       # game's alone.
@@ -218,17 +217,20 @@ jobs:
           cd port/build/web
           cp -r anim mods ../../../site/
           cp index.html shell.js sw.js zip.js darkcloud.js darkcloud.wasm darkcloud.data probe.html \
-            darkcloud_gl.js darkcloud_gl.wasm darkcloud_gl.data webgpu_probe.js webgpu_probe.wasm ../../../site/
+            webgpu_probe.js webgpu_probe.wasm ../../../site/
           # The renderer tests too, for running on a device whose GPU draws wrong (gfx_tests.html).
           cp gfx_tests.html kazarov_gfx_tests.js kazarov_gfx_tests.wasm kazarov_gfx_tests_gl.js \
             kazarov_gfx_tests_gl.wasm ../../../site/ 2>/dev/null || true
           touch ../../../site/.nojekyll
 
-      - name: Upload the site for Pages
+      # The site without the WebGL2 build, which deploy adds from build-gl.
+      - name: Upload the site
         if: success() && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: site-webgpu
           path: site
+          include-hidden-files: true
 
       - name: Upload the build
         if: success()
@@ -239,9 +241,6 @@ jobs:
             port/build/web/darkcloud.js
             port/build/web/darkcloud.wasm
             port/build/web/darkcloud.data
-            port/build/web/darkcloud_gl.js
-            port/build/web/darkcloud_gl.wasm
-            port/build/web/darkcloud_gl.data
             port/build/web/index.html
             port/build/web/shell.js
             port/build/web/sw.js
@@ -251,9 +250,95 @@ jobs:
             port/build/web/lang
             port/build/web/glyphs
 
+  # The same game on WebGL2 (darkcloud_gl), which the page loads where WebGPU draws wrong or slowly: compiled from the
+  # same cache and linked here while build links the WebGPU one.
+  build-gl:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host tools
+        run: |
+          packages="ninja-build glslang-tools python3 ccache"
+          sudo apt-get install -y --no-install-recommends $packages ||
+            { sudo apt-get update && sudo apt-get install -y --no-install-recommends $packages; }
+      - name: Restore Emscripten
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ env.EMSDK_VERSION }}-${{ hashFiles('port/web/web.cmake') }}
+          restore-keys: emsdk-${{ env.EMSDK_VERSION }}-
+      - name: Install Emscripten
+        run: |
+          if [ ! -x "$HOME/emsdk/emsdk" ]; then
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          fi
+          "$HOME/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$HOME/emsdk/emsdk" activate "$EMSDK_VERSION"
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+      - name: Rust for the browser
+        run: |
+          rustup target add wasm32-unknown-emscripten
+          rustup toolchain install 1.99.0 --profile minimal --target wasm32-unknown-emscripten
+      - name: More swap for the game's link
+        run: |
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 24G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile > /dev/null
+          sudo swapon /mnt/swapfile
+      - name: Restore the compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-web-gl-${{ github.run_id }}
+          restore-keys: |
+            ccache-web-gl-
+            ccache-web-
+      - name: Configure and build darkcloud_gl
+        id: build
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          mkdir -p ci
+          set -o pipefail
+          cmake --preset web 2>&1 | tee ci/build_gl.log
+          cmake --build --preset web --target darkcloud_gl 2>&1 | tee -a ci/build_gl.log
+          ccache --show-stats || true
+      - name: Smoke run in Chromium on WebGL2
+        continue-on-error: true
+        run: |
+          set +e
+          cd port/build/web
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('smoke-data.zip', 'w') as archive:
+              archive.writestr('data/smoke.txt', 'not the game data\n')
+          PY
+          (python3 -m http.server 8000 > /dev/null 2>&1 &)
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.63.0 > /dev/null
+          npx playwright install chromium > /dev/null
+          node -e "require('playwright').chromium.launch().then((b) => b.close())" 2> /dev/null ||
+            npx playwright install-deps chromium > /dev/null
+          cp "$GITHUB_WORKSPACE/port/web/test/browser_smoke.mjs" .
+          timeout 300 node browser_smoke.mjs "http://localhost:8000/index.html?renderer=gl" /smoke-data.zip \
+            "$GITHUB_WORKSPACE/ci/browser_gl.log" --headless --offscreen --frames 30
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/ci/browser_gl.log"
+          tail -20 "$GITHUB_WORKSPACE/ci/browser_gl.log"
+      - name: Upload the WebGL2 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkcloud-web-gl
+          path: |
+            port/build/web/darkcloud_gl.js
+            port/build/web/darkcloud_gl.wasm
+            port/build/web/darkcloud_gl.data
+
   # Publishes main's build to GitHub Pages (jeffiest.github.io/DC_Web/). Pages' source must be GitHub Actions.
   deploy:
-    needs: build
+    needs: [build, build-gl]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
@@ -263,6 +348,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-webgpu
+          path: site
+      - uses: actions/download-artifact@v4
+        with:
+          name: darkcloud-web-gl
+          path: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
       - uses: actions/configure-pages@v5
         with:
           enablement: true

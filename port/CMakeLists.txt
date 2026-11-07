@@ -324,8 +324,13 @@ if(EMSCRIPTEN)
     dc_link_game(darkcloud_gl)
     dc_web_link_vulkan(darkcloud_gl gl)
     add_dependencies(darkcloud dc_web_site dc_web_builtin_mods)
-    # After darkcloud, which has lang/ and glyphs/ copied for both to preload.
-    add_dependencies(darkcloud_gl darkcloud)
+    # What both preload (lang/, glyphs/) and the page; the link pool keeps the two links one at a time (web.cmake).
+    add_dependencies(darkcloud_gl dc_lang dc_glyphs dc_web_site dc_web_builtin_mods)
+    # CI links the WebGL2 build on a runner of its own (web.yml), beside the WebGPU one: each link takes minutes.
+    option(DC_WEB_GL_IN_ALL "Build darkcloud_gl with the default target" ON)
+    if(NOT DC_WEB_GL_IN_ALL)
+        set_target_properties(darkcloud_gl PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
     dc_web_gfx_tests()
 endif()
 if(WIN32)
