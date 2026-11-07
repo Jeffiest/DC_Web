@@ -226,7 +226,8 @@ target_link_libraries(dc_port PRIVATE moonmod_lua ${CMAKE_DL_LIBS})
 # Online play's socket (moonmod/net_session.hpp, coop/relay): the browser's WebSocket on the web (web.cmake links
 # Emscripten's), WinHTTP on Windows, libcurl's TLS connection on Linux and macOS where it is found. Without one,
 # net.* reports itself unsupported. DC_COOP_RELAY_DEFAULT is the relay a mod's net.host/join use unless it names one.
-set(DC_COOP_RELAY_DEFAULT "" CACHE STRING "The co-op relay (wss://...) online play uses by default")
+# The public relay coop-relay.yml deploys (coop/relay/README.md); a build for a private server sets its own.
+set(DC_COOP_RELAY_DEFAULT "wss://chronicle-coop-relay.jeffery-s-rose.workers.dev" CACHE STRING "The co-op relay (wss://...) online play uses by default")
 target_compile_definitions(dc_port PRIVATE DC_COOP_RELAY_DEFAULT="${DC_COOP_RELAY_DEFAULT}")
 set(DC_NET_LIBS)
 if(WIN32)
