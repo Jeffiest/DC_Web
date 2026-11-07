@@ -1,0 +1,14 @@
+[log] probe: start, 120 frames
+[log] probe: adapter ok 
+[log] probe: feature dual-source-blending no
+[log] probe: feature clip-distances yes
+[log] probe: feature depth32float-stencil8 yes
+[log] probe: feature float32-filterable yes
+[log] probe: device ok 
+[log] probe: readback ok 255 128 0 255 (map status 1 )
+[log] probe: surface ok 
+[log] probe: readback in a fiber ok 255 128 0 255 (map status 1 )
+[log] probe: fiber ok 
+[log] probe: frames ok 120 drawn
+[log] probe: done, 0 failed
+exit=0
