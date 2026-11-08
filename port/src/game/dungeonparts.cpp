@@ -1528,7 +1528,9 @@ constexpr std::array<const int *, 6> noEntryTbl = {noEntryTbl00, noEntryTbl01, n
 /** The floor each dungeon's upper half ends on. */
 constexpr std::array<int, 6> CenterFloorTbl = {8, 9, 9, 9, 8, 13};
 
-/** The number of floors in each dungeon. */
+/** The number of floors in each dungeon as the game ships them. Atla are spread over these alone: floors a mod
+ * appends (dungeons.register raises maxFloorTbl__3) must not take the game's own Atla. */
+constexpr std::array<int, 6> MaxFloorTbl = {15, 17, 18, 18, 15, 25};
 
 /** Most placement boxes SearchiDoPutArea gathers (the game's; MoonMod's zoned maps gather them all, DngPutSpotLimit). */
 constexpr int kMaxPutQuads = 196;
@@ -1916,7 +1918,7 @@ void BtAtraListMake(int dungeon) {
 
     const ATRA_APPEAR *appear = AtraAppearData[dungeon];
     const int          center = CenterFloorTbl[dungeon];
-    const int          floor_count = maxFloorTbl__3[dungeon];
+    const int          floor_count = MaxFloorTbl[dungeon];
     int                count = 0;
     int                upper = 0;
     int                lower = 0;

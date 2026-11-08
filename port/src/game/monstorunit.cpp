@@ -58,6 +58,18 @@ CTexAnimeData MonsterTexAnim[320];
 
 int maxFloorTbl__3[7] = {15, 17, 18, 18, 15, 25, 100};
 
+/** The number of floors each dungeon ships with; maxFloorTbl__3 grows when a mod appends floors. */
+constexpr int kNativeMaxFloorTbl[7] = {15, 17, 18, 18, 15, 25, 100};
+
+bool IsLastFloor(int dungeon, int floor) {
+    if (dungeon < 0 || dungeon >= 7) {
+        return false;
+    }
+
+    // The boss floor stays the boss floor when a mod appends floors after it.
+    return floor + 1 == kNativeMaxFloorTbl[dungeon] || floor + 1 == maxFloorTbl__3[dungeon];
+}
+
 namespace {
 
 /**
@@ -1031,9 +1043,8 @@ void CMonstorUnit::CheckViewLevel() {
 
     if (active_count > MonstorActiveLimit) {
         int floor = UserStatus->cur_floor;
-        int max_floor = maxFloorTbl__3[selectMapNo];
 
-        if (floor + 1 == max_floor) {
+        if (IsLastFloor(selectMapNo, floor)) {
             return;
         }
 

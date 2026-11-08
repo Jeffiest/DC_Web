@@ -406,9 +406,7 @@ float SetBattleStyle(int map_no, int preserve_bgm) {
     }
 
     if (map_no != 5) {
-        const int floors = maxFloorTbl__3[map_no];
-
-        if (UserStatus->cur_floor < floors - 1) {
+        if (!IsLastFloor(map_no, UserStatus->cur_floor)) {
             BtBattleMusic_Excg(nearest, &bgm_volume, &ambient_volume);
 
             if (ambient_volume > 0.0f) {
@@ -750,8 +748,6 @@ void topStatusInfo(int y, int selected_item, int floor) {
         set2DSprite(Vif1Packet, icons, CRect_i_(0x21E, y + 5, 0x20, 0x20), CRect_i_(0x20, 0xA0, 0x20, 0x20));
     }
 
-    int last_floor = maxFloorTbl__3[georama];
-
     // A mod's label (render.floor_label_set) takes the number's place, lettered like it and shrunk to fit.
     if (const std::string label = moonmod::ChronicleFloorLabel(); !label.empty()) {
         ui::TextStyle style;
@@ -773,7 +769,7 @@ void topStatusInfo(int y, int selected_item, int floor) {
             plate_label.SetScale(style.scale * static_cast<float>(kPlateNumberWidth) / static_cast<float>(width));
         }
         plate_label.DrawCenteredInRect(0x23C, y + 0x11, 0x26, 0x13);
-    } else if (floor + 1 == last_floor) {
+    } else if (IsLastFloor(georama, floor)) {
         set2DSprite(Vif1Packet, frame, CRect_i_(0x23C, y + 0x12, 0x26, 0x11), CRect_i_(0x78, 0x9E, 0x26, 0x12));
     } else {
         const int x = floor + 1 >= 10 ? 0x245 : 0x23F;

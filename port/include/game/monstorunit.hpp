@@ -558,8 +558,11 @@ STATIC_ASSERT(sizeof(BEE_STATE) == 8);
 /** Animation state of every bee drawn around the bee monster. */
 extern BEE_STATE BeeTbl[800];
 
-/** Number of floors in each dungeon. */
+/** Number of floors in each dungeon, with any floors a mod appended (dungeons.register). */
 extern int maxFloorTbl__3[7];
+
+/** Whether a floor is a dungeon's last: its boss floor as the game ships it, or the last floor a mod appended. */
+bool IsLastFloor(int dungeon, int floor);
 
 /** Texture animations shared by every monster model. */
 extern CTexAnimeData MonsterTexAnim[320];

@@ -844,9 +844,8 @@ void DunEnterBoard(int x, int y, int alpha) {
         position = row_y + 4;
         DrawDunEnterFloorName(column_x, position, i + 1, top, bottom, alpha);
         const int dungeon = DEnterMenu.dungeon;
-        const int max_floor = maxFloorTbl__3[dungeon];
 
-        if (i == max_floor - 1) {
+        if (IsLastFloor(dungeon, i)) {
             const int draw_x = column_x + 0x82;
             position = row_y + 6;
             length = 0x18;
@@ -888,11 +887,17 @@ void DunEnterBoard(int x, int y, int alpha) {
     row_y--;
 
     for (int floor = 0; floor < 100; floor++) {
-        if (floor == maxFloorTbl__3[DEnterMenu.dungeon] - 1) {
+        if (floor >= maxFloorTbl__3[DEnterMenu.dungeon]) {
             break;
         }
 
         if (DEnterMenu.floor_count - 1 < floor) {
+            continue;
+        }
+
+        // The boss floor has no Atla board, and floors a mod appended after it keep theirs.
+        if (IsLastFloor(DEnterMenu.dungeon, floor)) {
+            row_y += 0x28;
             continue;
         }
 
