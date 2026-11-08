@@ -18,7 +18,9 @@
 namespace moonmod {
 namespace {
 
-constexpr std::size_t kManifestLimit = 256 * 1024;
+constexpr std::size_t kManifestLimit = 1024 * 1024;
+constexpr std::size_t kEntryLimit = 4 * 1024 * 1024;
+constexpr std::size_t kMaxParts = 64;
 
 bool IsString(const Json &value, std::size_t limit) {
     return value.is_string() && value.get_ref<const std::string &>().size() <= limit;
@@ -240,6 +242,75 @@ bool IsWithin(const std::filesystem::path &root, const std::filesystem::path &pa
     return first != relative.end() && *first != "..";
 }
 
+
+// A merged pack's parts: mods whose code is in the pack's one script, each still its own owner (id, settings, saved data).
+bool ReadParts(const Json &document, ModManifest &manifest, std::string &error) {
+    const auto found = document.find("parts");
+    if (found == document.end()) return true;
+    if (!found->is_array() || found->empty() || found->size() > kMaxParts) {
+        error = "field 'parts' must be an array with 1-" + std::to_string(kMaxParts) + " entries";
+        return false;
+    }
+    std::set<std::string> ids{manifest.id};
+    for (const Json &value : *found) {
+        if (!value.is_object()) {
+            error = "each parts entry must be an object";
+            return false;
+        }
+        if (!RejectUnknownFields(value, {"id", "name", "version", "description", "coop", "settings", "dependencies",
+                                         "optional_dependencies"},
+                                 error)) {
+            error = "parts: " + error;
+            return false;
+        }
+        ModManifest part;
+        if (!ReadString(value, "id", part.id, 64, true, error) || !ReadString(value, "name", part.name, 96, true, error) ||
+            !ReadString(value, "version", part.version, 64, true, error) ||
+            !ReadString(value, "description", part.description, 1024, false, error) ||
+            !ReadString(value, "coop", part.coop, 16, false, error) ||
+            !ReadStringList(value, "dependencies", part.dependencies, 64, false, error) ||
+            !ReadStringList(value, "optional_dependencies", part.optional_dependencies, 64, false, error) ||
+            !ReadSettings(value, part.settings, error)) {
+            error = "parts: " + error;
+            return false;
+        }
+        if (!IsValidModId(part.id) || !ids.insert(part.id).second) {
+            error = "parts: each part needs a valid id, unique and not the pack's own";
+            return false;
+        }
+        static const std::regex kPartVersion("[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?");
+        if (!std::regex_match(part.version, kPartVersion)) {
+            error = "parts: '" + part.id + "' version must use MAJOR.MINOR.PATCH";
+            return false;
+        }
+        if (part.coop.empty()) part.coop = "required";
+        if (part.coop != "required" && part.coop != "host_only" && part.coop != "local") {
+            error = "parts: '" + part.id + "' coop must be required, host_only, or local";
+            return false;
+        }
+        for (const auto *list : {&part.dependencies, &part.optional_dependencies}) {
+            for (const std::string &id : *list) {
+                if (!IsValidModId(id)) {
+                    error = "parts: dependency references must use valid mod ids";
+                    return false;
+                }
+            }
+        }
+        // What the part shares with its pack: the package, its script, its permissions and games.
+        part.author = manifest.author;
+        part.entry = manifest.entry;
+        part.schema_version = manifest.schema_version;
+        part.framework_api = manifest.framework_api;
+        part.games = manifest.games;
+        part.permissions = manifest.permissions;
+        part.package_root = manifest.package_root;
+        part.entry_file = manifest.entry_file;
+        part.pack = manifest.id;
+        manifest.parts.push_back(std::move(part));
+    }
+    return true;
+}
+
 } // namespace
 
 bool IsValidModId(std::string_view id) {
@@ -265,7 +336,7 @@ std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_roo
     }
     const auto size = std::filesystem::file_size(manifest_file, ec);
     if (ec || size == 0 || size > kManifestLimit) {
-        error = "mod.json is empty, unreadable, or larger than 256 KiB";
+        error = "mod.json is empty, unreadable, or larger than 1 MiB";
         return std::nullopt;
     }
     Json document;
@@ -286,7 +357,7 @@ std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_roo
     }
     if (!RejectUnknownFields(document, {"schema_version", "id", "name", "version", "author", "description",
                                         "framework_api", "games", "entry", "dependencies", "optional_dependencies",
-                                        "load_after", "load_before", "permissions", "settings", "native_extension", "coop"},
+                                        "load_after", "load_before", "permissions", "settings", "native_extension", "coop", "parts"},
                             error)) {
         return std::nullopt;
     }
@@ -403,10 +474,11 @@ std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_roo
         return std::nullopt;
     }
     const auto entry_size = std::filesystem::file_size(manifest.entry_file, ec);
-    if (ec || entry_size == 0 || entry_size > 1024 * 1024) {
-        error = "entry script is empty, unreadable, or larger than 1 MiB";
+    if (ec || entry_size == 0 || entry_size > kEntryLimit) {
+        error = "entry script is empty, unreadable, or larger than 4 MiB";
         return std::nullopt;
     }
+    if (!ReadParts(document, manifest, error)) return std::nullopt;
     return manifest;
 }
 

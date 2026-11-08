@@ -3,7 +3,8 @@
 each zipped as mods/builtin/<id>.zip beside the page with mods/builtin/index.json listing them. The page installs
 them into the browser's save/mods/ (site/shell.js, installBuiltinMods), so they are there without adding them, and
 offers them for the PC builds too, with all of them in one zip (darkcloud-mods.zip, also attached to each build
-release by .github/workflows/builds.yml).
+release by .github/workflows/builds.yml). A mod that is a part of a merged pack there (moonmod.pack) is built in as
+the pack only.
 
     python port/web/mods/builtin.py --out port/build/web/mods/builtin [--moonmod <checkout>] [--cache <dir>]
 
@@ -94,8 +95,21 @@ def build(pin: dict, repo: Path, out: Path) -> list[dict]:
     staging.mkdir(parents=True)
     listed = []
     included = {}
-    for folder, files in sorted(mods_at(repo, commit, pin["path"]).items()):
+    folders = mods_at(repo, commit, pin["path"])
+    # A merged pack's parts (mod.json "parts", MoonMod's docs/modding/PACKS.md) are built in as the pack only: the
+    # mods it was made from stay out of the list.
+    packed = {}
+    for folder, files in folders.items():
+        if "mod.json" in files:
+            manifest = json.loads(files["mod.json"].decode("utf-8"))
+            if GAME in manifest.get("games", []):
+                for part in manifest.get("parts", []):
+                    packed[part["id"]] = folder
+    for folder, files in sorted(folders.items()):
         if "mod.json" not in files:
+            continue
+        if folder in packed:
+            print(f"skipping {folder}: built in as part of {packed[folder]}")
             continue
         manifest = json.loads(files["mod.json"].decode("utf-8"))
         mod_id = manifest.get("id")

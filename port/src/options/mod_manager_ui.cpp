@@ -64,14 +64,14 @@ u32 RowColor(bool selected) { return selected ? ui::ColorYellow : ui::ColorWhite
 
 // Word-wraps text into at most max_lines lines; the last line ends with "..." if it runs out.
 void Wrapped(const std::string &text, int x, int y, int width, int line_step, int max_lines, int alpha,
-             float scale = kSmall) {
+             float scale = kSmall, u32 color = ui::ColorWhite) {
     std::vector<std::string> lines = ui::WrapText(text, width, scale);
     if (static_cast<int>(lines.size()) > max_lines) {
         lines.resize(max_lines);
         lines.back() = Fit(lines.back() + "...", width, scale);
     }
     for (std::size_t i = 0; i < lines.size(); ++i) {
-        ui::Label(lines[i], ui::ColorWhite, ui::Alignment::Left, true, scale).Draw(x, y + int(i) * line_step, alpha);
+        ui::Label(lines[i], color, ui::Alignment::Left, true, scale).Draw(x, y + int(i) * line_step, alpha);
     }
 }
 
@@ -109,6 +109,11 @@ void Frame(const std::string &title, int alpha) {
 void Footer(const std::string &line, const std::string &hint, bool highlight, int alpha) {
     ui::HelpBox::Draw(ui::Rect(45, 397, 550, 55), alpha);
     MenuTextureReload(0x1A);
+    // A notice too long for one line (why a mod waits for a restart) takes the hint's line while it shows.
+    if (highlight && ui::WrapText(line, 528, kSmall).size() > 1) {
+        Wrapped(line, 56, 403, 528, 24, 2, alpha, kSmall, ui::ColorYellow);
+        return;
+    }
     Text(line, 56, 403, 528, highlight ? ui::ColorYellow : ui::ColorWhite, alpha, kSmall);
     Text(hint, 56, 427, 528, ui::ColorGold, alpha, kSmall);
 }
@@ -269,8 +274,14 @@ void Draw(int alpha) {
             const int y = 143 + (row - state.first_mod) * 29;
             const bool selected = row == state.selected_mod;
             const bool native = !record.manifest.native_library.empty();
-            Text(record.display_name, 56, y + 2, native ? 128 : 150, RowColor(selected), alpha, kSmall);
+            // a merged pack's parts sit indented under it
+            const int indent = record.pack.empty() ? 0 : 10;
+            Text(record.pack.empty() ? record.display_name : "- " + record.display_name, 56 + indent, y + 2,
+                 (native ? 128 : 150) - indent, RowColor(selected), alpha, kSmall);
+            // A part of a pack that is off shows its own switch, dimmed: it applies when the pack is on.
+            const bool idle_part = !record.pack.empty() && !record.enabled && !record.restart_required;
             const std::string on = record.restart_required ? (record.enabled_next_launch ? "ON*" : "OFF*")
+                                   : idle_part             ? (record.part_switch ? "ON" : "OFF")
                                                            : (record.enabled ? "ON" : "OFF");
             Text(on, native ? 202 : 228, y + 3, 44, record.enabled ? ui::ColorGold : ui::ColorWhite,
                  record.enabled ? alpha : alpha / 2, kSmall, ui::Alignment::Right);
@@ -295,10 +306,15 @@ void Draw(int alpha) {
             Text(ModTitle(*record), 264, 144, 320, ui::ColorYellow, alpha, kHeader);
             const std::string author = record->manifest.author.empty() ? "Unknown author" : record->manifest.author;
             Text(std::format("{}  /  {}{}", author, ModStateText(record->state),
-                             record->restart_required ? "  /  RESTART REQUIRED" : ""),
+                             record->restart_required ? "  /  RESTART REQUIRED"
+                             : !record->pack.empty()      ? "  /  IN " + record->pack
+                                                          : std::string{}),
                  264, 166, 320, ui::ColorWhite, alpha, kSmall);
-            const std::string &description =
-                record->manifest.description.empty() ? record->status_message : record->manifest.description;
+            const std::string description =
+                record->restart_required && !record->restart_reason.empty()
+                    ? std::string(record->enabled_next_launch ? "On" : "Off") + " after a restart: " + record->restart_reason
+                : record->manifest.description.empty() ? record->status_message
+                                                        : record->manifest.description;
             Wrapped(description, 264, 184, 320, 17, record->native_status.empty() ? 2 : 1, alpha);
             if (!record->native_status.empty()) Text(record->native_status, 264, 201, 320, ui::ColorWhite, alpha, kSmall);
         }

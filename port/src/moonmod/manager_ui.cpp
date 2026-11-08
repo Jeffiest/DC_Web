@@ -193,17 +193,31 @@ void ToggleSelectedMod() {
         return;
     }
     std::string error;
-    if (!SharedRuntime().SetEnabled(record->id, !record->enabled_next_launch, error)) {
+    const std::string id = record->id; // the list is read again when a mod goes on or off now
+    // A part flips its own switch, which holds even while its pack is off.
+    const bool turning_on = record->pack.empty() ? !record->enabled_next_launch : !record->part_switch;
+    if (!SharedRuntime().SetEnabled(id, turning_on, error)) {
         Notice(error);
         return;
     }
     g_state.settings_focus = false;
     g_state.native_trust_focus = false;
     g_state.detail_tab = 0;
+    const auto mods = SharedRuntime().Mods();
+    if (const auto found = std::ranges::find(mods, id, &ModRecord::id); found != mods.end()) {
+        g_state.selected_mod = static_cast<int>(found - mods.begin());
+    }
     const ModRecord *updated = ManagerSelectedMod();
-    Notice(updated && updated->restart_required
-               ? (updated->enabled_next_launch ? "Will enable after game restart" : "Will disable after game restart")
-               : "Restart change canceled; current session unchanged");
+    if (updated == nullptr) {
+        Notice("Saved");
+    } else if (updated->restart_required) {
+        Notice((turning_on ? "On after a restart" : "Off after a restart") +
+               (updated->restart_reason.empty() ? std::string{} : ": " + updated->restart_reason));
+    } else if (updated->state == ModState::LoadError) {
+        Notice("Could not start: " + updated->status_message);
+    } else {
+        Notice(turning_on ? (updated->enabled ? "On now" : "On") : "Off now");
+    }
     Reconcile();
 }
 

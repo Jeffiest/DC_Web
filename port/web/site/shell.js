@@ -303,7 +303,7 @@ async function readProfile() {
     if (!profile || typeof profile !== 'object' || profile.format_version !== 1) {
         profile = {format_version: 1};
     }
-    for (const part of ['enabled', 'settings', 'native_trusted']) {
+    for (const part of ['enabled', 'settings', 'native_trusted', 'parts']) {
         if (!profile[part] || typeof profile[part] !== 'object' || Array.isArray(profile[part])) {
             profile[part] = {};
         }
@@ -343,6 +343,40 @@ async function enableMods(ids, on, forget = false) {
             }
         }
     });
+}
+
+// A merged pack's part (mod.json "parts", MoonMod's docs/modding/PACKS.md) keeps its switch under the pack,
+// profile.parts[pack][part], on unless that says false (moonmod/runtime.cpp, PartChoice): the pack's own switch
+// never changes it, and a separate mod of the same id keeps its own. A part turned on brings its pack on.
+async function enablePart(pack, id, on) {
+    await updateProfile((profile) => {
+        const choices = profile.parts[pack] && typeof profile.parts[pack] === 'object' ? profile.parts[pack] : {};
+        choices[id] = on;
+        profile.parts[pack] = choices;
+        if (on) {
+            profile.enabled[pack] = true;
+        }
+    });
+}
+
+// The parts of the stored packs, each as a stored mod of its own ({id, manifest, problem, pack}).
+function packParts(mods) {
+    const parts = [];
+    for (const mod of mods) {
+        if (mod.problem || !Array.isArray(mod.manifest.parts)) {
+            continue;
+        }
+        for (const part of mod.manifest.parts) {
+            if (part && typeof part === 'object' && typeof part.id === 'string') {
+                parts.push({id: part.id, manifest: part, problem: null, pack: mod.id});
+            }
+        }
+    }
+    return parts;
+}
+
+function partOn(profile, pack, id) {
+    return profile.parts[pack]?.[id] !== false;
 }
 
 // The mods built into the page: MoonMod's, zipped into mods/builtin/ at the commit the build pins
@@ -632,7 +666,20 @@ async function refreshMods() {
     const removedBuiltin = [...builtin.keys()].filter((id) => builtinState[id]?.removed);
     $('mod-restore').hidden = removedBuiltin.length === 0;
     $('mod-restore').textContent = `Restore the built-in mods (${removedBuiltin.length})`;
+    const parts = packParts(mods);
+    const packs = new Map(parts.map((part) => [part.id, part.pack]));
+    // A part stands in for a separate mod of the same id while its pack is on: the part is what other mods need then.
     const byId = new Map(mods.map((mod) => [mod.id, mod]));
+    for (const part of parts) {
+        if (!byId.has(part.id) || profile.enabled[part.pack] === true) {
+            byId.set(part.id, part);
+        }
+    }
+    const isOn = (id) => {
+        const found = byId.get(id);
+        return found?.pack ? profile.enabled[found.pack] === true && partOn(profile, found.pack, id) :
+            profile.enabled[id] === true;
+    };
     const open = new Set([...list.querySelectorAll('details[open]')].map((panel) => panel.dataset.mod));
     list.replaceChildren();
     if (mods.length === 0) {
@@ -643,7 +690,11 @@ async function refreshMods() {
         const toggle = element('input', {type: 'checkbox', checked: on, disabled: mod.problem !== null});
         toggle.addEventListener('change', async () => {
             // A mod turned on brings the stored mods it needs with it.
-            await enableMods(toggle.checked ? [mod.id, ...needed(mod, byId)] : [mod.id], toggle.checked);
+            const wanted = toggle.checked ? [...needed(mod, byId)] : [];
+            await enableMods([mod.id, ...wanted.filter((id) => !packs.has(id))], toggle.checked);
+            for (const id of wanted.filter((id) => packs.has(id))) {
+                await enablePart(packs.get(id), id, true);
+            }
             await refreshMods();
         });
         const manifest = mod.manifest;
@@ -672,12 +723,20 @@ async function refreshMods() {
         if (mod.problem) {
             note(`It can't load: ${mod.problem}.`, true);
         }
-        for (const id of manifest.dependencies ?? []) {
-            if (!byId.has(id)) {
-                note(`It needs ${id}, which isn't added.`, true);
-            } else if (on && profile.enabled[id] !== true) {
-                note(`It needs ${byId.get(id).manifest.name ?? id}, which is off.`, true);
+        const needs = (of, running, say) => {
+            for (const id of of.manifest.dependencies ?? []) {
+                if (!byId.has(id)) {
+                    say(`It needs ${id}, which isn't added.`, true);
+                } else if (running && !isOn(id)) {
+                    say(`It needs ${byId.get(id).manifest.name ?? id}, which is off.`, true);
+                }
             }
+        };
+        needs(mod, on, note);
+        const standIn = byId.get(mod.id);
+        if (standIn?.pack) {
+            note(`${byId.get(standIn.pack)?.manifest.name ?? standIn.pack} is on, so its own ${
+                standIn.manifest.name ?? mod.id} runs in this one's place.`);
         }
         if (manifest.native_extension) {
             note("Its native library doesn't run in the browser.", true);
@@ -687,6 +746,47 @@ async function refreshMods() {
             panel.dataset.mod = mod.id;
             panel.open = open.has(mod.id);
             item.append(panel);
+        }
+        // A pack's parts, under it: each with its own switch and settings, as in the game's Mods menu.
+        const own = mod.problem ? [] : parts.filter((part) => part.pack === mod.id);
+        if (own.length > 0) {
+            const sub = element('ul', {className: on ? 'mod-parts' : 'mod-parts off'});
+            for (const part of own) {
+                const partToggle = element('input', {type: 'checkbox', checked: partOn(profile, mod.id, part.id)});
+                partToggle.addEventListener('change', async () => {
+                    await enablePart(mod.id, part.id, partToggle.checked);
+                    if (partToggle.checked) {
+                        // A part turned on brings the mods it needs with it, as a mod does.
+                        const wanted = [...needed(part, byId)];
+                        await enableMods(wanted.filter((id) => !packs.has(id)), true);
+                        for (const id of wanted.filter((id) => packs.has(id))) {
+                            await enablePart(packs.get(id), id, true);
+                        }
+                    }
+                    await refreshMods();
+                });
+                const shown = part.manifest;
+                const row = element('li', {}, element('div', {className: 'mod-head'}, element('label', {}, partToggle,
+                    element('span', {}, element('strong', {textContent: shown.name ?? part.id}), ' ',
+                        element('small', {textContent: [shown.version, 'in this pack'].filter(Boolean).join(' · ')})))));
+                const partNote = (text, warn = false) =>
+                    row.append(element('div', {className: warn ? 'mod-note warn' : 'mod-note', textContent: text}));
+                if (shown.description) {
+                    partNote(shown.description);
+                }
+                needs(part, on && partOn(profile, mod.id, part.id), partNote);
+                const partPanel = settingsPanel(part, profile);
+                if (partPanel) {
+                    partPanel.dataset.mod = part.id;
+                    partPanel.open = open.has(part.id);
+                    row.append(partPanel);
+                }
+                sub.append(row);
+            }
+            const folded = element('details', {open: open.has(`${mod.id}#parts`)},
+                element('summary', {textContent: `Parts (${own.length})`}), sub);
+            folded.dataset.mod = `${mod.id}#parts`;
+            item.append(folded);
         }
         list.append(item);
     }

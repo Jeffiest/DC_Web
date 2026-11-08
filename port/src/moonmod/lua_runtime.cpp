@@ -38,7 +38,7 @@ namespace moonmod {
 namespace {
 
 constexpr int         kHookInterval = 1000;
-constexpr std::size_t kScriptSizeLimit = 1024 * 1024;
+constexpr std::size_t kScriptSizeLimit = 4 * 1024 * 1024;
 constexpr std::size_t kStorageSizeLimit = 128 * 1024;
 constexpr std::size_t kStorageValueLimit = 4096;
 constexpr int         kEventCallbackLimit = 128;
@@ -378,6 +378,7 @@ struct LuaMod::Impl {
     struct EventCallback {
         int token = 0;
         int reference = LUA_NOREF;
+        std::string owner; // the mod, or the pack's part, that registered it
     };
 
     struct CommandCallback {
@@ -391,6 +392,7 @@ struct LuaMod::Impl {
 
     struct ScriptOverrideCallback {
         int reference = LUA_NOREF;
+        std::string owner;
     };
 
     struct Memory {
@@ -411,8 +413,9 @@ struct LuaMod::Impl {
     };
 
     const RuntimeConfig &config;
-    const ModManifest  &manifest;
-    std::function<Json(std::string_view)> setting_reader;
+    // The current owner's manifest: the mod's own, or (in a merged pack, while one of its parts runs) the part's.
+    ModManifest manifest;
+    std::function<Json(std::string_view owner, std::string_view setting)> setting_reader;
     std::filesystem::path storage_file;
     Json storage = Json::object();
     lua_State *state = nullptr;
@@ -432,11 +435,321 @@ struct LuaMod::Impl {
     bool       save_migration_window = false;
     bool       budget_exceeded = false;
 
+    // A merged pack runs its parts in this one Lua state, each as its own owner: what it registers, its settings and
+    // its saved data (moonmod/data/<part id>/, as when it was a mod of its own) are the part's. The current owner's
+    // state is in the fields above (manifest, storage, commands, ...); every other owner's waits in its slot here.
+    struct OwnerState {
+        ModManifest manifest;
+        std::filesystem::path storage_file;
+        Json storage = Json::object();
+        bool storage_dirty = false;
+        bool storage_loaded = false;
+        std::map<std::string, CommandCallback, std::less<>> commands;
+        std::map<std::string, ScriptFunctionCallback, std::less<>> script_functions;
+        std::map<std::string, LocalizationEntry, std::less<>> localizations;
+        std::size_t localization_bytes = 0;
+    };
+    std::map<std::string, OwnerState, std::less<>> owners;
+    std::string home_id;
+    std::set<std::string, std::less<>> enabled_parts;
+    std::map<std::string, int, std::less<>> part_functions;
+    // A part given as source with a globals table: that table, and a copy of it as it was handed over, so the part
+    // starts with fresh globals each time it is turned on again.
+    std::map<std::string, std::pair<int, int>, std::less<>> part_globals;
+    std::set<std::string, std::less<>> running_parts;
+    std::map<std::string, std::string, std::less<>> part_errors;
+    std::size_t callback_limit = kEventCallbackLimit;
+
     Impl(const RuntimeConfig &runtime_config, const ModManifest &mod_manifest,
-         std::function<Json(std::string_view)> reader)
+         std::function<Json(std::string_view, std::string_view)> reader)
         : memory{0, runtime_config.lua_memory_limit}, config(runtime_config), manifest(mod_manifest),
           setting_reader(std::move(reader)),
-          storage_file(runtime_config.save_root / "moonmod" / "data" / mod_manifest.id / "storage.json") {}
+          storage_file(runtime_config.save_root / "moonmod" / "data" / mod_manifest.id / "storage.json"),
+          home_id(mod_manifest.id) {
+        // A pack's parts share its state, so they share its budgets too: each part brings its own share.
+        const std::size_t shares = 1 + mod_manifest.parts.size();
+        memory.limit = std::min<std::size_t>(runtime_config.lua_memory_limit * shares, 512u * 1024u * 1024u);
+        callback_limit = kEventCallbackLimit * shares;
+    }
+
+    void ResetOwners() {
+        owners.clear();
+        running_parts.clear();
+        part_functions.clear();
+        part_globals.clear();
+        part_errors.clear();
+        if (manifest.parts.empty()) return;
+        owners[home_id].storage_loaded = true; // the home owner is checked out: its slot holds nothing until it parks
+        for (const ModManifest &part : manifest.parts) {
+            OwnerState slot;
+            slot.manifest = part;
+            slot.storage_file = config.save_root / "moonmod" / "data" / part.id / "storage.json";
+            owners.emplace(part.id, std::move(slot));
+        }
+    }
+
+    void SwapCurrent(OwnerState &slot) {
+        std::swap(manifest, slot.manifest);
+        std::swap(storage_file, slot.storage_file);
+        std::swap(storage, slot.storage);
+        std::swap(storage_dirty, slot.storage_dirty);
+        std::swap(commands, slot.commands);
+        std::swap(script_functions, slot.script_functions);
+        std::swap(localizations, slot.localizations);
+        std::swap(localization_bytes, slot.localization_bytes);
+    }
+
+    bool SwitchOwner(std::string_view id) {
+        if (id.empty() || id == manifest.id) return true;
+        const auto target = owners.find(id);
+        const auto current = owners.find(manifest.id);
+        if (target == owners.end() || current == owners.end()) return false;
+        SwapCurrent(current->second);
+        SwapCurrent(target->second);
+        if (!target->second.storage_loaded) {
+            target->second.storage_loaded = true;
+            std::string error;
+            if (!LoadStorage(error)) Log("warning", error);
+        }
+        return true;
+    }
+
+    // While it lives, the given owner (a part of this pack) is current; the previous one comes back after.
+    struct OwnerScope {
+        Impl &self;
+        std::string previous;
+        bool switched = false;
+        OwnerScope(Impl &impl, std::string_view id) : self(impl), previous(impl.manifest.id) {
+            switched = !id.empty() && id != previous && impl.SwitchOwner(id);
+        }
+        ~OwnerScope() {
+            if (switched) self.SwitchOwner(previous);
+        }
+        OwnerScope(const OwnerScope &) = delete;
+        OwnerScope &operator=(const OwnerScope &) = delete;
+    };
+
+    std::vector<std::string> OwnerIds() const {
+        std::vector<std::string> ids{home_id};
+        for (const std::string &part : running_parts) ids.push_back(part);
+        return ids;
+    }
+
+    // What the game holds for an owner (input binds, HUD, title modes, menus, ...), let go.
+    void ReleaseOwner(const std::string &owner) {
+        if (config.api_owner_unloaded) {
+            try {
+                config.api_owner_unloaded(owner);
+            } catch (const std::exception &exception) {
+                Log("error", std::string("API owner cleanup failed: ") + exception.what());
+            } catch (...) {
+                Log("error", "API owner cleanup failed with an unknown exception");
+            }
+        }
+        RemoveNativeResourceOverridesByOwner(owner);
+        RemoveManagerActions(owner);
+        ClearCharacterSheet(owner);
+    }
+
+    // Puts a part's globals table back as it was handed over: what an earlier run set is gone.
+    void ResetPartGlobals(const std::string &part) {
+        const auto globals = part_globals.find(part);
+        if (state == nullptr || globals == part_globals.end()) return;
+        lua_rawgeti(state, LUA_REGISTRYINDEX, globals->second.first);  // env
+        lua_rawgeti(state, LUA_REGISTRYINDEX, globals->second.second); // as handed over
+        // Every key now in env gets its handed-over value (nil drops it; assigning an existing field while
+        // traversing is allowed).
+        lua_pushnil(state);
+        while (lua_next(state, -3) != 0) {
+            lua_pop(state, 1);
+            lua_pushvalue(state, -1);
+            lua_pushvalue(state, -1);
+            lua_rawget(state, -4);
+            lua_rawset(state, -5);
+        }
+        // Then every handed-over key is put back.
+        lua_pushnil(state);
+        while (lua_next(state, -2) != 0) {
+            lua_pushvalue(state, -2);
+            lua_insert(state, -2);
+            lua_rawset(state, -5);
+        }
+        lua_pop(state, 2);
+    }
+
+    bool StartPart(const std::string &part, std::string &error) {
+        error.clear();
+        const auto function = part_functions.find(part);
+        if (state == nullptr || function == part_functions.end()) {
+            error = "the pack's script did not hand this part over (moonmod.part.run)";
+            part_errors[part] = error;
+            return false;
+        }
+        if (running_parts.contains(part)) return true;
+        bool started = false;
+        {
+            OwnerScope scope(*this, part);
+            if (!scope.switched) {
+                error = "'" + part + "' is not a part of this pack";
+                return false;
+            }
+            ResetPartGlobals(part);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, function->second);
+            if (ProtectedCall(0, 1, error)) {
+                if (lua_istable(state, -1)) {
+                    AddModuleCallback("on_load", "runtime.loaded");
+                    AddModuleCallback("on_unload", "runtime.unloaded");
+                    AddModuleCallback("on_tick", "game.tick");
+                }
+                lua_pop(state, 1);
+                started = true;
+            }
+        }
+        running_parts.insert(part);
+        if (!started) {
+            StopPart(part, false);
+            part_errors[part] = error;
+            Log("error", "part '" + part + "' failed to load: " + error);
+            return false;
+        }
+        part_errors.erase(part);
+        return true;
+    }
+
+    void StopPart(const std::string &part, bool announce) {
+        if (!running_parts.contains(part)) return;
+        if (announce) Emit("runtime.unloaded", Json::object(), part);
+        {
+            OwnerScope scope(*this, part);
+            if (scope.switched) {
+                for (auto &[id, command] : commands) {
+                    (void)id;
+                    luaL_unref(state, LUA_REGISTRYINDEX, command.reference);
+                }
+                commands.clear();
+                for (auto &[id, function] : script_functions) {
+                    (void)id;
+                    luaL_unref(state, LUA_REGISTRYINDEX, function.reference);
+                }
+                script_functions.clear();
+                localizations.clear();
+                localization_bytes = 0;
+                std::string error;
+                if (!FlushStorage(error)) Log("error", error);
+            }
+        }
+        for (auto it = callbacks.begin(); it != callbacks.end();) {
+            std::erase_if(it->second, [&](const EventCallback &callback) {
+                if (callback.owner != part) return false;
+                luaL_unref(state, LUA_REGISTRYINDEX, callback.reference);
+                return true;
+            });
+            it = it->second.empty() ? callbacks.erase(it) : std::next(it);
+        }
+        bool monster_hook = false;
+        std::erase_if(script_overrides, [&](const auto &entry) {
+            if (entry.second.owner != part) return false;
+            monster_hook = monster_hook || entry.first == "native.monster.run";
+            luaL_unref(state, LUA_REGISTRYINDEX, entry.second.reference);
+            return true;
+        });
+        if (monster_hook) BumpMonsterScriptOverrideGeneration();
+        ReleaseOwner(part);
+        running_parts.erase(part);
+        // Its saved data is read again from disk when it next runs.
+        if (const auto slot = owners.find(part); slot != owners.end()) {
+            slot->second.storage = Json::object();
+            slot->second.storage_dirty = false;
+            slot->second.storage_loaded = false;
+        }
+    }
+
+    static int ApiPartRun(lua_State *lua) {
+        Impl *self = Upvalue(lua);
+        std::size_t length = 0;
+        const char *raw = luaL_checklstring(lua, 1, &length);
+        const std::string part(raw, length);
+        // The part's code: a function, or its script's source (compiled here as a chunk of its own, with the
+        // globals table given third and the name given fourth, so its line numbers are its own file's and it has a
+        // main chunk's room for locals, as when it was a mod of its own).
+        const bool source = lua_type(lua, 2) == LUA_TSTRING;
+        if (!source) luaL_checktype(lua, 2, LUA_TFUNCTION);
+        if (source && !lua_isnoneornil(lua, 3)) luaL_checktype(lua, 3, LUA_TTABLE);
+        if (self == nullptr || part == self->home_id || !self->owners.contains(part)) {
+            return luaL_error(lua, "'%s' is not a part of this pack", part.c_str());
+        }
+        if (self->manifest.id != self->home_id) return luaL_error(lua, "a part cannot start another part");
+        if (!self->part_functions.contains(part)) {
+            if (source) {
+                std::size_t code_length = 0;
+                const char *code = lua_tolstring(lua, 2, &code_length);
+                const std::string name = "=" + (lua_type(lua, 4) == LUA_TSTRING ? std::string(lua_tostring(lua, 4)) : part);
+                if (luaL_loadbufferx(lua, code, code_length, name.c_str(), "t") != LUA_OK) {
+                    const char *message = lua_tostring(lua, -1);
+                    std::string error = message != nullptr ? message : "the part's code does not compile";
+                    lua_pop(lua, 1);
+                    self->part_errors[part] = error;
+                    lua_pushboolean(lua, 0);
+                    lua_pushlstring(lua, error.data(), error.size());
+                    return 2;
+                }
+                if (lua_istable(lua, 3)) {
+                    lua_pushvalue(lua, 3);
+                    lua_setupvalue(lua, -2, 1); // a main chunk's one upvalue is its _ENV
+                    lua_newtable(lua);          // a copy of the globals as handed over
+                    lua_pushnil(lua);
+                    while (lua_next(lua, 3) != 0) {
+                        lua_pushvalue(lua, -2);
+                        lua_insert(lua, -2);
+                        lua_rawset(lua, -4);
+                    }
+                    const int copy = luaL_ref(lua, LUA_REGISTRYINDEX);
+                    lua_pushvalue(lua, 3);
+                    self->part_globals[part] = {luaL_ref(lua, LUA_REGISTRYINDEX), copy};
+                }
+            } else {
+                lua_pushvalue(lua, 2);
+            }
+            self->part_functions[part] = luaL_ref(lua, LUA_REGISTRYINDEX);
+        }
+        if (!self->enabled_parts.contains(part)) {
+            lua_pushboolean(lua, 0);
+            lua_pushstring(lua, "off");
+            return 2;
+        }
+        std::string error;
+        const bool started = self->StartPart(part, error);
+        lua_pushboolean(lua, started ? 1 : 0);
+        if (started) {
+            lua_pushnil(lua);
+        } else {
+            lua_pushlstring(lua, error.data(), error.size());
+        }
+        return 2;
+    }
+
+    static int ApiPartEnabled(lua_State *lua) {
+        Impl *self = Upvalue(lua);
+        std::size_t length = 0;
+        const char *raw = luaL_checklstring(lua, 1, &length);
+        lua_pushboolean(lua, self != nullptr && self->enabled_parts.contains(std::string_view(raw, length)) ? 1 : 0);
+        return 1;
+    }
+
+    static int ApiPartList(lua_State *lua) {
+        Impl *self = Upvalue(lua);
+        Json parts = Json::array();
+        if (self != nullptr) {
+            for (const auto &[id, slot] : self->owners) {
+                if (id == self->home_id) continue;
+                parts.push_back({{"id", id},
+                                 {"enabled", self->enabled_parts.contains(id)},
+                                 {"running", self->running_parts.contains(id)}});
+            }
+        }
+        PushJson(lua, parts);
+        return 1;
+    }
 
     static void *Allocate(void *userdata, void *pointer, std::size_t old_size, std::size_t new_size) {
         auto &memory = *static_cast<Memory *>(userdata);
@@ -2638,7 +2951,8 @@ struct LuaMod::Impl {
         const bool package_operation = operation->domain == "audio";
         if (package_operation && config.package_api_handler) {
             try {
-                ApiCallResult result = config.package_api_handler(manifest.id, manifest.package_root, *operation, arguments);
+                const std::string owner = manifest.id;
+                ApiCallResult result = config.package_api_handler(owner, manifest.package_root, *operation, arguments);
                 const std::size_t response_limit = path == "resources.resolve" ? kApiResourceResultBytesLimit
                                                                                  : kApiValueBytesLimit;
                 if (result.status == ApiCallStatus::Ok && result.value.dump().size() > response_limit) {
@@ -2655,7 +2969,8 @@ struct LuaMod::Impl {
             return {ApiCallStatus::Unsupported, nullptr, "this game adapter has not bound the operation"};
         }
         try {
-            ApiCallResult result = config.api_handler(manifest.id, *operation, arguments);
+            const std::string owner = manifest.id;
+            ApiCallResult result = config.api_handler(owner, *operation, arguments);
             const std::size_t response_limit = path == "resources.resolve" ? kApiResourceResultBytesLimit
                                                                              : kApiValueBytesLimit;
             if (result.status == ApiCallStatus::Ok && result.value.dump().size() > response_limit) {
@@ -2771,10 +3086,10 @@ struct LuaMod::Impl {
 
     int AddCallback(std::string event, int reference) {
         auto &list = callbacks[std::move(event)];
-        if (list.size() >= kEventCallbackLimit) return 0;
+        if (list.size() >= callback_limit) return 0;
         if (next_event_token <= 0 || next_event_token == std::numeric_limits<int>::max()) next_event_token = 1;
         const int token = next_event_token++;
-        list.push_back({token, reference});
+        list.push_back({token, reference, manifest.id});
         return token;
     }
 
@@ -2810,7 +3125,7 @@ struct LuaMod::Impl {
         }
         luaL_checktype(lua, callback_index, LUA_TFUNCTION);
         const auto found = self->callbacks.find(event_name);
-        if (found != self->callbacks.end() && found->second.size() >= kEventCallbackLimit) {
+        if (found != self->callbacks.end() && found->second.size() >= self->callback_limit) {
             error = "event callback limit reached";
             return false;
         }
@@ -3043,7 +3358,12 @@ struct LuaMod::Impl {
                                        "unknown hook id; inspect game.scripts.list_hooks()"});
         }
         const bool enabled = enabled_field == definition.end() || enabled_field->get<bool>();
-        const auto existing = self->script_overrides.find(hook_id);
+        auto existing = self->script_overrides.find(hook_id);
+        if (existing != self->script_overrides.end() && existing->second.owner != self->manifest.id) {
+            // another part of this pack holds the hook: removing leaves it; taking it over says so
+            if (!enabled) existing = self->script_overrides.end();
+            else self->Log("warning", "takes native script hook '" + std::string(hook_id) + "' from " + existing->second.owner);
+        }
         if (!enabled) {
             if (lua_gettop(lua) != first_argument) {
                 return PushApiResult(lua, {ApiCallStatus::InvalidArgument, nullptr,
@@ -3071,7 +3391,7 @@ struct LuaMod::Impl {
         const int reference = luaL_ref(lua, LUA_REGISTRYINDEX);
         const bool replaced = existing != self->script_overrides.end();
         if (replaced) luaL_unref(lua, LUA_REGISTRYINDEX, existing->second.reference);
-        self->script_overrides[hook_id] = ScriptOverrideCallback{reference};
+        self->script_overrides[hook_id] = ScriptOverrideCallback{reference, self->manifest.id};
         if (hook_id == "native.monster.run") BumpMonsterScriptOverrideGeneration();
         PushJson(lua, {{"id", hook_id}, {"enabled", true}, {"replaced", replaced}});
         lua_pushnil(lua);
@@ -3176,7 +3496,7 @@ struct LuaMod::Impl {
             lua_pushnil(lua);
             return 1;
         }
-        const Json value = self->setting_reader(std::string_view(key, length));
+        const Json value = self->setting_reader(self->manifest.id, std::string_view(key, length));
         PushJson(lua, value);
         return 1;
     }
@@ -3379,6 +3699,13 @@ struct LuaMod::Impl {
 
         lua_pushlstring(state, config.game_id.data(), config.game_id.size());
         lua_setglobal(state, "game_id");
+        if (!owners.empty()) {
+            lua_newtable(state);
+            SetFunction(state, "run", ApiPartRun, this);
+            SetFunction(state, "enabled", ApiPartEnabled, this);
+            SetFunction(state, "list", ApiPartList, this);
+            lua_setfield(state, -2, "part");
+        }
         lua_setglobal(state, "moonmod");
         RegisterGameApi();
     }
@@ -3444,9 +3771,25 @@ struct LuaMod::Impl {
         }
     }
 
-    void Emit(std::string_view event_name, const Json &payload) {
+    void Emit(std::string_view event_name, const Json &payload, std::string_view only_owner = {}) {
         if (state == nullptr) return;
-        if (event_name.starts_with("game.")) AdvanceQuestsFromEvent(event_name, payload);
+        if (event_name.starts_with("game.")) {
+            if (owners.empty()) {
+                AdvanceQuestsFromEvent(event_name, payload);
+            } else {
+                for (const std::string &owner : OwnerIds()) {
+                    if (!only_owner.empty() && owner != only_owner) continue;
+                    const auto slot = owners.find(owner);
+                    const bool current = owner == manifest.id;
+                    if (!current && (slot == owners.end() || !slot->second.storage.contains(std::string(kQuestStorageKey)))) {
+                        continue;
+                    }
+                    OwnerScope scope(*this, owner);
+                    AdvanceQuestsFromEvent(event_name, payload);
+                }
+            }
+        }
+        OwnerScope target_scope(*this, only_owner);
         if (event_name == "ui.action" && payload.is_object() && payload.contains("id") && payload["id"].is_string()) {
             const std::string &action_id = payload["id"].get_ref<const std::string &>();
             if (action_id.starts_with("cmd.")) {
@@ -3465,7 +3808,9 @@ struct LuaMod::Impl {
         const bool previous_migration_window = save_migration_window;
         save_migration_window = event_name == "runtime.loaded";
         for (const EventCallback &callback : event_callbacks) {
+            if (!only_owner.empty() && callback.owner != only_owner) continue;
             if (!HasCallback(callback.token)) continue;
+            OwnerScope scope(*this, callback.owner);
             lua_rawgeti(state, LUA_REGISTRYINDEX, callback.reference);
             PushJson(state, payload);
             std::string error;
@@ -3478,7 +3823,7 @@ struct LuaMod::Impl {
 };
 
 LuaMod::LuaMod(const RuntimeConfig &config, const ModManifest &manifest,
-               std::function<Json(std::string_view)> setting_reader)
+               std::function<Json(std::string_view, std::string_view)> setting_reader)
     : impl_(std::make_unique<Impl>(config, manifest, std::move(setting_reader))) {}
 
 LuaMod::~LuaMod() { Unload(); }
@@ -3494,6 +3839,7 @@ bool LuaMod::Load(std::string &error) {
         return false;
     }
     *static_cast<Impl **>(lua_getextraspace(self.state)) = &self;
+    self.ResetOwners();
     self.OpenSafeLibraries();
     self.RegisterApi();
 
@@ -3532,19 +3878,12 @@ bool LuaMod::Load(std::string &error) {
 void LuaMod::Unload() {
     if (!impl_ || impl_->state == nullptr) return;
     Impl &self = *impl_;
+    self.SwitchOwner(self.home_id);
     Emit("runtime.unloaded", Json::object());
-    if (self.config.api_owner_unloaded) {
-        try {
-            self.config.api_owner_unloaded(self.manifest.id);
-        } catch (const std::exception &exception) {
-            self.Log("error", std::string("API owner cleanup failed: ") + exception.what());
-        } catch (...) {
-            self.Log("error", "API owner cleanup failed with an unknown exception");
-        }
+    for (const std::string &part : std::vector<std::string>(self.running_parts.begin(), self.running_parts.end())) {
+        self.StopPart(part, false);
     }
-    RemoveNativeResourceOverridesByOwner(self.manifest.id);
-    RemoveManagerActions(self.manifest.id);
-    ClearCharacterSheet(self.manifest.id);
+    self.ReleaseOwner(self.manifest.id);
     std::string error;
     if (!self.FlushStorage(error)) self.Log("error", error);
     lua_close(self.state);
@@ -3552,38 +3891,72 @@ void LuaMod::Unload() {
     self.callbacks.clear();
     if (self.script_overrides.contains("native.monster.run")) BumpMonsterScriptOverrideGeneration();
     self.script_overrides.clear();
+    self.owners.clear();
+    self.part_functions.clear();
+    self.part_globals.clear();
     self.memory.used = 0;
 }
 
-void LuaMod::Emit(std::string_view event_name, const Json &payload) {
-    impl_->Emit(event_name, payload);
+void LuaMod::Emit(std::string_view event_name, const Json &payload, std::string_view owner) {
+    impl_->Emit(event_name, payload, owner);
 }
 
-ApiCallResult LuaMod::GetQuests() const {
+void LuaMod::SetEnabledParts(std::set<std::string, std::less<>> parts) { impl_->enabled_parts = std::move(parts); }
+
+bool LuaMod::StartPart(std::string_view part, std::string &error) {
+    impl_->enabled_parts.insert(std::string(part));
+    if (impl_->state == nullptr) {
+        error = "the pack is not running";
+        return false;
+    }
+    return impl_->StartPart(std::string(part), error);
+}
+
+void LuaMod::StopPart(std::string_view part) {
+    impl_->enabled_parts.erase(std::string(part));
+    if (impl_->state != nullptr) impl_->StopPart(std::string(part), true);
+}
+
+bool LuaMod::PartRunning(std::string_view part) const { return impl_->running_parts.contains(part); }
+
+std::string LuaMod::PartError(std::string_view part) const {
+    const auto found = impl_->part_errors.find(part);
+    return found == impl_->part_errors.end() ? std::string{} : found->second;
+}
+
+bool LuaMod::OwnsHook(std::string_view owner) const {
+    return std::ranges::any_of(impl_->script_overrides, [&](const auto &entry) { return entry.second.owner == owner; });
+}
+
+ApiCallResult LuaMod::GetQuests(std::string_view owner) const {
     if (impl_ == nullptr || impl_->state == nullptr) {
         return {ApiCallStatus::Failed, nullptr, "quest owner is not loaded"};
     }
+    Impl::OwnerScope scope(*impl_, owner);
     return impl_->GetQuests(Json::array());
 }
 
-ApiCallResult LuaMod::GetSkills() const {
+ApiCallResult LuaMod::GetSkills(std::string_view owner) const {
     if (impl_ == nullptr || impl_->state == nullptr) {
         return {ApiCallStatus::Failed, nullptr, "skill owner is not loaded"};
     }
+    Impl::OwnerScope scope(*impl_, owner);
     return impl_->GetSkills(Json::array());
 }
 
-ApiCallResult LuaMod::InvokeFunction(std::string_view function_id, const Json &arguments) {
+ApiCallResult LuaMod::InvokeFunction(std::string_view owner, std::string_view function_id, const Json &arguments) {
     if (impl_ == nullptr || impl_->state == nullptr) {
         return {ApiCallStatus::Failed, nullptr, "script function owner is not loaded"};
     }
+    Impl::OwnerScope scope(*impl_, owner);
     return impl_->InvokeScriptFunction(function_id, arguments);
 }
 
-ApiCallResult LuaMod::ListFunctions() const {
+ApiCallResult LuaMod::ListFunctions(std::string_view owner) const {
     if (impl_ == nullptr || impl_->state == nullptr) {
         return {ApiCallStatus::Failed, nullptr, "script function owner is not loaded"};
     }
+    Impl::OwnerScope scope(*impl_, owner);
     return impl_->ListOwnScriptFunctions();
 }
 
@@ -3600,6 +3973,7 @@ std::optional<ApiCallResult> LuaMod::InvokeScriptOverride(std::string_view hook_
         return ApiCallResult{ApiCallStatus::InvalidArgument, nullptr,
                              "native script hook context is not valid JSON"};
     }
+    Impl::OwnerScope scope(*impl_, found->second.owner);
     lua_rawgeti(impl_->state, LUA_REGISTRYINDEX, found->second.reference);
     PushJson(impl_->state, payload);
     std::string error;

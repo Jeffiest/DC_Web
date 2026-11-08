@@ -40,6 +40,9 @@ struct ModRecord {
     bool                   native_trusted = false;
     bool                   valid_manifest = false;
     std::string            native_status;
+    std::string            pack;           // a merged pack's part: the pack's id (it runs inside the pack's Lua)
+    bool                   part_switch = true; // a part's own switch, kept apart from its pack's (profile "parts")
+    std::string            restart_reason; // why the last on/off waits for a restart (empty: it took effect at once)
 };
 
 using PackageApiCallHandler = std::function<ApiCallResult(std::string_view mod_id,
@@ -103,6 +106,7 @@ public:
     std::vector<std::string> LoadedModOrder() const;
     bool                      Running() const;
     std::uint64_t             Frame() const;
+    // Saves the choice, and applies it at once when the package's hooks can be undone (see ModRecord::restart_reason).
     bool                      SetEnabled(std::string_view id, bool enabled, std::string &error);
     bool                      SetNativeTrusted(std::string_view id, bool trusted, std::string &error);
     Json                      Setting(std::string_view mod_id, std::string_view setting_id) const;

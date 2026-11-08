@@ -3,6 +3,7 @@
 #include "moonmod/symlinks.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -53,9 +54,94 @@ bool NativeJsonApiCallable(std::string_view path) {
            path != "commands.register" && path != "scripts.register_function" && path != "scripts.override";
 }
 
+// What a mod can register that the game keeps after the mod goes: data-defined items, weapons, build-ups, characters
+// (enemies, villagers, playable heroes), floors, locations, Georama pieces, models and animation bindings. A mod
+// (or pack part) that did any of it this run turns off only with a restart; one whose script asks for any of it turns
+// on mid-game only from the title screen.
+constexpr std::array<std::string_view, 16> kStickyOperations = {
+    "items.register",        "weapons.register",          "weapons.build_up_register", "characters.register",
+    "characters.register_playable", "dungeons.register",  "world.register_dungeon",    "georama.register",
+    "locations.register",    "content.register",          "models.register",           "animations.register",
+    "inventions.register",   "combat.styles_register",    "animations.player_register", "animations.monster_register"};
+
+bool StickyOperation(std::string_view path) {
+    return std::ranges::find(kStickyOperations, path) != kStickyOperations.end();
+}
+
+// What a sticky operation adds, in the words the Mod Manager uses.
+std::string_view StickyNoun(std::string_view path) {
+    if (path == "items.register") return "items";
+    if (path == "weapons.register" || path == "weapons.build_up_register") return "weapons";
+    if (path == "characters.register") return "characters";
+    if (path == "characters.register_playable") return "playable characters";
+    if (path == "dungeons.register" || path == "world.register_dungeon") return "dungeons";
+    if (path == "georama.register") return "Georama parts";
+    if (path == "locations.register") return "places";
+    if (path == "models.register") return "models";
+    if (path.starts_with("animations.")) return "animations";
+    if (path == "inventions.register") return "inventions";
+    if (path == "combat.styles_register") return "combat styles";
+    return "content";
+}
+
+// "items, dungeons and playable characters"
+std::string JoinNouns(const std::set<std::string, std::less<>> &nouns) {
+    std::string text;
+    std::size_t index = 0;
+    for (const std::string &noun : nouns) {
+        if (index > 0) text += index + 1 == nouns.size() ? " and " : ", ";
+        text += noun;
+        ++index;
+    }
+    return text.empty() ? std::string("content") : text;
+}
+
+// A pack part's code: between "-- moonmod:part <id>" and the next "-- moonmod:end" in the pack's script. Without the
+// markers, the whole script counts.
+std::string ScriptText(const ModManifest &manifest, std::string_view part) {
+    std::ifstream input(manifest.entry_file, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    std::erase(text, '\r'); // a checkout may have turned the script's line ends into CRLF
+    if (part.empty()) return text;
+    const std::string begin = "-- moonmod:part " + std::string(part) + "\n";
+    const auto start = text.find(begin);
+    if (start == std::string::npos) return text;
+    const auto end = text.find("-- moonmod:end", start);
+    return text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+// What the script (or the part's code) would add that the game keeps; empty when nothing.
+std::set<std::string, std::less<>> ScriptAsksForSticky(const ModManifest &manifest, std::string_view part) {
+    const std::string text = ScriptText(manifest, part);
+    std::set<std::string, std::less<>> nouns;
+    for (std::string_view path : kStickyOperations) {
+        if (text.find(path) != std::string::npos) nouns.emplace(StickyNoun(path));
+    }
+    return nouns;
+}
+
+using FileStamp = std::pair<std::filesystem::file_time_type, std::filesystem::file_time_type>;
+
+FileStamp PackageStamp(const ModRecord &record) {
+    std::error_code ec;
+    FileStamp stamp{};
+    stamp.first = std::filesystem::last_write_time(record.package_root / "mod.json", ec);
+    if (!record.manifest.entry_file.empty()) stamp.second = std::filesystem::last_write_time(record.manifest.entry_file, ec);
+    return stamp;
+}
+
 Json DefaultProfile() {
     return {{"format_version", 1}, {"enabled", Json::object()}, {"settings", Json::object()},
-            {"native_trusted", Json::object()}};
+            {"native_trusted", Json::object()}, {"parts", Json::object()}};
+}
+
+// A pack part's own switch: parts[pack][part], on unless turned off. Kept apart from "enabled" so the pack's switch
+// never overwrites a part's choice, and a separate mod of the same id keeps its own.
+bool PartChoice(const Json &parts, std::string_view pack, std::string_view part) {
+    const auto in_pack = parts.find(std::string(pack));
+    if (in_pack == parts.end() || !in_pack->is_object()) return true;
+    const auto found = in_pack->find(std::string(part));
+    return found == in_pack->end() || !found->is_boolean() || found->get<bool>();
 }
 
 
@@ -73,6 +159,7 @@ struct Runtime::Impl {
     RuntimeConfig config;
     Json profile = DefaultProfile();
     Json session_enabled = Json::object();
+    Json session_parts = Json::object(); // pack part switches for this run (profile["parts"] at start, then live)
     // MOONMOD_NO_MODS=1 (a launcher's Mods switch off): every mod is off for this run; the profile keeps the choices.
     bool mods_off_this_run = false;
     std::filesystem::path profile_file;
@@ -85,6 +172,26 @@ struct Runtime::Impl {
     std::uint64_t frame = 0;
     int script_function_call_depth = 0;
     bool running = false;
+    // Live on/off: owners that registered content the game keeps, whether a game session is on, and each running
+    // package's files as they were when it loaded.
+    std::map<std::string, std::set<std::string, std::less<>>, std::less<>> sticky_owners; // owner -> what it added
+    bool session_active = false;
+    bool in_game = false; // the last scene entered wasn't the title screen
+    std::map<std::string, FileStamp, std::less<>> loaded_stamps;
+    // Packages whose live reload failed (a script saved half-way, a syntax error): tried again when files change.
+    std::map<std::string, FileStamp, std::less<>> failed_stamps;
+
+    // The Lua state that runs a mod or pack part, and the owner to run it as.
+    LuaMod *ModuleFor(std::string_view id) const {
+        const ModRecord *record = Find(id);
+        const std::string_view package = record != nullptr && !record->pack.empty() ? std::string_view(record->pack) : id;
+        const auto module = std::ranges::find(modules, package, [](const auto &entry) -> std::string_view {
+            return entry.first;
+        });
+        if (module == modules.end()) return nullptr;
+        if (package != id && !module->second->PartRunning(id)) return nullptr;
+        return module->second.get();
+    }
 
     void Queue(std::string_view event, const Json &payload) {
         if (event.empty() || queued_events.size() >= kMaxQueuedEvents) {
@@ -252,6 +359,13 @@ struct Runtime::Impl {
             if (loaded.contains("native_trusted") && loaded["native_trusted"].is_object()) {
                 profile["native_trusted"] = loaded["native_trusted"];
             }
+            if (loaded.contains("parts") && loaded["parts"].is_object()) {
+                // Only a pack's object of part switches is kept: anything else (a hand-edited "pack": true) is
+                // dropped, so its parts start switched on.
+                for (const auto &[pack, choices] : loaded["parts"].items()) {
+                    if (choices.is_object()) profile["parts"][pack] = choices;
+                }
+            }
             return true;
         } catch (const std::exception &exception) {
             error = std::string("MoonFactory profile could not be parsed: ") + exception.what();
@@ -406,6 +520,101 @@ struct Runtime::Impl {
         std::stable_sort(records.begin(), records.end(), [](const ModRecord &left, const ModRecord &right) {
             return left.id < right.id;
         });
+        AddPartRecords();
+    }
+
+    // A merged pack's parts are records of their own (settings, quests, co-op entries, the manager's pages). While the
+    // pack is on, a part stands in for a package of the same id beside it; while the pack is off, that one is itself.
+    void AddPartRecords() {
+        std::vector<ModRecord> added;
+        const std::size_t count = records.size();
+        for (std::size_t pack_index = 0; pack_index < count; ++pack_index) {
+            const ModRecord pack = records[pack_index];
+            if (!pack.valid_manifest || pack.manifest.parts.empty() || pack.state == ModState::Invalid) continue;
+            for (const ModManifest &part : pack.manifest.parts) {
+                ModRecord *standalone = Find(part.id);
+                if (standalone != nullptr && !pack.enabled) continue;
+                ModRecord record;
+                record.manifest = part;
+                record.package_root = pack.package_root;
+                record.id = part.id;
+                record.display_name = part.name;
+                record.valid_manifest = true;
+                record.pack = pack.id;
+                record.enabled = pack.enabled && PartChoice(session_parts, pack.id, part.id);
+                record.part_switch = PartChoice(profile["parts"], pack.id, part.id);
+                record.enabled_next_launch = pack.enabled_next_launch && record.part_switch;
+                record.restart_required = !mods_off_this_run && record.enabled != record.enabled_next_launch;
+                record.state = pack.state == ModState::Incompatible ? ModState::Incompatible
+                               : record.enabled                    ? ModState::Ready
+                                                                   : ModState::Disabled;
+                record.status_message = pack.state == ModState::Incompatible ? pack.status_message
+                                                                             : "Part of " + pack.display_name;
+                if (standalone != nullptr) {
+                    *standalone = std::move(record);
+                } else {
+                    added.push_back(std::move(record));
+                }
+            }
+        }
+        for (ModRecord &record : added) records.push_back(std::move(record));
+        // The manager lists a pack's parts right under it.
+        auto group = [](const ModRecord &record) -> const std::string & { return record.pack.empty() ? record.id : record.pack; };
+        std::stable_sort(records.begin(), records.end(), [&](const ModRecord &left, const ModRecord &right) {
+            if (group(left) != group(right)) return group(left) < group(right);
+            if (left.pack.empty() != right.pack.empty()) return left.pack.empty();
+            return left.id < right.id;
+        });
+    }
+
+    // After records are read again: what runs keeps its state; what no longer runs says so.
+    void SyncStates(const std::map<std::string, std::tuple<ModState, std::string, std::string>, std::less<>> &before) {
+        for (ModRecord &record : records) {
+            if (const auto kept = before.find(record.id); kept != before.end()) {
+                std::tie(record.state, record.status_message, record.native_status) = kept->second;
+            }
+            LuaMod *module = ModuleFor(record.id);
+            const bool part = !record.pack.empty();
+            if (module != nullptr) {
+                record.state = ModState::Loaded;
+                if (part) record.status_message = "Running in " + record.pack;
+                continue;
+            }
+            if (record.state == ModState::Loaded || (part && record.state != ModState::Incompatible)) {
+                record.state = record.enabled ? ModState::Ready : ModState::Disabled;
+                record.status_message = part ? "Part of " + record.pack : std::string{};
+                if (part && record.enabled) {
+                    const auto pack = std::ranges::find(modules, record.pack, [](const auto &entry) -> std::string_view {
+                        return entry.first;
+                    });
+                    if (pack != modules.end() && !pack->second->PartError(record.id).empty()) {
+                        record.state = ModState::LoadError;
+                        record.status_message = pack->second->PartError(record.id);
+                    }
+                }
+            }
+        }
+    }
+
+    std::map<std::string, std::tuple<ModState, std::string, std::string>, std::less<>> SnapshotStates() const {
+        std::map<std::string, std::tuple<ModState, std::string, std::string>, std::less<>> states;
+        for (const ModRecord &record : records) states[record.id] = {record.state, record.status_message, record.native_status};
+        return states;
+    }
+
+    void Rediscover() {
+        const auto before = SnapshotStates();
+        std::map<std::string, std::string, std::less<>> reasons; // why a change waits, while it still does
+        for (const ModRecord &record : records) {
+            if (record.restart_required && !record.restart_reason.empty()) reasons[record.id] = record.restart_reason;
+        }
+        Discover();
+        SyncStates(before);
+        for (ModRecord &record : records) {
+            if (const auto reason = reasons.find(record.id); reason != reasons.end() && record.restart_required) {
+                record.restart_reason = reason->second;
+            }
+        }
     }
 
     ModRecord *Find(std::string_view id) {
@@ -426,21 +635,21 @@ struct Runtime::Impl {
         }
         const ModRecord *caller = Find(caller_id);
         const ModRecord *owner = Find(owner_id);
-        if (caller == nullptr || owner == nullptr || owner->state != ModState::Loaded) {
+        if (caller == nullptr || owner == nullptr ||
+            (owner->state != ModState::Loaded && (owner->pack.empty() || ModuleFor(owner_id) == nullptr))) {
             return {ApiCallStatus::Failed, nullptr, "script function owner is not loaded"};
         }
         const bool declared_dependency =
             std::ranges::find(caller->manifest.dependencies, owner_id) != caller->manifest.dependencies.end() ||
             std::ranges::find(caller->manifest.optional_dependencies, owner_id) !=
                 caller->manifest.optional_dependencies.end();
-        if (caller_id != owner_id && !declared_dependency) {
+        const bool same_pack = !owner->pack.empty() && (owner->pack == caller->pack || owner->pack == caller->id);
+        if (caller_id != owner_id && !declared_dependency && !same_pack) {
             return {ApiCallStatus::PermissionDenied, nullptr,
                     "calling another mod's functions requires a declared dependency"};
         }
-        const auto module = std::ranges::find(modules, owner_id, [](const auto &entry) -> std::string_view {
-            return entry.first;
-        });
-        if (module == modules.end()) {
+        LuaMod *module = ModuleFor(owner_id);
+        if (module == nullptr) {
             return {ApiCallStatus::Failed, nullptr, "script function owner is not running"};
         }
         ++script_function_call_depth;
@@ -448,7 +657,7 @@ struct Runtime::Impl {
             int &depth;
             ~DepthGuard() { --depth; }
         } guard{script_function_call_depth};
-        return module->second->InvokeFunction(function_id, arguments);
+        return module->InvokeFunction(owner_id, function_id, arguments);
     }
 
     ApiCallResult ListScriptFunctions(std::string_view caller_id) const {
@@ -470,11 +679,9 @@ struct Runtime::Impl {
 
         Json functions = Json::array();
         for (const std::string &owner_id : owners) {
-            const auto module = std::ranges::find(modules, owner_id, [](const auto &entry) -> std::string_view {
-                return entry.first;
-            });
-            if (module == modules.end()) continue;
-            ApiCallResult listed = module->second->ListFunctions();
+            LuaMod *module = ModuleFor(owner_id);
+            if (module == nullptr) continue;
+            ApiCallResult listed = module->ListFunctions(owner_id);
             if (listed.status != ApiCallStatus::Ok) return listed;
             const auto entries = listed.value.find("functions");
             if (entries == listed.value.end() || !entries->is_array()) {
@@ -486,13 +693,11 @@ struct Runtime::Impl {
     }
 
     ApiCallResult CallLuaApi(std::string_view mod_id, std::string_view path, const Json &arguments) {
-        const auto module = std::ranges::find(modules, mod_id, [](const auto &entry) -> std::string_view {
-            return entry.first;
-        });
-        if (module == modules.end()) {
+        LuaMod *module = ModuleFor(mod_id);
+        if (module == nullptr) {
             return {ApiCallStatus::Failed, nullptr, "native API caller's Lua package is not running"};
         }
-        return module->second->CallApi(path, arguments);
+        return module->CallApi(path, arguments);
     }
 
     ApiCallResult CallNativeScriptOriginal(std::string_view mod_id, std::string_view hook_id) {
@@ -659,9 +864,8 @@ struct Runtime::Impl {
     bool PersistSetting(const ModRecord &record, const SettingDefinition &setting, Json value, std::string &error) {
         profile["settings"][record.id][setting.id] = std::move(value);
         if (!SaveProfile(error)) return false;
-        const auto loaded = std::ranges::find_if(modules, [&](const auto &entry) { return entry.first == record.id; });
-        if (loaded != modules.end()) {
-            loaded->second->Emit("settings.changed", {{"id", setting.id}, {"value", SettingValue(record, setting)}});
+        if (LuaMod *module = ModuleFor(record.id); module != nullptr) {
+            module->Emit("settings.changed", {{"id", setting.id}, {"value", SettingValue(record, setting)}}, record.id);
         }
         return true;
     }
@@ -674,15 +878,19 @@ struct Runtime::Impl {
             if (record.valid_manifest) index.emplace(record.id, i);
         }
         std::vector<bool> candidate(records.size(), false);
+        // A pack's parts load with it: ordering against a part is ordering against its pack.
+        for (std::size_t i = 0; i < records.size(); ++i) {
+            if (records[i].pack.empty()) continue;
+            if (const auto pack = index.find(records[i].pack); pack != index.end()) index[records[i].id] = pack->second;
+        }
         for (std::size_t i = 0; i < records.size(); ++i) {
             ModRecord &record = records[i];
-            if (record.state != ModState::Ready || !record.enabled) continue;
+            if (record.state != ModState::Ready || !record.enabled || !record.pack.empty()) continue;
             bool blocked = false;
             for (const std::string &dependency : record.manifest.dependencies) {
-                const auto found = index.find(dependency);
-                if (found == index.end() || !records[found->second].enabled ||
-                    records[found->second].state == ModState::Incompatible ||
-                    records[found->second].state == ModState::Invalid) {
+                const ModRecord *found = Find(dependency);
+                if (found == nullptr || !found->enabled || found->state == ModState::Incompatible ||
+                    found->state == ModState::Invalid) {
                     record.state = ModState::MissingDependency;
                     record.status_message = "Requires enabled mod '" + dependency + "'";
                     blocked = true;
@@ -712,6 +920,13 @@ struct Runtime::Impl {
             }
             for (const std::string &before : manifest.load_before) {
                 if (const auto found = index.find(before); found != index.end()) add_edge(i, found->second);
+            }
+            for (const ModManifest &part : manifest.parts) {
+                for (const auto *list : {&part.dependencies, &part.optional_dependencies}) {
+                    for (const std::string &dependency : *list) {
+                        if (const auto found = index.find(dependency); found != index.end()) add_edge(found->second, i);
+                    }
+                }
             }
         }
         auto compare = [&](std::size_t left, std::size_t right) { return records[left].id < records[right].id; };
@@ -747,86 +962,402 @@ struct Runtime::Impl {
                 }
             }
             if (dependency_failed) continue;
-            auto module = std::make_unique<LuaMod>(
-                config, record.manifest,
-                [this, id = record.id](std::string_view setting_id) -> Json {
-                    const ModRecord *current = Find(id);
-                    if (current == nullptr) return nullptr;
-                    const SettingDefinition *setting = FindSetting(*current, setting_id);
-                    return setting == nullptr ? Json(nullptr) : SettingValue(*current, *setting);
-                });
-            std::string error;
-            if (!module->Load(error)) {
-                record.state = ModState::LoadError;
-                record.status_message = error;
-                Log("error", record.id, error);
-                continue;
-            }
-            modules.emplace_back(record.id, std::move(module));
-            record.state = ModState::Loaded;
-            record.status_message = "Lua package is running";
-            record.native_status.clear();
-            if (!record.manifest.native_library.empty()) {
-                if (!record.native_trusted) {
-                    record.native_status = "Native code is disabled until this package is trusted locally.";
-                    record.status_message = "Lua is running; native extension is not trusted";
-                    continue;
-                }
-                auto native = std::make_unique<NativePluginInstance>();
-                NativePluginLoadConfig native_config;
-                native_config.library = record.manifest.native_library;
-                native_config.plugin_id = record.id;
-                native_config.game_id = config.game_id;
-                native_config.build_id = config.build_id;
-                native_config.manifest_permissions = record.manifest.permissions;
-                native_config.api_capabilities = config.api_capabilities;
-                for (const ApiOperationSpec &operation : ApiCatalog()) {
-                    if (!IsCoreApiOperation(operation.path)) continue;
-                    const bool callable = NativeJsonApiCallable(operation.path);
-                    const auto existing = std::ranges::find(native_config.api_capabilities, operation.path,
-                                                            &ApiCapability::path);
-                    const ApiCapability capability{
-                        std::string(operation.path), callable,
-                        callable ? std::string{} :
-                                   "native api_call_json cannot provide callbacks or safely delegate api.call"};
-                    if (existing == native_config.api_capabilities.end()) {
-                        native_config.api_capabilities.push_back(capability);
-                    } else {
-                        *existing = capability;
-                    }
-                }
-                const std::filesystem::path package_root = record.package_root;
-                const PackageApiCallHandler package_api_handler = config.package_api_handler;
-                const ApiCallHandler api_handler = config.api_handler;
-                native_config.api_handler = [runtime = this, package_root, package_api_handler, api_handler](
-                                                std::string_view mod_id, const ApiOperationSpec &operation,
-                                                const Json &arguments) {
-                    if (operation.domain == "audio" && package_api_handler) {
-                        return package_api_handler(mod_id, package_root, operation, arguments);
-                    }
-                    if (IsCoreApiOperation(operation.path)) return runtime->CallLuaApi(mod_id, operation.path, arguments);
-                    return api_handler ? api_handler(mod_id, operation, arguments)
-                                       : ApiCallResult{ApiCallStatus::Unsupported, nullptr,
-                                                       "this game adapter has not bound the operation"};
-                };
-                native_config.log = config.log;
-                std::string native_error;
-                if (!native->Load(std::move(native_config), native_error)) {
-                    record.native_status = "Native extension failed to load: " + native_error;
-                    record.status_message = "Lua is running; native extension failed to load";
-                    Log("error", record.id, native_error);
-                    continue;
-                }
-                record.native_status = "Trusted native extension is running.";
-                record.status_message = "Lua and trusted native extension are running";
-                native_plugins.emplace_back(record.id, std::move(native));
-            }
+            LoadRecord(record);
         }
         for (auto &[id, module] : modules) {
             module->Emit("runtime.loaded", {{"game", config.game_id}, {"mod", id}, {"frame", frame}});
         }
         for (auto &[id, plugin] : native_plugins) {
             plugin->Publish("runtime.loaded", {{"game", config.game_id}, {"mod", id}, {"frame", frame}}, frame);
+        }
+    }
+
+
+    // Starts one package's Lua (and trusted native code). A merged pack starts the parts that are on.
+    bool LoadRecord(ModRecord &record) {
+        auto module = std::make_unique<LuaMod>(
+            config, record.manifest,
+            [this](std::string_view owner, std::string_view setting_id) -> Json {
+                const ModRecord *current = Find(owner);
+                if (current == nullptr) return nullptr;
+                const SettingDefinition *setting = FindSetting(*current, setting_id);
+                return setting == nullptr ? Json(nullptr) : SettingValue(*current, *setting);
+            });
+        LuaMod *started = module.get();
+        // A pack's parts may call each other while the pack loads: the pack is reachable from the start.
+        const bool pack = !record.manifest.parts.empty();
+        if (pack) {
+            module->SetEnabledParts(PartsToStart(record));
+            modules.emplace_back(record.id, std::move(module));
+        }
+        std::string error;
+        if (!started->Load(error)) {
+            if (pack) UnloadModule(record.id);
+            record.state = ModState::LoadError;
+            record.status_message = error;
+            Log("error", record.id, error);
+            for (ModRecord &part : records) {
+                if (part.pack != record.id || !part.enabled) continue;
+                part.state = ModState::LoadError;
+                part.status_message = record.display_name + " didn't load";
+            }
+            return false;
+        }
+        if (!pack) modules.emplace_back(record.id, std::move(module));
+        loaded_stamps[record.id] = PackageStamp(record);
+        record.state = ModState::Loaded;
+        record.status_message = "Lua package is running";
+        for (ModRecord &part : records) {
+            if (part.pack != record.id) continue;
+            if (started->PartRunning(part.id)) {
+                part.state = ModState::Loaded;
+                part.status_message = "Running in " + record.display_name;
+            } else if (part.enabled) {
+                part.state = ModState::LoadError;
+                part.status_message = started->PartError(part.id);
+            }
+        }
+        record.native_status.clear();
+        if (!record.manifest.native_library.empty()) {
+            if (!record.native_trusted) {
+                record.native_status = "Native code is disabled until this package is trusted locally.";
+                record.status_message = "Lua is running; native extension is not trusted";
+                return true;
+            }
+            auto native = std::make_unique<NativePluginInstance>();
+            NativePluginLoadConfig native_config;
+            native_config.library = record.manifest.native_library;
+            native_config.plugin_id = record.id;
+            native_config.game_id = config.game_id;
+            native_config.build_id = config.build_id;
+            native_config.manifest_permissions = record.manifest.permissions;
+            native_config.api_capabilities = config.api_capabilities;
+            for (const ApiOperationSpec &operation : ApiCatalog()) {
+                if (!IsCoreApiOperation(operation.path)) continue;
+                const bool callable = NativeJsonApiCallable(operation.path);
+                const auto existing = std::ranges::find(native_config.api_capabilities, operation.path,
+                                                        &ApiCapability::path);
+                const ApiCapability capability{
+                    std::string(operation.path), callable,
+                    callable ? std::string{} :
+                               "native api_call_json cannot provide callbacks or safely delegate api.call"};
+                if (existing == native_config.api_capabilities.end()) {
+                    native_config.api_capabilities.push_back(capability);
+                } else {
+                    *existing = capability;
+                }
+            }
+            const std::filesystem::path package_root = record.package_root;
+            const PackageApiCallHandler package_api_handler = config.package_api_handler;
+            const ApiCallHandler api_handler = config.api_handler;
+            native_config.api_handler = [runtime = this, package_root, package_api_handler, api_handler](
+                                            std::string_view mod_id, const ApiOperationSpec &operation,
+                                            const Json &arguments) {
+                if (operation.domain == "audio" && package_api_handler) {
+                    return package_api_handler(mod_id, package_root, operation, arguments);
+                }
+                if (IsCoreApiOperation(operation.path)) return runtime->CallLuaApi(mod_id, operation.path, arguments);
+                return api_handler ? api_handler(mod_id, operation, arguments)
+                                   : ApiCallResult{ApiCallStatus::Unsupported, nullptr,
+                                                   "this game adapter has not bound the operation"};
+            };
+            native_config.log = config.log;
+            std::string native_error;
+            if (!native->Load(std::move(native_config), native_error)) {
+                record.native_status = "Native extension failed to load: " + native_error;
+                record.status_message = "Lua is running; native extension failed to load";
+                Log("error", record.id, native_error);
+                return true;
+            }
+            record.native_status = "Trusted native extension is running.";
+            record.status_message = "Lua and trusted native extension are running";
+            native_plugins.emplace_back(record.id, std::move(native));
+        }
+        return true;
+    }
+
+    // Which of a pack's parts start: those on whose required mods are on.
+    std::set<std::string, std::less<>> PartsToStart(const ModRecord &pack) {
+        std::set<std::string, std::less<>> parts;
+        for (ModRecord &part : records) {
+            if (part.pack != pack.id || !part.enabled || part.state == ModState::Incompatible) continue;
+            bool ready = true;
+            for (const std::string &dependency : part.manifest.dependencies) {
+                const ModRecord *found = Find(dependency);
+                if (found == nullptr || !found->enabled) {
+                    part.state = ModState::MissingDependency;
+                    part.status_message = "Requires enabled mod '" + dependency + "'";
+                    ready = false;
+                    break;
+                }
+            }
+            if (ready) parts.insert(part.id);
+        }
+        return parts;
+    }
+
+
+    // ---- Live on/off: what can change now, and doing it.
+
+    std::vector<std::string> RunningDependents(const ModRecord &record) const {
+        std::vector<std::string> ids{record.id};
+        for (const ModManifest &part : record.manifest.parts) ids.push_back(part.id);
+        std::vector<std::string> dependents;
+        for (const ModRecord &other : records) {
+            if (other.state != ModState::Loaded || other.id == record.id || other.pack == record.id) continue;
+            for (const std::string &dependency : other.manifest.dependencies) {
+                if (std::ranges::find(ids, dependency) != ids.end()) dependents.push_back(other.display_name);
+            }
+        }
+        return dependents;
+    }
+
+    bool CanStopLive(const ModRecord &record, std::string &why) const {
+        if (!record.manifest.native_library.empty()) {
+            why = "it has native code";
+            return false;
+        }
+        std::vector<std::string> owners{record.id};
+        for (const ModManifest &part : record.manifest.parts) owners.push_back(part.id);
+        for (const std::string &owner : owners) {
+            if (const auto sticky = sticky_owners.find(owner); sticky != sticky_owners.end()) {
+                const ModRecord *part = Find(owner);
+                const std::string who = owner == record.id ? "it" : "its part " + (part ? part->display_name : owner);
+                why = who + " added " + JoinNouns(sticky->second) + ", which the game keeps until it closes";
+                return false;
+            }
+        }
+        if (const auto dependents = RunningDependents(record); !dependents.empty()) {
+            why = dependents.front() + " needs it";
+            return false;
+        }
+        return true;
+    }
+
+    bool CanStartLive(const ModRecord &record, std::string_view part, std::string &why) const {
+        if (!record.manifest.native_library.empty()) {
+            why = "it has native code";
+            return false;
+        }
+        if (session_active || in_game) {
+            if (const auto nouns = ScriptAsksForSticky(record.manifest, part); !nouns.empty()) {
+                why = "it adds " + JoinNouns(nouns) + "; turn it on from the title screen";
+                return false;
+            }
+        }
+        for (const std::string &dependency : part.empty() ? record.manifest.dependencies
+                                                          : Find(part)->manifest.dependencies) {
+            const ModRecord *found = Find(dependency);
+            if (found == nullptr || found->state != ModState::Loaded) {
+                why = "it needs " + dependency + " running";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void UnloadModule(std::string_view id) {
+        const auto module = std::ranges::find(modules, id, [](const auto &entry) -> std::string_view {
+            return entry.first;
+        });
+        if (module == modules.end()) return;
+        module->second->Unload();
+        modules.erase(module);
+        loaded_stamps.erase(std::string(id));
+        tick_seconds.erase(std::string(id));
+    }
+
+    void AnnounceLive(std::string_view package, std::string_view owner) {
+        LuaMod *module = ModuleFor(owner);
+        if (module == nullptr) return;
+        module->Emit("runtime.loaded", {{"game", config.game_id}, {"mod", owner}, {"frame", frame}, {"live", true}},
+                     package == owner ? std::string_view{} : owner);
+    }
+
+    // Turns a package, or a pack's part, on or off in this run when its hooks can be undone. On false, why says
+    // what keeps it for a restart; nothing has changed then.
+    bool ApplyLive(const std::string &id, bool enabled, std::string &why) {
+        why.clear();
+        if (!running || mods_off_this_run) {
+            why = "mods are off for this run";
+            return false;
+        }
+        ModRecord *record = Find(id);
+        if (record == nullptr) return false;
+
+        if (!record->pack.empty()) { // a pack's part
+            const ModRecord *pack = Find(record->pack);
+            const auto module = std::ranges::find(modules, record->pack, [](const auto &entry) -> std::string_view {
+                return entry.first;
+            });
+            if (pack == nullptr || module == modules.end()) {
+                session_parts[record->pack][id] = enabled; // the pack is off: nothing runs, nothing to restart
+                record->enabled = enabled && pack != nullptr && pack->enabled;
+                return true;
+            }
+            if (enabled) {
+                if (module->second->PartRunning(id)) return true;
+                if (!CanStartLive(*pack, id, why)) return false;
+                std::string error;
+                session_parts[record->pack][id] = true;
+                record->enabled = true;
+                if (!module->second->StartPart(id, error)) {
+                    record->state = ModState::LoadError;
+                    record->status_message = error;
+                    return true;
+                }
+                record->state = ModState::Loaded;
+                record->status_message = "Running in " + pack->display_name;
+                AnnounceLive(record->pack, id);
+                return true;
+            }
+            if (!module->second->PartRunning(id)) {
+                session_parts[record->pack][id] = false;
+                record->enabled = false;
+                record->state = ModState::Disabled;
+                return true;
+            }
+            if (const auto sticky = sticky_owners.find(id); sticky != sticky_owners.end()) {
+                why = "it added " + JoinNouns(sticky->second) + ", which the game keeps until it closes";
+                return false;
+            }
+            for (const ModRecord &other : records) {
+                if (other.state != ModState::Loaded || other.id == id) continue;
+                if (std::ranges::find(other.manifest.dependencies, id) != other.manifest.dependencies.end()) {
+                    why = other.display_name + " needs it";
+                    return false;
+                }
+            }
+            module->second->StopPart(id);
+            session_parts[record->pack][id] = false;
+            record->enabled = false;
+            record->state = ModState::Disabled;
+            record->status_message = "Part of " + pack->display_name;
+            return true;
+        }
+
+        const bool loaded = ModuleFor(id) != nullptr;
+        if (!enabled) {
+            if (!loaded) {
+                session_enabled[id] = false;
+                Rediscover();
+                return true;
+            }
+            if (!CanStopLive(*record, why)) return false;
+            const std::vector<ModManifest> parts = record->manifest.parts;
+            UnloadModule(id);
+            session_enabled[id] = false;
+            Rediscover();
+            // Separate mods the pack's parts stood in for are themselves again: those switched on start now.
+            for (const ModManifest &part : parts) StartStandalone(part.id);
+            return true;
+        }
+        if (loaded) return true;
+        if (record->state != ModState::Ready && record->state != ModState::Disabled &&
+            record->state != ModState::MissingDependency && record->state != ModState::LoadError) {
+            why = record->status_message;
+            return false;
+        }
+        if (!CanStartLive(*record, {}, why)) return false;
+        // A pack takes over the packages its parts stand in for: they go first, if they can.
+        for (const ModManifest &part : record->manifest.parts) {
+            const ModRecord *standalone = Find(part.id);
+            if (standalone == nullptr || standalone->pack == id || ModuleFor(part.id) == nullptr) continue;
+            if (!CanStopLive(*standalone, why)) {
+                why = standalone->display_name + " is running on its own and can't stop now: " + why;
+                return false;
+            }
+        }
+        for (const ModManifest &part : record->manifest.parts) {
+            const ModRecord *standalone = Find(part.id);
+            if (standalone != nullptr && standalone->pack.empty() && ModuleFor(part.id) != nullptr) UnloadModule(part.id);
+        }
+        session_enabled[id] = true;
+        Rediscover();
+        record = Find(id);
+        if (record == nullptr) return true;
+        record->enabled = true;
+        record->state = ModState::Ready;
+        if (LoadRecord(*record)) {
+            AnnounceLive(id, id);
+        } else {
+            // Like a failed reload: fixing and saving its files tries again.
+            failed_stamps[id] = PackageStamp(*record);
+            record->status_message += "; fix and save its files to try again";
+        }
+        return true;
+    }
+
+    // A separate mod that is switched on but not running (its pack just went off) starts now when it can.
+    void StartStandalone(std::string_view id) {
+        ModRecord *record = Find(id);
+        if (record == nullptr || !record->pack.empty() || !record->enabled || ModuleFor(id) != nullptr) return;
+        if (record->state != ModState::Ready && record->state != ModState::Disabled) return;
+        std::string why;
+        if (!CanStartLive(*record, {}, why)) {
+            record->state = ModState::Ready;
+            record->status_message = "Starts after a restart: " + why;
+            return;
+        }
+        record->state = ModState::Ready;
+        if (LoadRecord(*record)) AnnounceLive(record->id, record->id);
+    }
+
+    // Packages whose files changed since they loaded come back with the new files, when they can go and come back.
+    // One whose new files failed to load is tried again when they change once more.
+    void ReloadChangedPackages() {
+        std::vector<std::string> changed;
+        for (const auto &[id, stamp] : loaded_stamps) {
+            const ModRecord *record = Find(id);
+            if (record != nullptr && PackageStamp(*record) != stamp) changed.push_back(id);
+        }
+        std::vector<std::string> retry;
+        for (const auto &[id, stamp] : failed_stamps) {
+            const ModRecord *record = Find(id);
+            if (record != nullptr && PackageStamp(*record) != stamp) retry.push_back(id);
+        }
+        for (const std::string &id : changed) {
+            ModRecord *record = Find(id);
+            if (record == nullptr) continue;
+            loaded_stamps[id] = PackageStamp(*record);
+            std::string why;
+            if (!CanStopLive(*record, why) || !CanStartLive(*record, {}, why)) {
+                record->status_message = "Its files changed; restart to use them (" + why + ")";
+                Log("info", id, record->status_message);
+                continue;
+            }
+            UnloadModule(id);
+            ReloadPackage(id);
+        }
+        for (const std::string &id : retry) {
+            failed_stamps.erase(id);
+            if (ModuleFor(id) == nullptr) ReloadPackage(id);
+        }
+    }
+
+    void ReloadPackage(const std::string &id) {
+        Rediscover();
+        ModRecord *record = Find(id);
+        if (record != nullptr && !record->enabled) return; // switched off since: it stays off
+        if (record == nullptr || !record->valid_manifest) {
+            if (record != nullptr) failed_stamps[id] = PackageStamp(*record);
+            Log("warning", id, "files changed and the package no longer loads: " +
+                                   (record == nullptr ? std::string("it is gone") : record->status_message));
+            return;
+        }
+        std::string why;
+        if (!CanStartLive(*record, {}, why)) {
+            record->status_message = "Its files changed; restart to use them (" + why + ")";
+            return;
+        }
+        record->state = ModState::Ready;
+        if (LoadRecord(*record)) {
+            AnnounceLive(id, id);
+            Log("info", id, "reloaded after its files changed");
+        } else {
+            failed_stamps[id] = PackageStamp(*record);
+            record->status_message = "Its new files didn't load (" + record->status_message +
+                                     "); fix and save them to try again";
         }
     }
 
@@ -859,11 +1390,9 @@ struct Runtime::Impl {
     }
 
     bool EmitTo(std::string_view mod_id, std::string_view event, const Json &payload) {
-        const auto found = std::ranges::find(modules, mod_id, [](const auto &entry) -> std::string_view {
-            return entry.first;
-        });
-        if (found == modules.end()) return false;
-        found->second->Emit(event, payload);
+        LuaMod *found = ModuleFor(mod_id);
+        if (found == nullptr) return false;
+        found->Emit(event, payload, mod_id);
         const auto native = std::ranges::find(native_plugins, mod_id, [](const auto &entry) -> std::string_view {
             return entry.first;
         });
@@ -932,6 +1461,9 @@ bool Runtime::Start(RuntimeConfig config, std::string &error) {
                                  std::string_view mod_id, const ApiOperationSpec &operation,
                                  const Json &arguments) -> ApiCallResult {
             ApiCallResult result = adapter_call(mod_id, operation, arguments);
+            if (result.status == ApiCallStatus::Ok && StickyOperation(operation.path)) {
+                runtime->sticky_owners[std::string(mod_id)].emplace(StickyNoun(operation.path));
+            }
             if (result.status == ApiCallStatus::Ok && operation.path == "items.use") {
                 runtime->QueueItemUsed(mod_id, result.value);
             } else if (result.status == ApiCallStatus::Ok && operation.path == "items.give") {
@@ -1022,10 +1554,12 @@ bool Runtime::Start(RuntimeConfig config, std::string &error) {
     std::string profile_error;
     if (!impl_->LoadProfile(profile_error)) impl_->Log("warning", "", profile_error);
     impl_->session_enabled = impl_->profile["enabled"];
+    impl_->session_parts = impl_->profile["parts"];
     const char *no_mods = std::getenv("MOONMOD_NO_MODS");
     impl_->mods_off_this_run = no_mods != nullptr && std::string_view(no_mods) == "1";
     if (impl_->mods_off_this_run) {
         impl_->session_enabled = Json::object();
+        impl_->session_parts = Json::object();
         impl_->Log("info", "", "MOONMOD_NO_MODS=1: every mod is off for this run (the profile keeps its choices)");
     }
     impl_->Discover();
@@ -1040,6 +1574,11 @@ void Runtime::Stop() {
     impl_->Emit("runtime.stopping", {{"game", impl_->config.game_id}, {"frame", impl_->frame}});
     impl_->StopModules();
     impl_->records.clear();
+    impl_->sticky_owners.clear();
+    impl_->loaded_stamps.clear();
+    impl_->failed_stamps.clear();
+    impl_->session_active = false;
+    impl_->in_game = false;
     impl_->queued_events.clear();
     impl_->observed_world_location = nullptr;
     impl_->running = false;
@@ -1053,13 +1592,21 @@ void Runtime::Pump() {
     impl_->DrainSettingEvents();
     impl_->DrainQueuedEvents();
     impl_->Emit("game.tick", {{"frame", impl_->frame}});
+    // A package whose files change comes back with them (every two seconds or so).
+    if (impl_->frame % 120 == 0) impl_->ReloadChangedPackages();
 }
 
 void Runtime::Publish(std::string_view event_name, const Json &payload) {
     if (!impl_ || !impl_->running || event_name.empty()) return;
     impl_->Emit(event_name, payload);
+    if (event_name == "game.session.started") impl_->session_active = true;
+    // Any scene but the title screen is a game in play (a story save, a sandbox, a visit).
+    if (event_name == "game.scene.entered") impl_->in_game = payload.value("scene_id", std::string{}) != "title";
     // A session's borrowed settings (co-op's, the host's) end with it.
-    if (event_name == "game.session.ended" || event_name == "game.session.failed") impl_->ClearSettingOverlay({});
+    if (event_name == "game.session.ended" || event_name == "game.session.failed") {
+        impl_->session_active = false;
+        impl_->ClearSettingOverlay({});
+    }
 }
 
 void Runtime::ObserveWorldLocationNow() {
@@ -1093,15 +1640,19 @@ std::vector<std::string> Runtime::LoadedModOrder() const {
     std::vector<std::string> order;
     order.reserve(impl_->modules.size());
     for (const auto &[id, module] : impl_->modules) {
-        (void)module;
         order.push_back(id);
+        // a merged pack's running parts follow it
+        for (const ModRecord &record : impl_->records) {
+            if (record.pack == id && module->PartRunning(record.id)) order.push_back(record.id);
+        }
     }
     return order;
 }
 bool                      Runtime::Running() const { return impl_->running; }
 std::uint64_t             Runtime::Frame() const { return impl_->frame; }
 
-bool Runtime::SetEnabled(std::string_view id, bool enabled, std::string &error) {
+bool Runtime::SetEnabled(std::string_view requested_id, bool enabled, std::string &error) {
+    const std::string id(requested_id); // records are read again below; the caller's view may point into one
     ModRecord *record = impl_->Find(id);
     if (record == nullptr || !record->valid_manifest) {
         error = "this package does not have a valid manifest";
@@ -1111,14 +1662,38 @@ bool Runtime::SetEnabled(std::string_view id, bool enabled, std::string &error) 
         error = record->status_message;
         return false;
     }
-    const Json previous=impl_->profile["enabled"];
-    impl_->profile["enabled"][record->id] = enabled;
+    // A pack's part keeps its switch under the pack (profile "parts"), so the pack's own switch, which turns all its
+    // parts on and off as a unit, never overwrites it, and a separate mod of the same id keeps its own choice.
+    const std::string pack = record->pack;
+    const Json previous = impl_->profile;
+    if (pack.empty()) {
+        impl_->profile["enabled"][record->id] = enabled;
+    } else {
+        impl_->profile["parts"][pack][record->id] = enabled;
+    }
     if (!impl_->SaveProfile(error)) {
-        impl_->profile["enabled"]=previous;
+        impl_->profile = previous;
         return false;
     }
-    record->enabled_next_launch = enabled;
-    record->restart_required = record->enabled != enabled;
+    std::string why;
+    const bool live = impl_->ApplyLive(id, enabled, why);
+    record = impl_->Find(id);
+    if (record == nullptr) return true;
+    const ModRecord *owner = pack.empty() ? nullptr : impl_->Find(pack);
+    if (owner != nullptr) record->part_switch = enabled;
+    record->enabled_next_launch = enabled && (owner == nullptr || owner->enabled_next_launch);
+    // A part can apply at once yet still wait on its pack (the pack goes on or off only after a restart).
+    record->restart_required = record->enabled != record->enabled_next_launch;
+    record->restart_reason = !live                                            ? why
+                             : !record->restart_required || owner == nullptr ? std::string{}
+                             : owner->enabled_next_launch ? owner->display_name + " starts after a restart"
+                                                          : owner->display_name + " is off after a restart";
+    for (ModRecord &part : impl_->records) {
+        if (part.pack != id) continue;
+        part.enabled_next_launch = enabled && part.part_switch;
+        part.restart_required = part.enabled != part.enabled_next_launch;
+        if (part.restart_required) part.restart_reason = live ? (enabled ? "its pack is on" : "its pack is off") : why;
+    }
     return true;
 }
 
@@ -1222,10 +1797,7 @@ ApiCallResult Runtime::Quests(std::string_view mod_id) const {
     if (record == nullptr || !record->valid_manifest) {
         return {ApiCallStatus::Failed, nullptr, "mod package is unavailable"};
     }
-    const auto module = std::ranges::find(impl_->modules, mod_id, [](const auto &entry) -> std::string_view {
-        return entry.first;
-    });
-    if (module != impl_->modules.end()) return module->second->GetQuests();
+    if (LuaMod *running = impl_->ModuleFor(mod_id); running != nullptr) return running->GetQuests(mod_id);
 
     const std::filesystem::path storage_file = impl_->config.save_root / "moonmod" / "data" / record->id / "storage.json";
     if (moonmod::ContainsSymlinkBelow(storage_file, impl_->config.save_root)) {
@@ -1312,10 +1884,7 @@ ApiCallResult Runtime::Skills(std::string_view mod_id) const {
     if (record == nullptr || !record->valid_manifest) {
         return {ApiCallStatus::Failed, nullptr, "mod package is unavailable"};
     }
-    const auto module = std::ranges::find(impl_->modules, mod_id, [](const auto &entry) -> std::string_view {
-        return entry.first;
-    });
-    if (module != impl_->modules.end()) return module->second->GetSkills();
+    if (LuaMod *running = impl_->ModuleFor(mod_id); running != nullptr) return running->GetSkills(mod_id);
 
     const std::filesystem::path storage_file = impl_->config.save_root / "moonmod" / "data" / record->id / "storage.json";
     if (moonmod::ContainsSymlinkBelow(storage_file, impl_->config.save_root)) {

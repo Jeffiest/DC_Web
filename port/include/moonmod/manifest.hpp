@@ -58,6 +58,10 @@ struct ModManifest {
     std::filesystem::path package_root;
     std::filesystem::path entry_file;
     std::filesystem::path native_library;
+    // A merged pack ("parts" in mod.json): the mods whose code is in this package's one script. Each part keeps its own
+    // id, version, settings, co-op role and saved data, and owns what it registers. On a part, pack is the pack's id.
+    std::vector<ModManifest> parts;
+    std::string              pack;
 };
 
 std::optional<ModManifest> ReadManifest(const std::filesystem::path &package_root, std::string &error);

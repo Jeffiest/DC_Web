@@ -2829,6 +2829,8 @@ ApiCallResult GetWorld(const Json &args) {
         result["room_bonus_percent"] = DngRoomBonusPercent;
         result["monster_bonus_percent"] = DngMonsterBonusPercent;
         result["chest_bonus_percent"] = DngChestBonusPercent;
+        // Playing on the floor: false while it loads (its floor and seed aren't settled then), in a menu or a scene.
+        result["walking"] = gameTask == GAME_TASK_PLAY && BtGameModeFlag == BT_GAME_MODE_PLAY;
     }
     if (mode == GAME_MODE_EDIT && MapNo >= 0) result["map_no"] = MapNo; // the town, house or field the player is in
     if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < TOWN_COUNT) {
@@ -11380,7 +11382,9 @@ ApiCallResult EnterFloor(const Json &args) {
     int dungeon = mode == GAME_MODE_DUNGEON ? selectMapNo : -1;
     if (request.contains("dungeon_id") && !ReadBoundedInt(request, "dungeon_id", 0, DUNGEON_COUNT - 1, dungeon)) return Invalid(usage);
     const bool in_town = mode == GAME_MODE_EDIT && IsSettlementOrRegisteredLocationMap(MapNo);
-    if ((mode != GAME_MODE_DUNGEON && !in_town) || UserStatus == nullptr) return Failed("the player is not in a dungeon or a town");
+    // The save's status, not UserStatus: that is set only once a dungeon starts, so a game that has been in none since
+    // it started (a co-op guest arriving from the title, a save just loaded in a town) could not walk in from a town.
+    if ((mode != GAME_MODE_DUNGEON && !in_town) || CurrentStatus() == nullptr) return Failed("the player is not in a dungeon or a town");
     if (dungeon < 0 || dungeon >= DUNGEON_COUNT) return Failed(in_town ? "from a town, dungeon_id names the dungeon" : "the player is not in a dungeon");
     if (NextMapNo >= 0) return Failed("a native map transition is already pending");
     if (!ReadBoundedInt(request, "floor_id", 0, maxFloorTbl__3[dungeon] - 1, floor)) return Invalid(usage);
