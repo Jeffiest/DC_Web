@@ -27,8 +27,21 @@ struct Puppet {
     float         heading = 0.0f;
     bool          placed = false;
     int           motion = -1;
+    // Leading the host: its last report's place and step, and how fast it was going between reports (units a frame,
+    // on the ground), so the copy moves on from the report rather than trailing it.
+    float         vel[2] = {};
+    int           report_step = 0;
+    // This player's blows not yet in the host's reports: taken off the copy's HP at once, until a report shows them
+    // (the host's HP dropping) or a moment has passed (the host took less, or none).
+    int           pending = 0;
+    int           pending_until = 0;
 };
 std::array<Puppet, MONSTOR_SLOT_MAX> g_puppets;
+int g_step = 0; // the guest's frames, counted by MoonModCoopPuppetsStep
+
+constexpr int   kLeadFrames = 12;       // how far past the last report a copy is led: a fifth of a second at most
+constexpr int   kPendingFrames = 45;    // how long a blow waits for the host's report to show it
+constexpr float kTeleport = 160.0f;     // a jump this far is placed, not eased (a cell)
 
 constexpr float kAvatarHeight = 16.0f; // a hero's height for a hit, as the player's (CharaHeight)
 
@@ -81,7 +94,22 @@ bool MoonModCoopPuppetSet(int slot, const MoonModPuppet &puppet) {
     if (!p.used) {
         p.placed = false;
         p.motion = -1;
+        p.vel[0] = p.vel[1] = 0.0f;
+        p.pending = 0;
+    } else {
+        // how fast the host's monster went since its last report, eased with the speed before
+        const int   dt = std::clamp(g_step - p.report_step, 1, 30);
+        const float dx = puppet.x - p.host.x, dz = puppet.z - p.host.z;
+        if (puppet.state != 2 || std::hypot(dx, dz) > kTeleport) {
+            p.vel[0] = p.vel[1] = 0.0f;
+        } else {
+            p.vel[0] = p.vel[0] * 0.5f + dx / static_cast<float>(dt) * 0.5f;
+            p.vel[1] = p.vel[1] * 0.5f + dz / static_cast<float>(dt) * 0.5f;
+        }
+        // the host took this player's blows: they're in its HP now
+        if (puppet.hp < p.host.hp) p.pending = std::max(0, p.pending - (p.host.hp - puppet.hp));
     }
+    p.report_step = g_step;
     p.used = true;
     p.host = puppet;
     return true;
@@ -93,6 +121,11 @@ std::vector<MoonModPuppetHit> g_puppet_hits;
 
 void MoonModCoopPuppetHit(int slot, int damage) {
     if (damage > 0 && g_puppet_hits.size() < 32) g_puppet_hits.push_back({slot, damage});
+    // shown on the copy at once, before the host's report has it
+    if (damage > 0 && slot >= 0 && slot < MONSTOR_SLOT_MAX && g_puppets[slot].used) {
+        g_puppets[slot].pending += damage;
+        g_puppets[slot].pending_until = g_step + kPendingFrames;
+    }
 }
 
 std::vector<MoonModPuppetHit> MoonModCoopTakePuppetHits() {
@@ -114,6 +147,7 @@ bool MoonModCoopIsPuppet(int slot) {
 }
 
 void MoonModCoopPuppetsStep() {
+    ++g_step;
     if (!InDungeon()) {
         if (mode != GAME_MODE_DUNGEON) MoonModCoopPuppetsClear();
         return;
@@ -127,9 +161,12 @@ void MoonModCoopPuppetsStep() {
         m.state = p.host.state == 1 ? 1 : 2;
         if (m.revealed == 0) m.revealed = -1; // shown on the host, so shown here (its entrance is the host's)
         if (p.host.max_hp > 0) m.max_hp = p.host.max_hp;
-        m.hp = std::clamp(p.host.hp, 1, std::max(1, m.max_hp));
-        const float to[3] = {p.host.x, p.host.y, p.host.z};
-        if (!p.placed || std::hypot(to[0] - p.at[0], to[2] - p.at[2]) > 160.0f) {
+        if (p.pending > 0 && g_step > p.pending_until) p.pending = 0;
+        m.hp = std::clamp(p.host.hp - p.pending, 1, std::max(1, m.max_hp)); // its death is the host's to say
+        // where the host's monster is by now: its last report, led on at the speed it was going
+        const float lead = static_cast<float>(std::min(g_step - p.report_step, kLeadFrames));
+        const float to[3] = {p.host.x + p.vel[0] * lead, p.host.y, p.host.z + p.vel[1] * lead};
+        if (!p.placed || std::hypot(to[0] - p.at[0], to[2] - p.at[2]) > kTeleport) {
             std::copy(to, to + 3, p.at);
             p.heading = p.host.heading;
             p.placed = true;
