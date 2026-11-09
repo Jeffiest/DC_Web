@@ -18,6 +18,7 @@ struct MoonModAvatarState {
     int   motion = 0;
     float tint[3] = {-1.0f, -1.0f, -1.0f}; // the ambient it draws in (0..128), or -1 for the scene's own
     std::string name;                        // shown over its head, or nothing
+    bool  down = false;   // knocked out (co-op's down, not out): lies on its motion's last frame; monsters pass it by
 };
 
 // slot 0..kMoonModAvatars-1. A new character or weapon loads on the next dungeon frame; a far jump (a new floor, a

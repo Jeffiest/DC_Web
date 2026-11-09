@@ -59,7 +59,7 @@ recovered, as `CCharacter::ClothStep` does with `PortImagePointer`) fixes the ro
 | port/src/game/editloop.cpp:3670 | dc::game::MainEditMode | port | escapes | `reinterpret_cast < intptr_t >(& EdWind)` | image | store: Chara->wind |
 | port/src/game/editloop.cpp:5331 | dc::game::LoadObjectParts | port | escapes | `reinterpret_cast < intptr_t >(parts->frame[level])` | field | store: parts->preview_frame |
 | port/src/game/editloop.cpp:5428 | dc::game::LoadPTS | port | escapes | `reinterpret_cast < std :: uintptr_t >(header->func)` | field | store: parts->func_data |
-| port/src/game/shot_freefuncs.cpp:1290 | dc::game::BtMapJumpLoad | port | escapes | `reinterpret_cast < std :: uintptr_t >(& arena.base[static_cast < std :: ptrdiff_t >(arena.used)* 16])` | arena (base) | return |
+| port/src/game/shot_freefuncs.cpp:1286 | dc::game::BtMapJumpLoad | port | escapes | `reinterpret_cast < std :: uintptr_t >(& arena.base[static_cast < std :: ptrdiff_t >(arena.used)* 16])` | arena (base) | return |
 | port/src/game/title/op_b.cpp:939 | dc::game::OpB_InitProcess2 | port | escapes | `reinterpret_cast < std :: intptr_t >(& Wind)` | image | store: Chara__3[8].wind |
 | port/src/game/title/op_c.cpp:906 | dc::game::OpC_InitProcess5 | port | escapes | `reinterpret_cast < intptr_t >(& Wind)` | image | store: Chara__3[11].wind |
 | port/src/game/title/op_c.cpp:1593 | dc::game::OpC_MotionProcess | port | escapes | `reinterpret_cast < intptr_t >(& Wind)` | image | store: Chara__3[11].wind |

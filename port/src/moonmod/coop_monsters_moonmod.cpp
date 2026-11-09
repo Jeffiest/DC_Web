@@ -59,6 +59,13 @@ std::vector<MoonModAvatarHit> g_hits;
 std::array<int, kMoonModAvatars> g_hit_cooldown{}; // frames before an avatar can be hit again (as the game's own grace)
 
 // The avatars on this floor: where each stands.
+// Down, not out: the rule, whether this player is down, and what the mod asked for.
+bool  g_down_rule = false;
+bool  g_player_down = false;
+bool  g_revive = false, g_revive_has_at = false, g_give_up = false;
+int   g_revive_hp = 1;
+float g_revive_at[3] = {};
+
 int Avatars(std::array<std::array<float, 3>, kMoonModAvatars> &at, std::array<bool, kMoonModAvatars> &here) {
     int count = 0;
     for (int i = 0; i < kMoonModAvatars; ++i) {
@@ -193,7 +200,7 @@ void MoonModCoopPuppetsStep() {
 // ---- Host: every player is seen -----------------------------------------------------------------------------------
 
 float MoonModCoopNearestDistance(const float *player, const float *monster) {
-    float best = Dist3(player, monster);
+    float best = g_player_down ? 1.0e9f : Dist3(player, monster); // a player who is down is passed by
     std::array<std::array<float, 3>, kMoonModAvatars> at{};
     std::array<bool, kMoonModAvatars>                 here{};
     if (Avatars(at, here) == 0) return best;
@@ -216,7 +223,7 @@ void MoonModCoopMonsterTarget(int slot) {
     float monster[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     NowMonstorUnit->chara[slot][0].GetPosition(monster);
     const float *best = g_saved;
-    float        best_d = Dist3(g_saved, monster);
+    float        best_d = g_player_down ? 1.0e9f : Dist3(g_saved, monster); // a player who is down is passed by
     for (int i = 0; i < kMoonModAvatars; ++i) {
         if (!here[i]) continue;
         const float d = Dist3(at[i].data(), monster);
@@ -260,6 +267,43 @@ void MoonModCoopAvatarHitsScan() {
         g_hits.push_back({a + 1, monster, damage, hit.kind, hit.flags});
         g_hit_cooldown[a] = 60; // about the game's own grace after a hit
     }
+}
+
+void MoonModCoopSetDownRule(bool on) { g_down_rule = on; }
+bool MoonModCoopDownRule() { return g_down_rule; }
+void MoonModCoopSetPlayerDown(bool down) {
+    g_player_down = down;
+    g_revive = g_give_up = false;
+}
+bool MoonModCoopPlayerDown() {
+    if (g_player_down && mode != GAME_MODE_DUNGEON) MoonModCoopSetPlayerDown(false); // left the dungeon meanwhile
+    return g_player_down;
+}
+bool MoonModCoopRequestRevive(int hp, const float *at) {
+    if (!MoonModCoopPlayerDown()) return false;
+    g_revive = true;
+    g_revive_hp = hp;
+    g_revive_has_at = at != nullptr;
+    if (at != nullptr) std::copy(at, at + 3, g_revive_at);
+    return true;
+}
+bool MoonModCoopRequestGiveUp() {
+    if (!MoonModCoopPlayerDown()) return false;
+    g_give_up = true;
+    return true;
+}
+bool MoonModCoopTakeRevive(int &hp, float at[3], bool &has_at) {
+    if (!g_revive) return false;
+    g_revive = false;
+    hp = g_revive_hp;
+    has_at = g_revive_has_at;
+    std::copy(g_revive_at, g_revive_at + 3, at);
+    return true;
+}
+bool MoonModCoopTakeGiveUp() {
+    if (!g_give_up) return false;
+    g_give_up = false;
+    return true;
 }
 
 std::vector<MoonModAvatarHit> MoonModCoopTakeAvatarHits() {

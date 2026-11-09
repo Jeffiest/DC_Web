@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 
 #include "app/gameloop.hpp"
 #include "battlemenu.hpp"
@@ -64,6 +65,7 @@
 #include "mglib.hpp"
 #include "monstorunit.hpp"
 #include "moonmod/coop_events.hpp"
+#include "moonmod/coop_monsters.hpp"
 #include "moonmod/chronicle_adapter.hpp"
 #include "moonmod/manager_ui.hpp"
 #include "motionmodel.hpp"
@@ -2850,6 +2852,10 @@ void DunMoveChara() {
 
                     if (static_cast<CDngStatusData *>(UserStatus)->GetLiveUnit() != 0 && PartyCount(*UserStatus) > 1) {
                         gameTask += 2;
+                    } else if (MoonModCoopDownRule()) {
+                        // MoonMod co-op: down, not out, until the mod revives the player or gives up for them
+                        MoonModCoopSetPlayerDown(true);
+                        gameTask = GAME_TASK_MOD_DOWNED;
                     } else {
                         gameTask++;
                     }
@@ -2905,6 +2911,46 @@ void DunMoveChara() {
 
             autoCamTrial();
             break;
+        case GAME_TASK_MOD_DOWNED: {
+            // MoonMod co-op: lying down. The other players' heroes still take this floor's blows (the host runs them).
+            MoonModCoopAvatarHitsScan();
+            int   hp = 1;
+            float at[3] = {};
+            bool  has_at = false;
+            if (MoonModCoopTakeRevive(hp, at, has_at)) {
+                const s8 chara = UserStatus->cur_chara;
+                UserStatus->hp[chara] = static_cast<s16>(std::clamp<int>(hp, 1, UserStatus->max_hp[chara]));
+                UserStatus->ailments[chara] = 0;
+                UserStatus->ailment_frames[chara] = 0;
+                if (has_at) {
+                    CharaMain.pos[0] = at[0];
+                    CharaMain.pos[1] = at[1];
+                    CharaMain.pos[2] = at[2];
+                    CharaMain.SetPosition(CharaMain.pos);
+                }
+                CharaMain.motion_no = 0;
+                CharaMain.motion_flags = 4;
+                CharaMain.motion_speed = -1.0f;
+                BtActStatus.motion_no = 0;
+                BtActStatus.can_act = 1;
+                BtActStatus.action_on = 0;
+                BtActStatus.action_busy = 0;
+                BtActStatus.camera_hold = 0;
+                BtActStatus.invincible_frames = 0xA0;
+                UserStatus->step_disable = 0;
+                DngMessMan.enabled = true;
+                MoonModCoopSetPlayerDown(false);
+                setUnitAmbientAnime(160.0f, 1.0f, 255.0f, 0.0f, 0.0f);
+                gameTask = GAME_TASK_PLAY;
+            } else if (MoonModCoopTakeGiveUp()) {
+                MoonModCoopSetPlayerDown(false);
+                DeadKeyWait = 0x168;
+                DeadKeyStartWait = 0x3C;
+                gameTask = GAME_TASK_DEAD_GAMEOVER;
+            }
+            autoCamTrial();
+            break;
+        }
         case GAME_TASK_DEAD_CHANGE_CHARA:
             BtActStatus.motion_no = 0x17;
 

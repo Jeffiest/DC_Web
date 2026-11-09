@@ -225,6 +225,7 @@ bool MoonModAvatarShown(int slot) {
 
 bool MoonModAvatarAt(int slot, float out[3]) {
     if (!MoonModAvatarShown(slot) || !g_avatars[slot].placed || !InDungeon() || g_place != Place()) return false;
+    if (g_avatars[slot].target.down) return false; // down: the monsters pass it by, and no blow lands on it
     std::copy(g_avatars[slot].at, g_avatars[slot].at + 3, out);
     return true;
 }
@@ -264,13 +265,14 @@ void MoonModAvatarsStep() {
         a.body.SetRotation(0.0f, a.heading, 0.0f);
         int motion = mode == GAME_MODE_EDIT ? TownMotion(a.target.motion) : a.target.motion;
         if (motion < 0 || motion >= a.body.motion_end[0]) motion = 0;
+        const int hold = a.target.down ? 2 : 0; // down: it stays on the motion's last frame, lying there
         if (motion != a.motion) {
             a.body.motion_no = motion;
-            a.body.motion_flags = 4;
+            a.body.motion_flags = 4 | hold;
             a.body.motion_speed = -1.0f;
             a.motion = motion;
         } else {
-            a.body.motion_flags = 0;
+            a.body.motion_flags = hold;
         }
         a.body.Step();
         a.body.ClothStep(0);

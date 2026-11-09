@@ -43,6 +43,18 @@ void  MoonModCoopMonstersStepEnd();
 // Host: what would strike the player that lands on a hero instead, from the player's own damage check each frame.
 void MoonModCoopAvatarHitsScan();
 
+// Down, not out (player.down_rule_set / revive / give_up): with the rule on, a party knocked out in a dungeon lies down
+// (GAME_TASK_MOD_DOWNED) instead of the game over, takes no hits and is passed by the monsters, until the mod revives
+// it (HP, and optionally a place to stand up) or gives up for it (the game's own knockout follows).
+void MoonModCoopSetDownRule(bool on);
+bool MoonModCoopDownRule();
+void MoonModCoopSetPlayerDown(bool down);
+bool MoonModCoopPlayerDown();
+bool MoonModCoopRequestRevive(int hp, const float *at); // false when the player isn't down
+bool MoonModCoopRequestGiveUp();
+bool MoonModCoopTakeRevive(int &hp, float at[3], bool &has_at);
+bool MoonModCoopTakeGiveUp();
+
 struct MoonModAvatarHit {
     int avatar = 0;  // 1..3, as world.avatar_set numbers them
     int monster = 0; // its slot

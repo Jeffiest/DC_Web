@@ -1624,6 +1624,7 @@ ApiCallResult GetPlayer(const Json &args) {
         CharaMain.GetRotation(rotation);
         if (std::isfinite(rotation[1])) result["heading"] = rotation[1]; // the way the player faces: (sin, cos) in (x, z)
         result["motion"] = CharaMain.motion_no; // the motion the hero plays (co-op's avatars play it on other screens)
+        result["down"] = MoonModCoopPlayerDown(); // knocked out and lying down (player.down_rule_set)
     } else if (mode == GAME_MODE_EDIT && MapNo >= 0 && MapNo < DUNGEON_MAP_BASE && GameMode == ED_MODE_WALK && Chara != nullptr &&
                Chara->frame != nullptr) {
         // Walking in a town: where the town's hero is, and which one it is (party.town_set_active).
@@ -13704,11 +13705,11 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     // world.avatar_set / avatar_clear: co-op's remote players on the dungeon floor (moonmod/coop_avatars.hpp).
     if (operation.path == "world.avatar_set") {
         static constexpr const char *kUsage =
-            "expected {slot = 1-3, character = a character id, weapon = item_no or nil, x, y, z, heading, motion, tint = {r, g, b} or nil, name = text or nil}";
+            "expected {slot = 1-3, character = a character id, weapon = item_no or nil, x, y, z, heading, motion, tint = {r, g, b} or nil, name = text or nil, down = boolean}";
         if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(kUsage);
         const Json &request = args[0];
         for (auto field = request.begin(); field != request.end(); ++field) {
-            static constexpr std::array<std::string_view, 10> kFields = {"slot", "character", "weapon", "x", "y", "z", "heading", "motion", "tint", "name"};
+            static constexpr std::array<std::string_view, 11> kFields = {"slot", "character", "weapon", "x", "y", "z", "heading", "motion", "tint", "name", "down"};
             if (std::ranges::find(kFields, field.key()) == kFields.end()) return Invalid(std::string("unknown field: ") + field.key());
         }
         int slot = 0;
@@ -13740,6 +13741,10 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
         if (request.contains("name") && !request["name"].is_null()) {
             if (!request["name"].is_string() || request["name"].get_ref<const std::string &>().size() > 24) return Invalid("name must be text of 24 bytes at most");
             state.name = request["name"].get<std::string>();
+        }
+        if (request.contains("down")) {
+            if (!request["down"].is_boolean()) return Invalid("down must be true or false");
+            state.down = request["down"].get<bool>();
         }
         if (!MoonModAvatarSet(slot - 1, state)) return Failed("that character can't be shown");
         return {ApiCallStatus::Ok, {{"slot", slot}, {"shown", MoonModAvatarShown(slot - 1)}}, {}};
@@ -14005,6 +14010,45 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
     if (operation.path == "player.gauge_get") return GetPlayerGauge(args);
     if (operation.path == "player.gauge_set") return SetPlayerGauge(args);
     if (operation.path == "player.state") return GetPlayerState(args);
+    if (operation.path == "player.down_rule_set") {
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object() || args[0].size() != 1 || !args[0].contains("enabled") ||
+            !args[0]["enabled"].is_boolean()) {
+            return Invalid("expected {enabled = true or false}");
+        }
+        MoonModCoopSetDownRule(args[0]["enabled"].get<bool>());
+        return {ApiCallStatus::Ok, {{"enabled", MoonModCoopDownRule()}}, {}};
+    }
+    if (operation.path == "player.revive") {
+        static constexpr const char *kUsage = "expected {hp = 1-999, x, y, z (optional, all three: where to stand up)}";
+        if (!args.is_array() || args.size() != 1 || !args[0].is_object()) return Invalid(kUsage);
+        const Json &request = args[0];
+        for (auto field = request.begin(); field != request.end(); ++field) {
+            if (field.key() != "hp" && field.key() != "x" && field.key() != "y" && field.key() != "z") {
+                return Invalid("player.revive received an unsupported field: " + field.key());
+            }
+        }
+        int hp = 0;
+        if (!ReadBoundedInt(request, "hp", 1, 999, hp)) return Invalid(kUsage);
+        float at[3] = {};
+        const bool has_at = request.contains("x") || request.contains("y") || request.contains("z");
+        if (has_at) {
+            const char *keys[3] = {"x", "y", "z"};
+            for (int i = 0; i < 3; ++i) {
+                if (!request.contains(keys[i]) || !request[keys[i]].is_number()) return Invalid(kUsage);
+                at[i] = request[keys[i]].get<float>();
+                if (!std::isfinite(at[i]) || std::fabs(at[i]) > 1.0e6f) return Invalid(kUsage);
+            }
+        }
+        if (!MoonModCoopRequestRevive(hp, has_at ? at : nullptr)) return Failed("the player isn't down");
+        return {ApiCallStatus::Ok, {{"queued", true}}, {}};
+    }
+    if (operation.path == "player.give_up") {
+        if (!args.is_array() || !(args.empty() || (args.size() == 1 && args[0].is_object() && args[0].empty()))) {
+            return Invalid("expected no arguments");
+        }
+        if (!MoonModCoopRequestGiveUp()) return Failed("the player isn't down");
+        return {ApiCallStatus::Ok, {{"queued", true}}, {}};
+    }
     if (operation.path == "party.companion_set") return SetCompanion(mod_id, args);
     if (operation.path == "party.companion_get") {
         const int out = dc::game::MoonModCompanionLoaded();
@@ -17119,7 +17163,7 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     for (const char *path : {"player.get", "player.set", "player.heal", "player.damage", "party.list", "party.active", "party.set_active", "party.join", "party.leave", "party.town_active", "party.town_set_active",
                              "save.slot_id",
                              "player.status_add", "player.status_remove", "player.thirst_get", "player.thirst_set",
-                             "player.tuning_set", "player.tuning_clear", "player.invincible", "player.moves_set", "player.moves_clear", "player.form_set", "player.form_clear", "player.move_play", "player.critical_set", "player.critical_clear", "animations.player_register", "animations.player_unregister", "animations.player_list", "animations.monster_register", "animations.monster_unregister", "animations.monster_list", "player.fatal_guard", "player.guard_rules_set", "player.guard_rules_clear", "player.gauge_rules_set", "player.gauge_rules_clear", "player.gauge_get", "player.gauge_set", "player.state", "party.companion_set", "party.companion_get",
+                             "player.tuning_set", "player.tuning_clear", "player.invincible", "player.moves_set", "player.moves_clear", "player.form_set", "player.form_clear", "player.move_play", "player.critical_set", "player.critical_clear", "animations.player_register", "animations.player_unregister", "animations.player_list", "animations.monster_register", "animations.monster_unregister", "animations.monster_list", "player.fatal_guard", "player.guard_rules_set", "player.guard_rules_clear", "player.gauge_rules_set", "player.gauge_rules_clear", "player.gauge_get", "player.gauge_set", "player.state", "player.down_rule_set", "player.revive", "player.give_up", "party.companion_set", "party.companion_get",
                              "characters.list", "characters.get", "world.get", "world.transition", "world.set_time",
                              "world.story_flag_get", "world.story_flag_set", "world.map_flag_get", "world.map_flag_set",
                              "world.story_value_get", "world.story_value_set",

@@ -53,6 +53,7 @@ enum GameTask {
     GAME_TASK_PAUSE                    = 0x9B,  /**< Paused. */
     GAME_TASK_MOD_CHOICE               = 0x9C,  /**< MoonMod: paused on a mod's choice panel (ui.choice_open). */
     GAME_TASK_MOD_MENU                 = 0x9D,  /**< MoonMod: paused on a mod's run menu (ui.run_menu_set). */
+    GAME_TASK_MOD_DOWNED               = 0x9E,  /**< MoonMod: the party knocked out, down rather than out (player.down_rule_set). */
     GAME_TASK_URA_SWAP                 = 0xA0,  /**< Switching between the floor and its back floor. */
     GAME_TASK_ESCAPE_INIT              = 0xAA,  /**< Starting an escape. */
     GAME_TASK_ESCAPE_LOOP              = 0xAB,  /**< Running an escape. */
