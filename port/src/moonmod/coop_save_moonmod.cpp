@@ -324,9 +324,17 @@ namespace {
 
 constexpr char kAccountsFile[] = "coop_accounts.json";
 constexpr char kAccountsBadFile[] = "coop_accounts.json.bad";
-std::map<std::string, Account, std::less<>> g_accounts;
+// Built on first use: CSaveData::Initialize clears them, and it can run while other files' globals are still being
+// made (a global save's constructor), before a namespace-scope global here would be.
+std::map<std::string, Account, std::less<>> &AccountTable() {
+    static std::map<std::string, Account, std::less<>> accounts;
+    return accounts;
+}
 // The slot whose guests file was there but couldn't be read: its guests aren't known, so "none" mustn't delete it.
-std::filesystem::path g_accounts_unread;
+std::filesystem::path &AccountsUnread() {
+    static std::filesystem::path unread;
+    return unread;
+}
 
 bool PlainText(std::string_view text) {
     return std::ranges::all_of(text, [](char c) { return c >= 0x20 && c < 0x7F; });
@@ -348,8 +356,8 @@ bool ValidAccountId(std::string_view id) {
 }
 
 const Account *AccountGet(std::string_view id) {
-    const auto found = g_accounts.find(id);
-    return found == g_accounts.end() ? nullptr : &found->second;
+    const auto found = AccountTable().find(id);
+    return found == AccountTable().end() ? nullptr : &found->second;
 }
 
 bool AccountSet(Account account, std::string &error) {
@@ -363,31 +371,31 @@ bool AccountSet(Account account, std::string &error) {
     }
     // A name comes from another player: cut between characters, and kept only when it is text the save can hold.
     account.name = moonmod::net::CutUtf8(account.name, 24);
-    if (!g_accounts.contains(account.id) && g_accounts.size() >= kAccountsMax) {
+    if (!AccountTable().contains(account.id) && AccountTable().size() >= kAccountsMax) {
         error = "this save keeps " + std::to_string(kAccountsMax) + " guests at most; remove one first";
         return false;
     }
     const std::string id = account.id;
-    g_accounts.insert_or_assign(id, std::move(account));
+    AccountTable().insert_or_assign(id, std::move(account));
     return true;
 }
 
 bool AccountRemove(std::string_view id) {
-    const auto found = g_accounts.find(id);
-    if (found == g_accounts.end()) return false;
-    g_accounts.erase(found);
+    const auto found = AccountTable().find(id);
+    if (found == AccountTable().end()) return false;
+    AccountTable().erase(found);
     return true;
 }
 
 std::vector<const Account *> Accounts() {
     std::vector<const Account *> out;
-    for (const auto &[id, account] : g_accounts) out.push_back(&account);
+    for (const auto &[id, account] : AccountTable()) out.push_back(&account);
     return out;
 }
 
 void AccountsClear() {
-    g_accounts.clear();
-    g_accounts_unread.clear();
+    AccountTable().clear();
+    AccountsUnread().clear();
 }
 
 void AccountsDelete(const std::filesystem::path &save_directory) {
@@ -396,19 +404,19 @@ void AccountsDelete(const std::filesystem::path &save_directory) {
 }
 
 bool AccountsSave(const std::filesystem::path &save_directory) {
-    const bool unread = !g_accounts_unread.empty() && g_accounts_unread == save_directory;
-    if (g_accounts.empty()) {
+    const bool unread = !AccountsUnread().empty() && AccountsUnread() == save_directory;
+    if (AccountTable().empty()) {
         if (!unread) AccountsDelete(save_directory); // a file that couldn't be read stays: its guests aren't ours to drop
         return true;
     }
     if (unread) {
         KeepBadAccounts(save_directory);
-        g_accounts_unread.clear();
+        AccountsUnread().clear();
     }
     std::string text;
     try {
         nlohmann::json accounts = nlohmann::json::object();
-        for (const auto &[id, account] : g_accounts) accounts[id] = {{"name", account.name}, {"player", account.player}};
+        for (const auto &[id, account] : AccountTable()) accounts[id] = {{"name", account.name}, {"player", account.player}};
         // Saving the game must never fail on a guest's name: bytes that aren't text are replaced, not thrown on.
         text = nlohmann::json{{"format", 1}, {"accounts", std::move(accounts)}}.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     } catch (const std::exception &failure) {
@@ -423,8 +431,8 @@ bool AccountsSave(const std::filesystem::path &save_directory) {
 }
 
 void AccountsLoad(const std::filesystem::path &save_directory) {
-    g_accounts.clear();
-    g_accounts_unread.clear();
+    AccountTable().clear();
+    AccountsUnread().clear();
     std::error_code exists_error;
     if (!std::filesystem::exists(save_directory / kAccountsFile, exists_error)) return;
     std::string text;
@@ -441,7 +449,7 @@ void AccountsLoad(const std::filesystem::path &save_directory) {
         // is kept as coop_accounts.json.bad), so a bad read never ends in the guests' things being deleted.
         std::fprintf(stderr, "co-op: %s could not be read; this save's guests are not loaded, and the file is kept\n",
                      (save_directory / kAccountsFile).string().c_str());
-        g_accounts_unread = save_directory;
+        AccountsUnread() = save_directory;
         return;
     }
     for (const auto &[id, entry] : file["accounts"].items()) {
