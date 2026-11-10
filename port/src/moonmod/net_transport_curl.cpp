@@ -7,6 +7,7 @@
 #include "moonmod/net_session.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <poll.h>
@@ -43,24 +44,16 @@ public:
 
     void Send(std::string_view bytes) override {
         const std::lock_guard lock(mutex_);
-        outgoing_.emplace_back(Encode(0x2, bytes));
+        // A link that takes nothing any more is about to be closed by the thread (SendAll's limit): don't pile up.
+        if (outgoing_.size() < kTransportFrames) outgoing_.emplace_back(Encode(0x2, bytes));
     }
 
-    bool Poll(Frame &frame) override {
-        const std::lock_guard lock(mutex_);
-        if (incoming_.empty()) return false;
-        frame = std::move(incoming_.front());
-        incoming_.pop_front();
-        return true;
-    }
+    bool Poll(Frame &frame) override { return incoming_.Pop(frame); }
 
     void Close() override { stop_ = true; }
 
 private:
-    void Deliver(Frame::Kind kind, std::string data) {
-        const std::lock_guard lock(mutex_);
-        incoming_.push_back({kind, std::move(data)});
-    }
+    void Deliver(Frame::Kind kind, std::string data) { incoming_.Push({kind, std::move(data)}); }
 
     std::string Encode(int opcode, std::string_view payload) {
         std::string frame;
@@ -89,9 +82,14 @@ private:
         return poll(&fd, 1, ms) > 0;
     }
 
-    bool SendAll(std::string_view bytes) {
+    // False when the connection is gone, when it takes nothing for ten seconds (a dead link), or when the game left
+    // meanwhile. goodbye: the close frame, sent after the game left, with half a second at most.
+    bool SendAll(std::string_view bytes, bool goodbye = false) {
+        const auto  limit = std::chrono::steady_clock::now() + (goodbye ? std::chrono::milliseconds(500) : std::chrono::milliseconds(10000));
         std::size_t done = 0;
         while (done < bytes.size()) {
+            if (!goodbye && stop_) return false;
+            if (std::chrono::steady_clock::now() > limit) return false;
             std::size_t sent = 0;
             const CURLcode result = curl_easy_send(curl_, bytes.data() + done, bytes.size() - done, &sent);
             if (result == CURLE_AGAIN) {
@@ -131,6 +129,7 @@ private:
                 failure_ = "the relay refused: " + head.substr(0, line);
                 return false;
             }
+            if (stop_) return false;
             Wait(false, 100);
             if (!ReadSome()) return false;
         }
@@ -183,12 +182,20 @@ private:
                 message_kind_ = opcode;
                 message_ = std::move(payload);
             } else if (opcode == 0x0) {
+                if (message_.size() + payload.size() > 1024 * 1024) {
+                    failure_ = "the relay sent too much";
+                    return false;
+                }
                 message_.append(payload);
             } else {
                 continue;
             }
             if (fin) Deliver(message_kind_ == 0x1 ? Frame::Kind::Text : Frame::Kind::Binary, std::move(message_));
         }
+    }
+
+    static int Progress(void *self, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+        return static_cast<CurlTransport *>(self)->stop_ ? 1 : 0;
     }
 
     void Run() {
@@ -201,6 +208,10 @@ private:
         curl_easy_setopt(curl_, CURLOPT_CONNECT_ONLY, 1L);
         curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, 15L);
         curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L);
+        // Leaving while the connection is still being made ends it, instead of holding the game for the timeout.
+        curl_easy_setopt(curl_, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl_, CURLOPT_XFERINFODATA, this);
+        curl_easy_setopt(curl_, CURLOPT_XFERINFOFUNCTION, &CurlTransport::Progress);
         CURLcode result = curl_easy_perform(curl_);
         if (result == CURLE_OK) result = curl_easy_getinfo(curl_, CURLINFO_ACTIVESOCKET, &socket_);
         if (result != CURLE_OK) {
@@ -223,7 +234,7 @@ private:
                 if (Wait(false, 15)) alive = ReadSome() && Frames();
             }
             if (stop_) {
-                SendAll(Encode(0x8, "\x03\xE8"));
+                SendAll(Encode(0x8, "\x03\xE8"), true);
             } else {
                 Deliver(Frame::Kind::Closed, failure_.empty() ? std::string("the connection to the relay closed") : failure_);
             }
@@ -233,8 +244,8 @@ private:
     }
 
     std::string             origin_, target_, host_;
-    std::mutex              mutex_;
-    std::deque<Frame>       incoming_;
+    std::mutex              mutex_; // outgoing_
+    FrameQueue              incoming_;
     std::deque<std::string> outgoing_;
     std::atomic<bool>       stop_{false};
     std::mt19937            random_{std::random_device{}()};

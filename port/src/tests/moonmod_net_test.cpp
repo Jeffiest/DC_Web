@@ -163,11 +163,103 @@ TEST(MoonModNet, AFullQueueDropsTheOldestMessagesFirst) {
     wire->incoming.push_back({Frame::Kind::Text, R"({"t":"welcome","id":0,"code":"AB3CD","peers":[]})"});
     for (std::size_t i = 0; i < kQueueMax + 10; ++i) wire->incoming.push_back({Frame::Kind::Binary, "\x01" + std::to_string(i)});
     session.Pump();
-    auto events = session.Receive(kQueueMax + 100);
+    std::vector<Event> events;
+    for (;;) { // one answer holds only so much: the rest waits for the next
+        const auto more = session.Receive(kQueueMax + 100);
+        if (more.empty()) break;
+        events.insert(events.end(), more.begin(), more.end());
+    }
     ASSERT_EQ(events.size(), kQueueMax);
     EXPECT_EQ(events[0].kind, "connected"); // kept: only messages are dropped
     EXPECT_EQ(events[1].data, "11"); // the connected event takes a place too: eleven of the oldest messages went
     EXPECT_EQ(events.back().data, std::to_string(kQueueMax + 9));
+}
+
+TEST(MoonModNet, OnlyWellFormedUtf8PassesAndCutsKeepWholeCharacters) {
+    EXPECT_FALSE(ValidUtf8("\xE0\x80\xAF"));     // a slash written the long way
+    EXPECT_FALSE(ValidUtf8("\xED\xA0\x80"));     // half of a pair, not a character
+    EXPECT_FALSE(ValidUtf8("\xF0\x80\x80\xAF")); // long again
+    EXPECT_FALSE(ValidUtf8("\xF4\x90\x80\x80")); // past the last character
+    EXPECT_TRUE(ValidUtf8("\xED\x9F\xBF \xEE\x80\x80 \xF4\x8F\xBF\xBF"));
+    EXPECT_EQ(CutUtf8("abc", 8), "abc");
+    EXPECT_EQ(CutUtf8("ab\xC3\xA9", 3), "ab"); // never half a character
+    EXPECT_EQ(CutUtf8("ab\xC3\xA9", 4), "ab\xC3\xA9");
+    EXPECT_TRUE(ValidUtf8(CutUtf8("\xF0\x9F\x8E\xAE\xF0\x9F\x8E\xAE", 6)));
+    EXPECT_TRUE(ValidUtf8(CutUtf8("\xFF\xFE not text", 8))); // what isn't text comes out as text, or empty
+}
+
+TEST(MoonModNet, ARelaySendingNonsenseNeitherThrowsNorFillsTheGame) {
+    auto        wire = std::make_shared<Wire>();
+    Session     session(Fake(wire));
+    std::string error;
+    ASSERT_TRUE(session.Start("coop", "wss://relay.example", "AB3CD", "Xiao", "chronicle", 1, error));
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":"welcome","id":2,"code":"AB3CD","host":0,"peers":[{"id":0,"name":7},{"id":"x"},5,{"id":1,"name":"A name far longer than the relay ever lets one be"}]})"});
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":"join","id":3,"name":{"not":"a name"}})"});
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":"join","id":-4,"name":"Nobody"})"});
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":"join","id":"3"})"});
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":7})"});
+    wire->incoming.push_back({Frame::Kind::Text, R"([1,2,3])"});
+    wire->incoming.push_back({Frame::Kind::Text, "{not json"});
+    wire->incoming.push_back({Frame::Kind::Binary, {}});
+    std::vector<Event> events;
+    EXPECT_NO_THROW(events = session.Receive(64));
+    EXPECT_EQ(session.state(), State::Joined);
+    for (const Peer &peer : session.peers()) {
+        EXPECT_GE(peer.id, 0);
+        EXPECT_LE(peer.name.size(), kNameMax);
+        EXPECT_TRUE(ValidUtf8(peer.name));
+    }
+    for (const Event &e : events) EXPECT_TRUE(ValidUtf8(e.name));
+    for (int i = 0; i < 500; ++i) wire->incoming.push_back({Frame::Kind::Text, R"({"t":"join","id":)" + std::to_string(10 + i) + "}"});
+    EXPECT_NO_THROW(session.Receive(1000));
+    EXPECT_LE(session.peers().size(), kPeersMax);
+}
+
+TEST(MoonModNet, OneAnswerNeverCarriesMoreThanAModCanTake) {
+    auto        wire = std::make_shared<Wire>();
+    Session     session(Fake(wire));
+    std::string error;
+    ASSERT_TRUE(session.Start("coop", "wss://relay.example", "", "", "chronicle", 1, error));
+    wire->incoming.push_back({Frame::Kind::Text, R"({"t":"welcome","id":0,"code":"AB3CD","peers":[]})"});
+    const std::string big(kMessageMax - 1, 'x');
+    for (int i = 0; i < 20; ++i) wire->incoming.push_back({Frame::Kind::Binary, "\x01" + big});
+    std::size_t messages = 0;
+    for (int round = 0; round < 40 && messages < 20; ++round) {
+        const auto  events = session.Receive(64);
+        std::size_t bytes = 0;
+        for (const Event &e : events) {
+            bytes += e.data.size();
+            if (e.kind == "message") ++messages;
+        }
+        EXPECT_LE(bytes, kReceiveBytes + kMessageMax);
+        ASSERT_FALSE(events.empty()); // each answer makes headway
+    }
+    EXPECT_EQ(messages, 20u); // and none is lost for being held back
+}
+
+TEST(MoonModNet, ASocketsWaitingFramesAreBoundedAndKeepTheRelaysWord) {
+    FrameQueue queue;
+    queue.Push({Frame::Kind::Text, "welcome"});
+    for (std::size_t i = 0; i < kTransportFrames + 50; ++i) queue.Push({Frame::Kind::Binary, std::to_string(i)});
+    queue.Push({Frame::Kind::Closed, "bye"});
+    EXPECT_LE(queue.size(), kTransportFrames + 2);
+    Frame frame;
+    ASSERT_TRUE(queue.Pop(frame));
+    EXPECT_EQ(frame.kind, Frame::Kind::Text); // the relay's own word is never dropped
+    ASSERT_TRUE(queue.Pop(frame));
+    EXPECT_EQ(frame.kind, Frame::Kind::Binary);
+    EXPECT_NE(frame.data, "0"); // the oldest messages went
+    Frame last;
+    while (queue.Pop(frame)) last = frame;
+    EXPECT_EQ(last.kind, Frame::Kind::Closed);
+
+    FrameQueue heavy;
+    const std::string big(1024 * 1024, 'x');
+    for (int i = 0; i < 20; ++i) heavy.Push({Frame::Kind::Binary, big});
+    std::size_t bytes = 0;
+    while (heavy.Pop(frame)) bytes += frame.data.size();
+    EXPECT_LE(bytes, kTransportBytes);
+    EXPECT_GT(bytes, 0u);
 }
 
 TEST(MoonModNet, Utf8AndEscaping) {

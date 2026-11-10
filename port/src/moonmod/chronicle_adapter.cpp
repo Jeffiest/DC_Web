@@ -8887,6 +8887,7 @@ std::array<int, CHARA_MAX> g_fatal_guard{}; // player.fatal_guard charges per ch
 // party.companion_set: the Gauntlet's companion. {character = id or nil, stance = passive|target|aggressive,
 // damage_scale = 0..10}; the weapon is the character's equipped one.
 std::string g_companion_owner;
+std::string g_down_rule_owner; // the mod that switched player.down_rule_set on
 ApiCallResult SetCompanion(std::string_view owner, const Json &args) {
     if (!args.is_array() || args.size() != 1 || !args[0].is_object()) {
         return Invalid("expected {character = optional id, stance = optional passive|target|aggressive, damage_scale = optional 0..10}");
@@ -14016,6 +14017,7 @@ ApiCallResult Call(std::string_view mod_id, const std::filesystem::path &save_ro
             return Invalid("expected {enabled = true or false}");
         }
         MoonModCoopSetDownRule(args[0]["enabled"].get<bool>());
+        g_down_rule_owner = MoonModCoopDownRule() ? std::string(mod_id) : std::string();
         return {ApiCallStatus::Ok, {{"enabled", MoonModCoopDownRule()}}, {}};
     }
     if (operation.path == "player.revive") {
@@ -17261,6 +17263,12 @@ void ConfigureChronicleApi(RuntimeConfig &config) {
     }
     config.api_owner_unloaded = [](std::string_view mod_id) {
         if (moonmod::net::Shared().owner() == mod_id) moonmod::net::Shared().Leave("the mod left");
+        if (g_down_rule_owner == mod_id) {
+            // Nobody is left to revive a player who lies down, or to give up for them: the game's own end takes over.
+            g_down_rule_owner.clear();
+            MoonModCoopSetDownRule(false);
+            MoonModCoopRequestGiveUp();
+        }
         const std::string prefix = std::string(mod_id) + ":";
         InputUnbindModActionsByPrefix(prefix);
         g_input_contexts.UnloadOwner(mod_id);

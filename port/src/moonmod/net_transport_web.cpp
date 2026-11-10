@@ -39,13 +39,7 @@ public:
         if (open_) emscripten_websocket_send_binary(socket_, const_cast<char *>(bytes.data()), static_cast<uint32_t>(bytes.size()));
     }
 
-    bool Poll(Frame &frame) override {
-        const std::lock_guard lock(mutex_);
-        if (incoming_.empty()) return false;
-        frame = std::move(incoming_.front());
-        incoming_.pop_front();
-        return true;
-    }
+    bool Poll(Frame &frame) override { return incoming_.Pop(frame); }
 
     void Close() override {
         if (!closed_) {
@@ -55,10 +49,7 @@ public:
     }
 
 private:
-    void Deliver(Frame::Kind kind, std::string data) {
-        const std::lock_guard lock(mutex_);
-        incoming_.push_back({kind, std::move(data)});
-    }
+    void Deliver(Frame::Kind kind, std::string data) { incoming_.Push({kind, std::move(data)}); }
 
     static EM_BOOL OnOpen(int, const EmscriptenWebSocketOpenEvent *, void *user) {
         auto *self = static_cast<WebTransport *>(user);
@@ -69,6 +60,11 @@ private:
 
     static EM_BOOL OnMessage(int, const EmscriptenWebSocketMessageEvent *event, void *user) {
         auto       *self = static_cast<WebTransport *>(user);
+        if (event->numBytes > 1024 * 1024) { // as the other platforms' sockets: no frame of the relay's is this long
+            self->Deliver(Frame::Kind::Closed, "the relay sent too much");
+            self->Close();
+            return EM_TRUE;
+        }
         std::string data(reinterpret_cast<const char *>(event->data), event->numBytes);
         // A text frame's bytes end with the terminating zero Emscripten adds.
         if (event->isText && !data.empty() && data.back() == '\0') data.pop_back();
@@ -90,8 +86,7 @@ private:
     }
 
     EMSCRIPTEN_WEBSOCKET_T socket_;
-    std::mutex             mutex_;
-    std::deque<Frame>      incoming_;
+    FrameQueue             incoming_;
     std::atomic<bool>      open_{false};
     bool                   closed_ = false;
 };

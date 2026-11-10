@@ -33,6 +33,8 @@ std::string_view StateName(State state) {
     }
 }
 
+// Strict UTF-8: no overlong forms, no surrogates, nothing past U+10FFFF. What passes here is what the JSON writer
+// accepts, so text from another player can always be handed to a mod and written to a save.
 bool ValidUtf8(std::string_view text) {
     for (std::size_t i = 0; i < text.size();) {
         const auto c = static_cast<unsigned char>(text[i]);
@@ -46,10 +48,43 @@ bool ValidUtf8(std::string_view text) {
         for (int k = 1; k <= more; ++k) {
             if ((static_cast<unsigned char>(text[i + k]) & 0xC0) != 0x80) return false;
         }
+        if (more >= 2) {
+            const auto second = static_cast<unsigned char>(text[i + 1]);
+            if (c == 0xE0 && second < 0xA0) return false; // overlong
+            if (c == 0xED && second > 0x9F) return false; // a surrogate
+            if (c == 0xF0 && second < 0x90) return false; // overlong
+            if (c == 0xF4 && second > 0x8F) return false; // past U+10FFFF
+        }
         i += static_cast<std::size_t>(more) + 1;
     }
     return true;
 }
+
+std::string CutUtf8(std::string_view text, std::size_t max_bytes) {
+    if (text.size() > max_bytes) {
+        std::size_t end = max_bytes;
+        while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) --end; // not inside a character
+        text = text.substr(0, end);
+    }
+    return ValidUtf8(text) ? std::string(text) : std::string();
+}
+
+namespace {
+
+// How many bytes text takes inside a JSON answer (quotes, backslashes and control characters grow).
+std::size_t JsonBytes(std::string_view text) {
+    std::size_t size = 2;
+    for (const char ch : text) {
+        const auto c = static_cast<unsigned char>(ch);
+        size += c == '"' || c == '\\' ? 2 : c < 0x20 ? 6 : 1;
+    }
+    return size;
+}
+
+// What one event costs in net.receive's answer, counted generously.
+std::size_t EventBytes(const Event &event) { return 64 + JsonBytes(event.data) + JsonBytes(event.name); }
+
+} // namespace
 
 std::string Escape(std::string_view text) {
     static constexpr char kHex[] = "0123456789ABCDEF";
@@ -122,7 +157,12 @@ void Session::End(const std::string &why) {
         transport_->Close();
         transport_.reset();
     }
-    if (state_ != State::Idle) Push({"closed", -1, why, {}});
+    if (state_ != State::Idle) {
+        // The reason may come from the relay or the socket: only text a mod can be handed, and not a page of it.
+        std::string reason = CutUtf8(why, 200);
+        if (reason.empty()) reason = "the connection to the relay closed";
+        Push({"closed", -1, std::move(reason), {}});
+    }
     state_ = State::Idle;
     id_ = -1;
     peers_.clear();
@@ -160,8 +200,9 @@ void Session::Control(const std::string &text) {
         peers_.clear();
         if (message.contains("peers") && message["peers"].is_array()) {
             for (const Json &peer : message["peers"]) {
-                if (peer.is_object() && peer.contains("id") && peer["id"].is_number_integer()) {
-                    peers_.push_back({peer["id"].get<int>(), peer.value("name", std::string())});
+                if (peer.is_object() && peer.contains("id") && peer["id"].is_number_integer() && peers_.size() < kPeersMax) {
+                    const std::string name = peer.contains("name") && peer["name"].is_string() ? peer["name"].get<std::string>() : std::string();
+                    peers_.push_back({peer["id"].get<int>(), CutUtf8(name, kNameMax)});
                 }
             }
         }
@@ -169,11 +210,14 @@ void Session::Control(const std::string &text) {
         Push({"connected", id_, code_, {}});
     } else if (t == "join") {
         const int id = number("id");
+        if (id < 0) return; // not a player: the relay's message is damaged
+        const std::string name = CutUtf8(text_of("name"), kNameMax);
         std::erase_if(peers_, [id](const Peer &peer) { return peer.id == id; });
-        peers_.push_back({id, text_of("name")});
-        Push({"joined", id, {}, text_of("name")});
+        if (peers_.size() < kPeersMax) peers_.push_back({id, name});
+        Push({"joined", id, {}, name});
     } else if (t == "leave") {
         const int id = number("id");
+        if (id < 0) return;
         std::erase_if(peers_, [id](const Peer &peer) { return peer.id == id; });
         Push({"left", id, {}, {}});
     } else if (t == "error" || t == "closed") {
@@ -192,7 +236,10 @@ void Session::Pump() {
             case Frame::Kind::Binary:
                 if (frame.data.size() >= 1 && frame.data.size() - 1 <= kMessageMax) {
                     std::string data = frame.data.substr(1);
-                    if (ValidUtf8(data)) Push({"message", static_cast<unsigned char>(frame.data[0]), std::move(data), {}});
+                    // Only text a mod can be handed, and that fits net.receive's answer by itself.
+                    if (ValidUtf8(data) && JsonBytes(data) <= kReceiveBytes / 2) {
+                        Push({"message", static_cast<unsigned char>(frame.data[0]), std::move(data), {}});
+                    }
                 }
                 break;
             case Frame::Kind::Closed:
@@ -234,7 +281,12 @@ bool Session::Send(int to, std::string_view data, std::string &error) {
 std::vector<Event> Session::Receive(std::size_t max) {
     Pump();
     std::vector<Event> out;
+    // No more than the answer can carry: what doesn't fit waits for the next call instead of being lost.
+    std::size_t bytes = 0;
     while (!events_.empty() && out.size() < max) {
+        const std::size_t cost = EventBytes(events_.front());
+        if (!out.empty() && bytes + cost > kReceiveBytes) break;
+        bytes += cost;
         out.push_back(std::move(events_.front()));
         events_.pop_front();
     }

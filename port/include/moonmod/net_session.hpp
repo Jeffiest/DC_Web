@@ -11,6 +11,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,6 +21,11 @@ namespace moonmod::net {
 
 inline constexpr std::size_t kMessageMax = 16 * 1024; // bytes of one message's data
 inline constexpr std::size_t kQueueMax = 4096;        // events waiting for the mod; past it the oldest messages go
+inline constexpr std::size_t kReceiveBytes = 48 * 1024; // what one Receive hands over at most, as JSON; the rest waits
+inline constexpr std::size_t kNameMax = 24;           // bytes of a player's name
+inline constexpr std::size_t kPeersMax = 64;          // players a relay can name in one room
+inline constexpr std::size_t kTransportFrames = 8192; // frames a socket holds while no one takes them (a load screen)
+inline constexpr std::size_t kTransportBytes = 8 * 1024 * 1024; // and their bytes; past either the oldest messages go
 inline constexpr int         kPlayersMax = 4;
 inline constexpr int         kBroadcast = 255;
 
@@ -37,6 +43,43 @@ public:
     virtual void Send(std::string_view bytes) = 0; // one binary frame
     virtual bool Poll(Frame &frame) = 0;
     virtual void Close() = 0;
+};
+
+// What a socket received and the game hasn't taken yet. Any thread may Push; the game's thread Pops. It holds
+// kTransportFrames frames and kTransportBytes bytes at most: past that the oldest player messages are dropped (as the
+// session's own queue does), never the relay's own frames or the close, so a game that isn't reading for a while (or
+// a room that floods it) can't use up memory.
+class FrameQueue {
+public:
+    void Push(Frame frame) {
+        const std::lock_guard lock(mutex_);
+        bytes_ += frame.data.size();
+        frames_.push_back(std::move(frame));
+        while (frames_.size() > kTransportFrames || bytes_ > kTransportBytes) {
+            auto oldest = frames_.begin();
+            while (oldest != frames_.end() && oldest->kind != Frame::Kind::Binary) ++oldest;
+            if (oldest == frames_.end()) break; // only the relay's own frames wait: they stay
+            bytes_ -= oldest->data.size();
+            frames_.erase(oldest);
+        }
+    }
+    bool Pop(Frame &frame) {
+        const std::lock_guard lock(mutex_);
+        if (frames_.empty()) return false;
+        frame = std::move(frames_.front());
+        frames_.pop_front();
+        bytes_ -= frame.data.size();
+        return true;
+    }
+    std::size_t size() {
+        const std::lock_guard lock(mutex_);
+        return frames_.size();
+    }
+
+private:
+    std::mutex        mutex_;
+    std::deque<Frame> frames_;
+    std::size_t       bytes_ = 0;
 };
 
 // Opens a socket to url (wss://, or ws:// to this machine for testing), or says why it can't.
@@ -105,6 +148,8 @@ private:
 std::string RelayAddress(const std::string &asked);
 bool        ValidRelay(const std::string &url);
 bool        ValidUtf8(std::string_view text);
+// text cut to max_bytes without splitting a character; empty when it isn't UTF-8 at all.
+std::string CutUtf8(std::string_view text, std::size_t max_bytes);
 // Percent-encodes a query value.
 std::string Escape(std::string_view text);
 

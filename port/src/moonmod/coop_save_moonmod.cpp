@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "game/savedata.hpp"
+#include "moonmod/net_session.hpp"
 #include "platform/files.hpp"
 
 namespace moonmod::coop {
@@ -176,6 +177,10 @@ bool Import(const char *tag, std::string_view text, const std::vector<Field> &fi
             error = "the data comes from another build of the game; play on the same build";
             return false;
         }
+        if (std::ranges::any_of(found, [&field](const auto &entry) { return entry.first == &*field; })) {
+            error = "the data is damaged (a part comes twice)";
+            return false;
+        }
         found.emplace_back(&*field, at);
         at += size;
     }
@@ -305,13 +310,35 @@ bool MergeTown(std::string_view base, std::string_view edited, int town, CSaveDa
 std::string ExportPlayer(const CSaveData &save) { return Export(kPlayerTag, SaveAccess::Player(const_cast<CSaveData &>(save))); }
 
 bool ImportPlayer(std::string_view text, CSaveData &save, std::string &error) {
-    return Import(kPlayerTag, text, SaveAccess::Player(save), error);
+    if (!Import(kPlayerTag, text, SaveAccess::Player(save), error)) return false;
+    // The text is another game's: a weapon slot outside a character's weapons would be read as one.
+    CDngStatusData &dng = *save.GetDngStatus();
+    constexpr int   kWeapons = static_cast<int>(std::extent_v<std::remove_reference_t<decltype(dng.chara_weapons.data[0])>>);
+    for (s8 &slot : dng.equipped_weapon_slot.data) {
+        if (slot < -1 || slot >= kWeapons) slot = 0;
+    }
+    return true;
 }
 
 namespace {
 
 constexpr char kAccountsFile[] = "coop_accounts.json";
+constexpr char kAccountsBadFile[] = "coop_accounts.json.bad";
 std::map<std::string, Account, std::less<>> g_accounts;
+// The slot whose guests file was there but couldn't be read: its guests aren't known, so "none" mustn't delete it.
+std::filesystem::path g_accounts_unread;
+
+bool PlainText(std::string_view text) {
+    return std::ranges::all_of(text, [](char c) { return c >= 0x20 && c < 0x7F; });
+}
+
+// Puts a guests file that can't be read aside, so the next save neither deletes it nor writes over it.
+void KeepBadAccounts(const std::filesystem::path &save_directory) {
+    std::error_code error;
+    if (!std::filesystem::exists(save_directory / kAccountsFile, error)) return;
+    std::filesystem::remove(save_directory / kAccountsBadFile, error);
+    std::filesystem::rename(save_directory / kAccountsFile, save_directory / kAccountsBadFile, error);
+}
 
 } // namespace
 
@@ -330,11 +357,12 @@ bool AccountSet(Account account, std::string &error) {
         error = "an account id is 8-64 of a-z, 0-9 and -";
         return false;
     }
-    if (!account.player.starts_with("DCP1") || account.player.size() > kAccountMax) {
+    if (!account.player.starts_with("DCP1") || account.player.size() > kAccountMax || !PlainText(account.player)) {
         error = "an account holds save.player_export text";
         return false;
     }
-    if (account.name.size() > 24) account.name.resize(24);
+    // A name comes from another player: cut between characters, and kept only when it is text the save can hold.
+    account.name = moonmod::net::CutUtf8(account.name, 24);
     if (!g_accounts.contains(account.id) && g_accounts.size() >= kAccountsMax) {
         error = "this save keeps " + std::to_string(kAccountsMax) + " guests at most; remove one first";
         return false;
@@ -357,7 +385,10 @@ std::vector<const Account *> Accounts() {
     return out;
 }
 
-void AccountsClear() { g_accounts.clear(); }
+void AccountsClear() {
+    g_accounts.clear();
+    g_accounts_unread.clear();
+}
 
 void AccountsDelete(const std::filesystem::path &save_directory) {
     std::error_code error;
@@ -365,13 +396,25 @@ void AccountsDelete(const std::filesystem::path &save_directory) {
 }
 
 bool AccountsSave(const std::filesystem::path &save_directory) {
+    const bool unread = !g_accounts_unread.empty() && g_accounts_unread == save_directory;
     if (g_accounts.empty()) {
-        AccountsDelete(save_directory);
+        if (!unread) AccountsDelete(save_directory); // a file that couldn't be read stays: its guests aren't ours to drop
         return true;
     }
-    nlohmann::json accounts = nlohmann::json::object();
-    for (const auto &[id, account] : g_accounts) accounts[id] = {{"name", account.name}, {"player", account.player}};
-    const std::string text = nlohmann::json{{"format", 1}, {"accounts", std::move(accounts)}}.dump();
+    if (unread) {
+        KeepBadAccounts(save_directory);
+        g_accounts_unread.clear();
+    }
+    std::string text;
+    try {
+        nlohmann::json accounts = nlohmann::json::object();
+        for (const auto &[id, account] : g_accounts) accounts[id] = {{"name", account.name}, {"player", account.player}};
+        // Saving the game must never fail on a guest's name: bytes that aren't text are replaced, not thrown on.
+        text = nlohmann::json{{"format", 1}, {"accounts", std::move(accounts)}}.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    } catch (const std::exception &failure) {
+        std::fprintf(stderr, "co-op: could not write %s (%s)\n", (save_directory / kAccountsFile).string().c_str(), failure.what());
+        return false;
+    }
     if (::FilesWrite(save_directory / kAccountsFile, text.data(), text.size(), true) != ::FilesResult::kWritten) {
         std::fprintf(stderr, "co-op: could not write %s\n", (save_directory / kAccountsFile).string().c_str());
         return false;
@@ -381,20 +424,33 @@ bool AccountsSave(const std::filesystem::path &save_directory) {
 
 void AccountsLoad(const std::filesystem::path &save_directory) {
     g_accounts.clear();
+    g_accounts_unread.clear();
+    std::error_code exists_error;
+    if (!std::filesystem::exists(save_directory / kAccountsFile, exists_error)) return;
     std::string text;
+    bool        opened = false;
     if (std::ifstream stream(save_directory / kAccountsFile, std::ios::binary); stream) {
+        opened = true;
         text.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
     }
-    if (text.empty()) return;
-    const nlohmann::json file = nlohmann::json::parse(text, nullptr, false);
-    if (!file.is_object() || file.value("format", 0) != 1 || !file.contains("accounts") || !file["accounts"].is_object()) {
-        std::fprintf(stderr, "co-op: %s could not be read; this save keeps no guests\n", (save_directory / kAccountsFile).string().c_str());
+    const nlohmann::json file = text.empty() ? nlohmann::json() : nlohmann::json::parse(text, nullptr, false);
+    const bool           readable = opened && file.is_object() && file.contains("format") && file["format"].is_number_integer() &&
+                                    file["format"].get<int>() == 1 && file.contains("accounts") && file["accounts"].is_object();
+    if (!readable) {
+        // Locked, cut short or damaged. The file stays where it is until this slot is saved with guests again (then it
+        // is kept as coop_accounts.json.bad), so a bad read never ends in the guests' things being deleted.
+        std::fprintf(stderr, "co-op: %s could not be read; this save's guests are not loaded, and the file is kept\n",
+                     (save_directory / kAccountsFile).string().c_str());
+        g_accounts_unread = save_directory;
         return;
     }
     for (const auto &[id, entry] : file["accounts"].items()) {
         if (!entry.is_object()) continue;
+        const auto text_of = [&entry](const char *key) {
+            return entry.contains(key) && entry[key].is_string() ? entry[key].get<std::string>() : std::string();
+        };
         std::string error;
-        AccountSet({id, entry.value("name", std::string()), entry.value("player", std::string())}, error);
+        AccountSet({id, text_of("name"), text_of("player")}, error);
     }
 }
 

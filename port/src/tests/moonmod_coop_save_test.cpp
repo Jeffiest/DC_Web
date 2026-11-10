@@ -48,6 +48,7 @@ TEST(MoonModCoopSave, APlayersThingsCrossWithoutTheWorld) {
     auto second = std::make_unique<RawSave>(0x44);
     first->dng().money = 500;
     first->dng().max_hp[2] = 180;
+    for (auto &slot : first->dng().equipped_weapon_slot.data) slot = 0; // a slot a character has, as a real save's is
     first->dng().equipped_weapon_slot[1] = 3;
     second->dng().floor_reached[3] = 5;
     const std::string player = moonmod::coop::ExportPlayer(first->save());
@@ -238,6 +239,68 @@ TEST(MoonModCoopSave, TheHostsSaveKeepsItsGuestsThings) {
     std::ofstream(slot.path / "coop_accounts.json") << "{not json";
     AccountsLoad(slot.path); // a damaged file keeps no guests, and says so
     EXPECT_TRUE(Accounts().empty());
+}
+
+TEST(MoonModCoopSave, ANameThatIsNotTextNeverBreaksTheHostsSave) {
+    using namespace moonmod::coop;
+    auto save = std::make_unique<RawSave>(0x10);
+    const std::string things = ExportPlayer(save->save());
+    AccountsClear();
+    std::string error;
+    ASSERT_TRUE(AccountSet({"guest-0001", "\xFF\xFE\x80 broken", things}, error)) << error;
+    ASSERT_TRUE(AccountSet({"guest-0002", std::string(23, 'a') + "\xC3\xA9", things}, error)) << error; // cut mid-character
+    EXPECT_FALSE(AccountSet({"guest-0003", "x", things + "\xFF"}, error));
+    TempDir slot;
+    EXPECT_NO_THROW(EXPECT_TRUE(AccountsSave(slot.path)));
+    AccountsClear();
+    AccountsLoad(slot.path);
+    ASSERT_NE(AccountGet("guest-0001"), nullptr);
+    ASSERT_NE(AccountGet("guest-0002"), nullptr);
+    EXPECT_EQ(AccountGet("guest-0002")->name, std::string(23, 'a'));
+    EXPECT_EQ(AccountGet("guest-0001")->player, things);
+    AccountsClear();
+}
+
+TEST(MoonModCoopSave, AGuestsFileThatCannotBeReadIsNeverThrownAway) {
+    using namespace moonmod::coop;
+    auto save = std::make_unique<RawSave>(0x10);
+    const std::string things = ExportPlayer(save->save());
+    TempDir slot;
+    std::ofstream(slot.path / "coop_accounts.json") << "{not json";
+    AccountsClear();
+    AccountsLoad(slot.path);
+    EXPECT_TRUE(Accounts().empty());
+    ASSERT_TRUE(AccountsSave(slot.path)); // no guests known: the file that might hold some stays
+    EXPECT_TRUE(std::filesystem::exists(slot.path / "coop_accounts.json"));
+    std::string error;
+    ASSERT_TRUE(AccountSet({"guest-0001", "Xiao", things}, error)) << error;
+    ASSERT_TRUE(AccountsSave(slot.path)); // new guests: the old file is put aside, not written over
+    EXPECT_TRUE(std::filesystem::exists(slot.path / "coop_accounts.json.bad"));
+    AccountsClear();
+    AccountsLoad(slot.path);
+    EXPECT_NE(AccountGet("guest-0001"), nullptr);
+
+    // Right shape, wrong kinds: nothing is taken, nothing throws.
+    std::ofstream(slot.path / "coop_accounts.json") << R"({"format":1,"accounts":{"guest-0009":5,"guest-0008":{"name":[],"player":{}},"guest-0007":{"name":"x"}}})";
+    AccountsClear();
+    EXPECT_NO_THROW(AccountsLoad(slot.path));
+    EXPECT_TRUE(Accounts().empty());
+    AccountsClear();
+}
+
+TEST(MoonModCoopSave, AnotherGamesThingsCannotPointOutsideTheirOwn) {
+    auto host = std::make_unique<RawSave>(0x00);
+    auto guest = std::make_unique<RawSave>(0x00);
+    host->dng().equipped_weapon_slot[0] = 100;
+    host->dng().equipped_weapon_slot[1] = -77;
+    host->dng().equipped_weapon_slot[2] = 5;
+    host->dng().equipped_weapon_slot[3] = -1;
+    std::string error;
+    ASSERT_TRUE(moonmod::coop::ImportPlayer(moonmod::coop::ExportPlayer(host->save()), guest->save(), error)) << error;
+    EXPECT_EQ(guest->dng().equipped_weapon_slot[0], 0);
+    EXPECT_EQ(guest->dng().equipped_weapon_slot[1], 0);
+    EXPECT_EQ(guest->dng().equipped_weapon_slot[2], 5);
+    EXPECT_EQ(guest->dng().equipped_weapon_slot[3], -1);
 }
 
 TEST(MoonModCoopSave, ASaveKeepsSixtyFourGuestsAtMost) {

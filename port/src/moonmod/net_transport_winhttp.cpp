@@ -43,29 +43,31 @@ public:
         }
     }
 
-    bool Poll(Frame &frame) override {
-        const std::lock_guard lock(mutex_);
-        if (incoming_.empty()) return false;
-        frame = std::move(incoming_.front());
-        incoming_.pop_front();
-        return true;
-    }
+    bool Poll(Frame &frame) override { return incoming_.Pop(frame); }
 
     void Close() override {
         if (stop_.exchange(true)) return;
         const std::lock_guard lock(send_mutex_);
-        // Closing the handle ends the receive the thread waits in.
+        // Closing a handle ends whatever the thread waits in: the receive on an open socket, or the connect and the
+        // relay's answer before that (a relay that takes the connection and then says nothing would otherwise hold the
+        // thread, and the game's thread with it when it joins).
         if (socket_ != nullptr) {
-            WinHttpWebSocketClose(socket_, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+            // Says goodbye without waiting for the relay's answer: on a dead link that answer never comes.
+            WinHttpWebSocketShutdown(socket_, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
             WinHttpCloseHandle(socket_);
             socket_ = nullptr;
         }
+        CloseConnecting();
     }
 
 private:
-    void Deliver(Frame::Kind kind, std::string data) {
-        const std::lock_guard lock(mutex_);
-        incoming_.push_back({kind, std::move(data)});
+    void Deliver(Frame::Kind kind, std::string data) { incoming_.Push({kind, std::move(data)}); }
+
+    // With send_mutex_ held: lets go of the handles the connect uses.
+    void CloseConnecting() {
+        if (request_ != nullptr) WinHttpCloseHandle(request_);
+        if (connection_ != nullptr) WinHttpCloseHandle(connection_);
+        request_ = connection_ = nullptr;
     }
 
     void Fail(const char *what) {
@@ -85,31 +87,42 @@ private:
         if (connection == nullptr) return Fail("the relay can't be reached");
         HINTERNET request = WinHttpOpenRequest(connection, L"GET", path_.c_str(), nullptr, WINHTTP_NO_REFERER,
                                                WINHTTP_DEFAULT_ACCEPT_TYPES, secure_ ? WINHTTP_FLAG_SECURE : 0);
+        {
+            // Close() can reach the handles from here on, and ends the waits below by closing them.
+            const std::lock_guard lock(send_mutex_);
+            connection_ = connection;
+            request_ = request;
+            if (stop_) {
+                CloseConnecting();
+                return;
+            }
+        }
+        // request and connection are only used below while they are known to be open, or in calls that Close() ends.
         bool ok = request != nullptr && WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) &&
                   WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                   WinHttpReceiveResponse(request, nullptr);
-        DWORD status = 0, size = sizeof(status);
-        if (ok) {
-            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-                                &status, &size, WINHTTP_NO_HEADER_INDEX);
+        DWORD     status = 0, size = sizeof(status);
+        HINTERNET socket = nullptr;
+        {
+            const std::lock_guard lock(send_mutex_);
+            if (stop_) {
+                CloseConnecting(); // left while connecting: Close() has the handles, or takes them now
+                return;
+            }
+            if (ok) {
+                WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                                    &status, &size, WINHTTP_NO_HEADER_INDEX);
+            }
+            socket = ok && status == 101 ? WinHttpWebSocketCompleteUpgrade(request, 0) : nullptr;
+            CloseConnecting();
+            socket_ = socket;
         }
-        HINTERNET socket = ok && status == 101 ? WinHttpWebSocketCompleteUpgrade(request, 0) : nullptr;
-        if (request != nullptr) WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connection);
         if (socket == nullptr) {
             if (ok) {
                 if (!stop_) Deliver(Frame::Kind::Closed, "the relay refused (HTTP " + std::to_string(status) + ")");
                 return;
             }
             return Fail("the relay can't be reached");
-        }
-        {
-            const std::lock_guard lock(send_mutex_);
-            if (stop_) {
-                WinHttpCloseHandle(socket);
-                return;
-            }
-            socket_ = socket;
         }
         Deliver(Frame::Kind::Open, {});
         std::string message;
@@ -150,11 +163,12 @@ private:
     INTERNET_PORT      port_;
     std::wstring       path_;
     bool               secure_;
-    std::mutex         mutex_, send_mutex_;
-    std::deque<Frame>  incoming_;
+    std::mutex         send_mutex_; // socket_, request_ and connection_
+    FrameQueue         incoming_;
     std::atomic<bool>  stop_{false};
     HINTERNET          session_ = nullptr;
     HINTERNET          socket_ = nullptr;
+    HINTERNET          request_ = nullptr, connection_ = nullptr; // set while connecting
     std::thread        thread_; // last: it starts Run, which uses everything above
 };
 
