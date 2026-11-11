@@ -22,6 +22,10 @@
   button.secondary, label.secondary, a.secondary { background: #2a2a33; color: var(--fg); }
   input[type=file] { display: none; }
   progress { width: 100%; margin-top: 12px; }
+  /* The games this site offers (games.json, shell.js): this one marked, the others links to their pages. */
+  #games { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 24px; }
+  #games a { background: #2a2a33; color: var(--fg); padding: 6px 14px; border-radius: 4px; text-decoration: none; }
+  #games a[aria-current] { background: var(--accent); color: #111; }
   code { color: var(--fg); }
 
   /* The mods: a switch for each, its settings folded under it. */
@@ -97,6 +101,7 @@
 </head>
 <body>
 <main id="setup">
+  <nav id="games" aria-label="Games" hidden></nav>
   <h1>Dark Cloud</h1>
   <p id="status">Starting…</p>
   <button id="last-log-toggle" class="secondary" hidden>Previous run's log</button>

@@ -1,7 +1,8 @@
 # The browser build (PLATFORM WEB, docs/WEB.md): Emscripten, then the build log pushed to the ci-logs
 # branch so it can be read with git alone. Each game link (Asyncify and wasm-opt over the whole game) takes about
 # a quarter of an hour, so the WebGPU build (build) and the WebGL2 one (build-gl) link on runners of their own, side
-# by side, and deploy puts the site together from both.
+# by side, and deploy puts the site together from both. Dark Chronicle (build-dc2) is a third, from another
+# repository at a pinned commit, published under dc2/.
 name: web
 
 on:
@@ -336,9 +337,125 @@ jobs:
             port/build/web/darkcloud_gl.wasm
             port/build/web/darkcloud_gl.data
 
+  # Dark Chronicle's web build (ChronicleTwo, its docs/WEB.md), which the site offers beside Dark Cloud at dc2/. It
+  # is built from the commit port/web/dc2.json pins and kept under that commit: a run that leaves the pin alone
+  # takes the kept build in seconds, one that moves it compiles the game and links it twice (WebGPU and WebGL2),
+  # an hour or more on a cold compiler cache. Only tracked files of that repository go into it, no game data.
+  build-dc2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pin
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          pin = json.load(open('port/web/dc2.json'))
+          assert re.fullmatch(r'[\w.-]+/[\w.-]+', pin['repository']), pin['repository']
+          assert re.fullmatch(r'[0-9a-f]{40}', pin['commit']), pin['commit']
+          print('repository=' + pin['repository'])
+          print('commit=' + pin['commit'])
+          PY
+      - name: Restore the kept build
+        id: kept
+        uses: actions/cache@v4
+        with:
+          path: dc2-site
+          key: dc2-site-${{ steps.pin.outputs.commit }}-emsdk-${{ env.EMSDK_VERSION }}
+      - name: Check out Dark Chronicle
+        if: steps.kept.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repository }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: dc2
+      - name: Install host tools
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          packages="ninja-build glslang-tools python3 ccache"
+          sudo apt-get install -y --no-install-recommends $packages ||
+            { sudo apt-get update && sudo apt-get install -y --no-install-recommends $packages; }
+      - name: Restore Emscripten
+        if: steps.kept.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ env.EMSDK_VERSION }}-${{ hashFiles('port/web/web.cmake') }}
+          restore-keys: emsdk-${{ env.EMSDK_VERSION }}-
+      - name: Install Emscripten
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          if [ ! -x "$HOME/emsdk/emsdk" ]; then
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          fi
+          "$HOME/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$HOME/emsdk/emsdk" activate "$EMSDK_VERSION"
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+      # Kazarov's Rust core there is built with a standard library of its own (threads in the browser), which
+      # needs the toolchain's source; Corrosion runs the default toolchain, so the pinned one is made that.
+      - name: Rust for the browser
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --target wasm32-unknown-emscripten --component rust-src
+          rustup default 1.99.0
+      - name: More swap for the game's link
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 24G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile > /dev/null
+          sudo swapon /mnt/swapfile
+      - name: Restore the compiler cache
+        if: steps.kept.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-dc2-${{ steps.pin.outputs.commit }}
+          restore-keys: ccache-dc2-
+      - name: Configure and build
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          mkdir -p ci
+          set -o pipefail
+          dc2/tools/web/build.sh configure 2>&1 | tee ci/build_dc2.log
+          dc2/tools/web/build.sh build darkchronicle darkchronicle_gl 2>&1 | tee -a ci/build_dc2.log
+          ccache --show-stats || true
+          # The page and the two games, without the build directory's other files.
+          mkdir -p dc2-site
+          cd dc2/port/build/web
+          cp index.html shell.js sw.js darkchronicle.js darkchronicle.wasm darkchronicle.data \
+            darkchronicle_gl.js darkchronicle_gl.wasm darkchronicle_gl.data "$GITHUB_WORKSPACE/dc2-site/"
+          ls -la "$GITHUB_WORKSPACE/dc2-site"
+      # No game data here, so this shows how far startup gets, as Dark Cloud's does above.
+      - name: Smoke run under Node
+        if: steps.kept.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          source "$EMSDK/emsdk_env.sh" > /dev/null
+          dc2/tools/web/smoke.sh node --out "$GITHUB_WORKSPACE/ci/smoke-dc2" 2>&1 | tail -30
+      - name: Upload the build log
+        if: always() && steps.kept.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc2-build-log
+          path: ci
+          if-no-files-found: ignore
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc2-web
+          path: dc2-site
+          if-no-files-found: error
+
   # Publishes main's build to GitHub Pages (jeffiest.github.io/DC_Web/). Pages' source must be GitHub Actions.
+  # Every build has to pass: a failed one publishes nothing, and the site stays as it was.
   deploy:
-    needs: [build, build-gl]
+    needs: [build, build-gl, build-dc2]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
@@ -356,6 +473,17 @@ jobs:
         with:
           name: darkcloud-web-gl
           path: site
+      - uses: actions/download-artifact@v4
+        with:
+          name: dc2-web
+          path: site/dc2
+      # The row of games above each page's title (showGames in shell.js): a list beside each page, the hrefs from
+      # that page's own folder.
+      - name: List the games
+        run: |
+          printf '%s\n' '[{"name": "Dark Cloud", "href": "./"}, {"name": "Dark Chronicle", "href": "dc2/"}]' > site/games.json
+          printf '%s\n' '[{"name": "Dark Cloud", "href": "../"}, {"name": "Dark Chronicle", "href": "./"}]' > site/dc2/games.json
+          ls -la site site/dc2
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
