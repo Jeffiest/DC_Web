@@ -137,6 +137,27 @@ All of it is in `port/web/` or behind `__EMSCRIPTEN__` / `EMSCRIPTEN`:
 | Page: fills the window, fullscreen, log drawer | Done |
 | Main-depth copies | Not yet (see below) |
 | Hosting on GitHub Pages | Deploy job ready, from `main` |
+| Dark Chronicle beside it | Built by `build-dc2` from a pinned commit, published at `dc2/`, a row of games on both pages |
+
+## Dark Chronicle on the same site
+
+The site offers two games: Dark Cloud at its root and Dark Chronicle, ChronicleTwo's web build, at `dc2/`.
+
+- **The build.** `port/web/dc2.json` names the repository and the commit. `web.yml`'s `build-dc2` checks that commit
+  out, builds `darkchronicle` (WebGPU) and `darkchronicle_gl` (WebGL2) with its `tools/web/build.sh`, and keeps the
+  page and the two games in a cache under the commit, so only a change of the pin compiles the game again (an hour
+  or more on a cold compiler cache; the first run on `main` after a branch moved the pin is such a run, since a
+  branch's cache is not `main`'s). To publish a newer Dark Chronicle, push it to that repository and put its commit
+  in `dc2.json`. What it builds from is that repository's tracked files only: fonts, scripts and the gameplay seed
+  go into `darkchronicle.data`, no game data.
+- **The row of games.** Each page's `shell.js` (`showGames`) reads a `games.json` beside it,
+  `[{"name": "Dark Cloud", "href": "./"}, {"name": "Dark Chronicle", "href": "dc2/"}]`, and shows the entries as
+  links above the title, the one for its own folder marked. `deploy` writes one for each page. A build served
+  alone has none and shows no row.
+- **One origin.** The two pages share the browser's storage for the site: Dark Cloud keeps `chronicle/` and
+  `moonmod/` there, Dark Chronicle `chronicletwo/`, and their page keys differ (`dc-` and `ct-`), but the space
+  both may use is one allowance. Each folder has its own `sw.js`, the same isolating worker.
+- **Deploying.** `deploy` needs all three builds. One that fails publishes nothing, so the site stays as it was.
 
 ## Vulkan on WebGPU
 

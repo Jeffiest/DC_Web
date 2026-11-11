@@ -22,6 +22,44 @@ function setStatus(text) {
     $('status').textContent = text;
 }
 
+// The games the site offers, as a row of links above the title. games.json beside the page lists them,
+// [{"name": "Dark Cloud", "href": "../"}, ...], the one whose href is this page's folder being this game. A site
+// with one game has no games.json, and the page no row.
+async function showGames() {
+    let games;
+    try {
+        const response = await fetch('games.json', {cache: 'no-cache'});
+        if (!response.ok) {
+            return;
+        }
+        games = await response.json();
+    } catch {
+        return;
+    }
+    if (!Array.isArray(games)) {
+        return;
+    }
+    const here = new URL('./', location.href).href;
+    const row = $('games');
+    for (const game of games) {
+        if (typeof game?.name !== 'string' || typeof game?.href !== 'string') {
+            continue;
+        }
+        const target = new URL(game.href, location.href);
+        if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+            continue;
+        }
+        const link = document.createElement('a');
+        link.textContent = game.name;
+        link.href = target.href;
+        if (target.href === here) {
+            link.setAttribute('aria-current', 'page');
+        }
+        row.append(link);
+    }
+    row.hidden = row.childElementCount < 2;
+}
+
 // The run's last lines, kept in the browser's storage as they come, so a tab the browser kills (Safari reloads
 // one that crashed or ran out of memory) leaves them to read at the next visit, as "Previous run's log".
 const LOG_KEY = 'dc-log';
@@ -1296,6 +1334,7 @@ function showPreviousLog() {
 
 async function main() {
     showPreviousLog();
+    showGames();
     showPcDownloads().catch((error) => log(`[page error] PC downloads: ${error}`));
     $('fullscreen').addEventListener('click', () => {
         if (document.fullscreenElement) {
