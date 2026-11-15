@@ -8,6 +8,11 @@ the pack only.
 
     python port/web/mods/builtin.py --out port/build/web/mods/builtin [--moonmod <checkout>] [--cache <dir>]
 
+Dark Chronicle's page (dc2/) gets the mods for chronicle-two the same way, as plain files rather than zips, which
+its page puts in the game's saves/mods (.github/workflows/web.yml, build-dc2):
+
+    python port/web/mods/builtin.py --game chronicle-two --out dc2-site/mods/builtin
+
 --moonmod reads the commit from a MoonMod checkout that has it; otherwise MoonMod is cloned into --cache (or a
 temporary folder) and fetched to it. A folder already made from the same commit is left as it is.
 """
@@ -88,6 +93,48 @@ def zip_files(mods: dict[str, dict[str, bytes]], out: Path) -> None:
             archive.writestr(info, entries[name])
 
 
+def build_unpacked(pin: dict, repo: Path, out: Path, game: str) -> list[dict]:
+    """Dark Chronicle's page (dc2/, ChronicleTwo's site/shell.js installBuiltinMods) reads no zips: each mod for game
+    goes in as its files, <out>/<id>/<path>, and index.json lists every file of each. A pack's parts are left out
+    as in build."""
+    commit = pin["commit"]
+    staging = out.with_name(out.name + ".new")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    folders = mods_at(repo, commit, pin["path"])
+    packed = set()
+    for files in folders.values():
+        if "mod.json" in files:
+            manifest = json.loads(files["mod.json"].decode("utf-8"))
+            if game in manifest.get("games", []):
+                packed.update(part["id"] for part in manifest.get("parts", []))
+    listed = []
+    for folder, files in sorted(folders.items()):
+        if "mod.json" not in files or folder in packed:
+            continue
+        manifest = json.loads(files["mod.json"].decode("utf-8"))
+        mod_id = manifest.get("id")
+        if mod_id != folder or not MOD_ID.fullmatch(str(mod_id)):
+            sys.exit(f"{pin['path']}/{folder}/mod.json: its id {mod_id!r} isn't its folder's name")
+        if not VERSION.fullmatch(str(manifest.get("version", ""))):
+            sys.exit(f"{mod_id}: version {manifest.get('version')!r} is not MAJOR.MINOR.PATCH")
+        if game not in manifest.get("games", []):
+            print(f"skipping {mod_id}: not for {game}")
+            continue
+        for name, data in files.items():
+            target = staging / mod_id / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        listed.append({"id": mod_id, "version": manifest["version"], "name": manifest.get("name", mod_id),
+                       "files": sorted(files), "size": sum(len(data) for data in files.values())})
+    index = {"repository": pin["repository"], "commit": commit, "game": game, "mods": listed}
+    (staging / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+                                        newline="\n")
+    shutil.rmtree(out, ignore_errors=True)
+    staging.rename(out)
+    return listed
+
+
 def build(pin: dict, repo: Path, out: Path) -> list[dict]:
     commit = pin["commit"]
     staging = out.with_name(out.name + ".new")
@@ -145,6 +192,8 @@ def main() -> None:
     parser.add_argument("--out", required=True, type=Path, help="the folder to make (mods/builtin in the build)")
     parser.add_argument("--moonmod", type=Path, help="a MoonMod checkout to read the pinned commit from")
     parser.add_argument("--cache", type=Path, help="where to keep MoonMod's clone between builds")
+    parser.add_argument("--game", default=GAME, choices=[GAME, "chronicle-two"],
+                        help="chronicle (Dark Cloud's page: zips) or chronicle-two (Dark Chronicle's dc2/ page: files)")
     args = parser.parse_args()
 
     pin = json.loads(PIN.read_text(encoding="utf-8"))
@@ -154,7 +203,7 @@ def main() -> None:
     try:
         made = json.loads((out / "index.json").read_text(encoding="utf-8"))
         if made.get("commit") == pin["commit"] and made.get("repository") == pin["repository"] and \
-                (out / BUNDLE).is_file():
+                made.get("game", GAME) == args.game and (args.game != GAME or (out / BUNDLE).is_file()):
             print(f"built-in mods from {pin['repository']}@{pin['commit'][:8]} are up to date")
             return
     except (OSError, ValueError):
@@ -162,7 +211,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as work:
         cache = args.cache.resolve() if args.cache else Path(work) / "moonmod"
         repo = source(pin, args.moonmod.resolve() if args.moonmod else None, cache)
-        listed = build(pin, repo, out)
+        listed = build(pin, repo, out) if args.game == GAME else build_unpacked(pin, repo, out, args.game)
     print(f"built-in mods from {pin['repository']}@{pin['commit'][:8]}: "
           + ", ".join(f"{m['id']} {m['version']}" for m in listed))
 
