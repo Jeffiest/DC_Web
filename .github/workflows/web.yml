@@ -445,6 +445,11 @@ jobs:
           name: dc2-build-log
           path: ci
           if-no-files-found: ignore
+      # MoonMod's mods for Dark Chronicle (the co-op mod among them), from the commit port/web/mods/builtin.json
+      # pins, as files the dc2/ page puts in the game's saves/mods (ChronicleTwo's shell.js, installBuiltinMods).
+      # Run on every build, kept build or not, so a new MoonMod pin reaches the page without a new game build.
+      - name: The built-in mods for Dark Chronicle
+        run: python3 port/web/mods/builtin.py --game chronicle-two --out dc2-site/mods/builtin
       - name: Upload the build
         uses: actions/upload-artifact@v4
         with:
