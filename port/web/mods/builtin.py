@@ -8,8 +8,9 @@ the pack only.
 
     python port/web/mods/builtin.py --out port/build/web/mods/builtin [--moonmod <checkout>] [--cache <dir>]
 
-Dark Chronicle's page (dc2/) gets the mods for chronicle-two the same way, as plain files rather than zips, which
-its page puts in the game's saves/mods (.github/workflows/web.yml, build-dc2):
+Dark Chronicle's page (dc2/) gets the mods for chronicle-two the same way, as plain files its page puts in the
+game's saves/mods, and zipped beside them (each, and all in darkchronicle-mods.zip) for its "Play on your PC"
+(.github/workflows/web.yml, build-dc2):
 
     python port/web/mods/builtin.py --game chronicle-two --out dc2-site/mods/builtin
 
@@ -38,6 +39,7 @@ from catalog import MOD_ID, VERSION, ZIP_TIME  # noqa: E402
 PIN = HERE / "builtin.json"
 BUNDLE = "darkcloud-mods.zip"
 GAME = "chronicle"
+GAME_BUNDLES = {"chronicle-two": "darkchronicle-mods.zip"}
 
 
 def git(*args: str, cwd: Path, binary: bool = False):
@@ -109,6 +111,7 @@ def build_unpacked(pin: dict, repo: Path, out: Path, game: str) -> list[dict]:
             if game in manifest.get("games", []):
                 packed.update(part["id"] for part in manifest.get("parts", []))
     listed = []
+    included = {}
     for folder, files in sorted(folders.items()):
         if "mod.json" not in files or folder in packed:
             continue
@@ -125,9 +128,15 @@ def build_unpacked(pin: dict, repo: Path, out: Path, game: str) -> list[dict]:
             target = staging / mod_id / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        # And zipped, for a PC: the page's "Play on your PC" offers each and all of them in one.
+        name = f"{mod_id}.zip"
+        zip_files({mod_id: files}, staging / name)
+        included[mod_id] = files
         listed.append({"id": mod_id, "version": manifest["version"], "name": manifest.get("name", mod_id),
-                       "files": sorted(files), "size": sum(len(data) for data in files.values())})
-    index = {"repository": pin["repository"], "commit": commit, "game": game, "mods": listed}
+                       "files": sorted(files), "size": sum(len(data) for data in files.values()), "file": name})
+    zip_files(included, staging / GAME_BUNDLES[game])
+    index = {"repository": pin["repository"], "commit": commit, "game": game, "mods": listed,
+             "bundle": {"file": GAME_BUNDLES[game], "size": (staging / GAME_BUNDLES[game]).stat().st_size}}
     (staging / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
                                         newline="\n")
     shutil.rmtree(out, ignore_errors=True)
@@ -203,7 +212,7 @@ def main() -> None:
     try:
         made = json.loads((out / "index.json").read_text(encoding="utf-8"))
         if made.get("commit") == pin["commit"] and made.get("repository") == pin["repository"] and \
-                made.get("game", GAME) == args.game and (args.game != GAME or (out / BUNDLE).is_file()):
+                made.get("game", GAME) == args.game and (out / GAME_BUNDLES.get(args.game, BUNDLE)).is_file():
             print(f"built-in mods from {pin['repository']}@{pin['commit'][:8]} are up to date")
             return
     except (OSError, ValueError):
