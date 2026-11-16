@@ -124,6 +124,8 @@ jobs:
       - name: Point the manifest at the pinned commit
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # flatpak-builder mirrors the checkout by its refs, and a commit checked out by its hash is on none.
+          git branch -f dc2-pin HEAD
           awk -v commit="$COMMIT" '
             /# chronicletwo-source:/ {
               print
