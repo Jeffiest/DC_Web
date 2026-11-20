@@ -1,0 +1,14 @@
+configure=0 build=0
+Cacheable calls:   23139 / 35913 (64.43%)
+  Hits:            21544 / 23139 (93.11%)
+    Direct:        21211 / 21544 (98.45%)
+    Preprocessed:    333 / 21544 ( 1.55%)
+  Misses:           1595 / 23139 ( 6.89%)
+Uncacheable calls: 12774 / 35913 (35.57%)
+Local storage:
+  Cache size (GB):   0.1 /   1.0 (12.19%)
+  Hits:            21544 / 23139 (93.11%)
+  Misses:           1595 / 23139 ( 6.89%)
+-rw-r--r-- 1 runner runner  1199823 Nov 20 12:56 port/build/web/darkcloud.data
+-rw-r--r-- 1 runner runner   300240 Nov 20 13:07 port/build/web/darkcloud.js
+-rwxr-xr-x 1 runner runner 16573104 Nov 20 13:07 port/build/web/darkcloud.wasm

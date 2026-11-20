@@ -1,0 +1,1000 @@
+tests: on WebGL2
+Note: Google Test filter = -GfxGpuDepthCopy.*:GfxGpuMeshDc2.FogCrossingTheEyeBlendsClampedFog:GfxGpuMeshDc2.PlainFogCrossesTheEyeWithoutDividingByZero
+[==========] Running 133 tests from 10 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from GfxCachedTarget
+[ RUN      ] GfxCachedTarget.DisplayFramesLeaveACachedTargetsCanonicalContents
+webgl: WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+gfx: no device-local host-visible memory type; transient chunks use host memory
+[       OK ] GfxCachedTarget.DisplayFramesLeaveACachedTargetsCanonicalContents (339 ms)
+[----------] 1 test from GfxCachedTarget (339 ms total)
+
+[----------] 76 tests from GfxGpuMeshDc2
+[ RUN      ] GfxGpuMeshDc2.InterpolatedOutlineEscapesNewestPartCrop
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.InterpolatedOutlineEscapesNewestPartCrop (449 ms)
+[ RUN      ] GfxGpuMeshDc2.SkinnedPaletteInterpolatesInDisplayFrame
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.SkinnedPaletteInterpolatesInDisplayFrame (418 ms)
+[ RUN      ] GfxGpuMeshDc2.SharedMeshRewritesInterpolatePerDraw
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.SharedMeshRewritesInterpolatePerDraw (225 ms)
+[ RUN      ] GfxGpuMeshDc2.AnchoredScissorMovesWithTheDraw
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.AnchoredScissorMovesWithTheDraw (205 ms)
+[ RUN      ] GfxGpuMeshDc2.LetterboxClipsMeshesAndClearsToTheFrame
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+[       OK ] GfxGpuMeshDc2.LetterboxClipsMeshesAndClearsToTheFrame (169 ms)
+[ RUN      ] GfxGpuMeshDc2.FillKeepsClearsAcrossTheWindow
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.FillKeepsClearsAcrossTheWindow (192 ms)
+[ RUN      ] GfxGpuMeshDc2.InstancedFacesKeepMeshAndTextureIdentity
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.InstancedFacesKeepMeshAndTextureIdentity (212 ms)
+[ RUN      ] GfxGpuMeshDc2.UnmatchedProg0ClipFollowsInterpolatedCamera
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.UnmatchedProg0ClipFollowsInterpolatedCamera (350 ms)
+[ RUN      ] GfxGpuMeshDc2.TextureChangeCutsPoseMatching
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.TextureChangeCutsPoseMatching (227 ms)
+[ RUN      ] GfxGpuMeshDc2.MirroredInstancesAtSameOriginKeepHandedness
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.MirroredInstancesAtSameOriginKeepHandedness (181 ms)
+[ RUN      ] GfxGpuMeshDc2.InterpolationTintClassifiesGeometryAndPreservesCanonical
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.InterpolationTintClassifiesGeometryAndPreservesCanonical (302 ms)
+[ RUN      ] GfxGpuMeshDc2.InterpolationTintPreservesReusableTargetPixels
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.InterpolationTintPreservesReusableTargetPixels (222 ms)
+[ RUN      ] GfxGpuMeshDc2.PresentationReplacementDoesNotInheritUiAnchor
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.PresentationReplacementDoesNotInheritUiAnchor (452 ms)
+[ RUN      ] GfxGpuMeshDc2.RotatingThinOutlineKeepsIntermediateTips
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.RotatingThinOutlineKeepsIntermediateTips (341 ms)
+[ RUN      ] GfxGpuMeshDc2.FillOutlineInWiderAndTallerWindowsStaysInsideTheFrame
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.FillOutlineInWiderAndTallerWindowsStaysInsideTheFrame (613 ms)
+[ RUN      ] GfxGpuMeshDc2.FillOutlineFourByThreeKeepsItsRightEdge
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.FillOutlineFourByThreeKeepsItsRightEdge (200 ms)
+[ RUN      ] GfxGpuMeshDc2.AnchoredHudOutsideLogicalFrameStaysHiddenInFill
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.AnchoredHudOutsideLogicalFrameStaysHiddenInFill (186 ms)
+[ RUN      ] GfxGpuMeshDc2.RightAnchoredHudClipsItsAnimationAtTheShiftedFrame
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.RightAnchoredHudClipsItsAnimationAtTheShiftedFrame (197 ms)
+[ RUN      ] GfxGpuMeshDc2.AnchoredHudKeepsInsideItsMaximumAspect
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.AnchoredHudKeepsInsideItsMaximumAspect (199 ms)
+[ RUN      ] GfxGpuMeshDc2.FillScissorCanKeepItsLogicalExtent
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.FillScissorCanKeepItsLogicalExtent (250 ms)
+[ RUN      ] GfxGpuMeshDc2.FullHeightSnapshotPreservesExtendedFrameEdges
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.FullHeightSnapshotPreservesExtendedFrameEdges (635 ms)
+[ RUN      ] GfxGpuMeshDc2.FullHeightSnapshotKeepsLogicalRowsAcrossResize
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.FullHeightSnapshotKeepsLogicalRowsAcrossResize (267 ms)
+[ RUN      ] GfxGpuMeshDc2.PipelinesOnlyWhenAsked
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.PipelinesOnlyWhenAsked (473 ms)
+[ RUN      ] GfxGpuMeshDc2.PlainMeshesIgnoreTheProg0Pipelines
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.PlainMeshesIgnoreTheProg0Pipelines (503 ms)
+[ RUN      ] GfxGpuMeshDc2.PlainDrawWithProg0FlagDrawsPlain
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+gfx: a plain mesh draw sets kMeshProg0; it draws as a plain mesh
+[       OK ] GfxGpuMeshDc2.PlainDrawWithProg0FlagDrawsPlain (335 ms)
+[ RUN      ] GfxGpuMeshDc2.IndexedProg0MeshMatchesImmediate
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.IndexedProg0MeshMatchesImmediate (317 ms)
+[ RUN      ] GfxGpuMeshDc2.RecordedProg0DrawReplaysThroughRenderList
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.RecordedProg0DrawReplaysThroughRenderList (334 ms)
+[ RUN      ] GfxGpuMeshDc2.FourDirectionalLightsSaturate
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FourDirectionalLightsSaturate (320 ms)
+[ RUN      ] GfxGpuMeshDc2.LightsTurnIntoModelSpace
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.LightsTurnIntoModelSpace (336 ms)
+[ RUN      ] GfxGpuMeshDc2.Unlit
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.Unlit (316 ms)
+[ RUN      ] GfxGpuMeshDc2.PointLights
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.PointLights (324 ms)
+[ RUN      ] GfxGpuMeshDc2.RealSpecular
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.RealSpecular (338 ms)
+[ RUN      ] GfxGpuMeshDc2.VertexColour
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.VertexColour (348 ms)
+[ RUN      ] GfxGpuMeshDc2.RefSphere
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.RefSphere (382 ms)
+[ RUN      ] GfxGpuMeshDc2.RefSphereIgnoresSkinning
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.RefSphereIgnoresSkinning (388 ms)
+[ RUN      ] GfxGpuMeshDc2.Skinning
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.Skinning (311 ms)
+[ RUN      ] GfxGpuMeshDc2.SkinnedNormals
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.SkinnedNormals (321 ms)
+[ RUN      ] GfxGpuMeshDc2.SkinnedFourthInfluenceNormal
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.SkinnedFourthInfluenceNormal (341 ms)
+[ RUN      ] GfxGpuMeshDc2.ScissorClipsToClipOrView
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.ScissorClipsToClipOrView (325 ms)
+[ RUN      ] GfxGpuMeshDc2.Prog0CullModeFollowsFlagAndMirror
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.Prog0CullModeFollowsFlagAndMirror (354 ms)
+[ RUN      ] GfxGpuMeshDc2.Fog
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.Fog (416 ms)
+[ RUN      ] GfxGpuMeshDc2.EditorFogSaturatesAtFarValue
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.EditorFogSaturatesAtFarValue (322 ms)
+[ RUN      ] GfxGpuMeshDc2.FogInterpolatesInScreenSpace
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.FogInterpolatesInScreenSpace (322 ms)
+[ RUN      ] GfxGpuMeshDc2.FogClampsVerticesBeforeScreenInterpolation
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FogClampsVerticesBeforeScreenInterpolation (336 ms)
+[ RUN      ] GfxGpuMeshDc2.FogIsContinuousAcrossSharedClippedEdge
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.25 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+[       OK ] GfxGpuMeshDc2.FogIsContinuousAcrossSharedClippedEdge (2665 ms)
+[ RUN      ] GfxGpuMeshDc2.FogChangesContinuouslyAcrossNearPlane
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.FogChangesContinuouslyAcrossNearPlane (755 ms)
+[ RUN      ] GfxGpuMeshDc2.FogChangesContinuouslyBehindEyeAcrossFarPlane
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+[       OK ] GfxGpuMeshDc2.FogChangesContinuouslyBehindEyeAcrossFarPlane (729 ms)
+[ RUN      ] GfxGpuMeshDc2.FogChangesContinuouslyThroughZeroDepthAndW
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.26 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.27 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FogChangesContinuouslyThroughZeroDepthAndW (1530 ms)
+[ RUN      ] GfxGpuMeshDc2.PlainFogClampsVerticesBeforeScreenInterpolation
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.PlainFogClampsVerticesBeforeScreenInterpolation (189 ms)
+[ RUN      ] GfxGpuMeshDc2.FogFarClippingRetainsVertexInterpolation
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.29 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FogFarClippingRetainsVertexInterpolation (648 ms)
+[ RUN      ] GfxGpuMeshDc2.FogBlendsClippingPerVertexInOneDraw
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FogBlendsClippingPerVertexInOneDraw (325 ms)
+[ RUN      ] GfxGpuMeshDc2.FogTruncatesEachVisibleVertexBeforeInterpolation
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.23 s
+[       OK ] GfxGpuMeshDc2.FogTruncatesEachVisibleVertexBeforeInterpolation (273 ms)
+[ RUN      ] GfxGpuMeshDc2.FogTruncatesClampedFractionalVertexLimits
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.FogTruncatesClampedFractionalVertexLimits (331 ms)
+[ RUN      ] GfxGpuMeshDc2.PlainFogInvertedLimitsSaturateNearLast
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.PlainFogInvertedLimitsSaturateNearLast (199 ms)
+[ RUN      ] GfxGpuMeshDc2.PlainFogInterpolatesInScreenSpace
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.PlainFogInterpolatesInScreenSpace (174 ms)
+[ RUN      ] GfxGpuMeshDc2.FourLightFogWithWhiteVertexModulationMatchesMaterialOnly
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.FourLightFogWithWhiteVertexModulationMatchesMaterialOnly (260 ms)
+[ RUN      ] GfxGpuMeshDc2.ConstantFullFogFactorMatchesUnfoggedPixels
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuMeshDc2.ConstantFullFogFactorMatchesUnfoggedPixels (332 ms)
+[ RUN      ] GfxGpuMeshDc2.OpaqueAlphaTexturesDrawAtEveryMipAndWriteDepth
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.OpaqueAlphaTexturesDrawAtEveryMipAndWriteDepth (328 ms)
+[ RUN      ] GfxGpuMeshDc2.CpuUpdatesToTransparentAlphaStopTheOpaqueShortcut
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.CpuUpdatesToTransparentAlphaStopTheOpaqueShortcut (236 ms)
+[ RUN      ] GfxGpuMeshDc2.OpaqueAlphaShortcutNeedsEveryMipKnown
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.OpaqueAlphaShortcutNeedsEveryMipKnown (235 ms)
+[ RUN      ] GfxGpuMeshDc2.CopyBlitAndSnapshotOverOpaqueAlphaTexturesKeepTheAlphaTest
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.CopyBlitAndSnapshotOverOpaqueAlphaTexturesKeepTheAlphaTest (244 ms)
+[ RUN      ] GfxGpuMeshDc2.RecordedTextureUpdatesReplayOverOpaqueAlphaKnowledge
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.RecordedTextureUpdatesReplayOverOpaqueAlphaKnowledge (233 ms)
+[ RUN      ] GfxGpuMeshDc2.OpaqueAlphaShortcutKeepsTheTestWhereAlphaCanFail
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.OpaqueAlphaShortcutKeepsTheTestWhereAlphaCanFail (225 ms)
+[ RUN      ] GfxGpuMeshDc2.IndexedNearSafeFogMatchesImmediateReconstruction
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.IndexedNearSafeFogMatchesImmediateReconstruction (221 ms)
+[ RUN      ] GfxGpuMeshDc2.SkippedAndInsertedPartsResynchronizeSurfacePairing
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuMeshDc2.SkippedAndInsertedPartsResynchronizeSurfacePairing (228 ms)
+[ RUN      ] GfxGpuMeshDc2.NewGeometryCannotClaimSurvivingSurfacePose
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.12 s
+[       OK ] GfxGpuMeshDc2.NewGeometryCannotClaimSurvivingSurfacePose (180 ms)
+[ RUN      ] GfxGpuMeshDc2.DoomedMeshDrawIsRecorded
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.DoomedMeshDrawIsRecorded (190 ms)
+[ RUN      ] GfxGpuMeshDc2.DoomedTextureCopyIsRecorded
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] GfxGpuMeshDc2.DoomedTextureCopyIsRecorded (166 ms)
+[ RUN      ] GfxGpuMeshDc2.DoomedTextureUpdateIsRecorded
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.DoomedTextureUpdateIsRecorded (181 ms)
+[ RUN      ] GfxGpuMeshDc2.DoomedResourcesCannotEscapeTheirRecording
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+gfx: UpdateTexture: no texture 0x10003
+gfx: DrawMesh: bad mesh 0x10001 or index range
+[       OK ] GfxGpuMeshDc2.DoomedResourcesCannotEscapeTheirRecording (191 ms)
+[ RUN      ] GfxGpuMeshDc2.DoomedTextureBindingsCannotEscapeTheirRecording
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10005
+gfx: a recorded indexed draw names unavailable palette 0x10005
+gfx: a recorded indexed draw names unavailable palette 0x10005
+[       OK ] GfxGpuMeshDc2.DoomedTextureBindingsCannotEscapeTheirRecording (182 ms)
+[ RUN      ] GfxGpuMeshDc2.SecondDestroyOfDoomedHandleIsHarmless
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.SecondDestroyOfDoomedHandleIsHarmless (183 ms)
+[ RUN      ] GfxGpuMeshDc2.CreateAtTheSlotLimitRetiresDestroyedSlots
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+gfx: out of texture slots (16)
+[       OK ] GfxGpuMeshDc2.CreateAtTheSlotLimitRetiresDestroyedSlots (161 ms)
+[ RUN      ] GfxGpuMeshDc2.DestroyedSlotsReturnAfterTwoFrames
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+gfx: out of texture slots (16)
+[       OK ] GfxGpuMeshDc2.DestroyedSlotsReturnAfterTwoFrames (191 ms)
+[ RUN      ] GfxGpuMeshDc2.CreateMeshAtTheSlotLimitRetiresDestroyedSlots
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+gfx: out of mesh slots (16)
+[       OK ] GfxGpuMeshDc2.CreateMeshAtTheSlotLimitRetiresDestroyedSlots (159 ms)
+[ RUN      ] GfxGpuMeshDc2.SlotRetirementWaitsEverySubmittedFrameBeforeDeleting
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuMeshDc2.SlotRetirementWaitsEverySubmittedFrameBeforeDeleting (200 ms)
+[----------] 76 tests from GfxGpuMeshDc2 (26647 ms total)
+
+[----------] 10 tests from GfxGpuDisplayList
+[ RUN      ] GfxGpuDisplayList.RecordingReservesPriorSizesWithoutRetainingCommands
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuDisplayList.RecordingReservesPriorSizesWithoutRetainingCommands (175 ms)
+[ RUN      ] GfxGpuDisplayList.RecordingReservationToleratesSmallGrowthAndResetsWithRenderer
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+[       OK ] GfxGpuDisplayList.RecordingReservationToleratesSmallGrowthAndResetsWithRenderer (337 ms)
+[ RUN      ] GfxGpuDisplayList.ConsecutiveIdenticalProg0BlocksShareOneRecord
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuDisplayList.ConsecutiveIdenticalProg0BlocksShareOneRecord (176 ms)
+[ RUN      ] GfxGpuDisplayList.RecordingOverlayKeepsSeparateCapacityHistory
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 21860 pipelines ready in 0.28 s
+[       OK ] GfxGpuDisplayList.RecordingOverlayKeepsSeparateCapacityHistory (304 ms)
+[ RUN      ] GfxGpuDisplayList.Keyed2DPresentationIsOptInAndCanonicalExact
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuDisplayList.Keyed2DPresentationIsOptInAndCanonicalExact (237 ms)
+[ RUN      ] GfxGpuDisplayList.WorldSpriteRecordingBlendsOwnMotionAndKeepsCanonicalExact
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.14 s
+[       OK ] GfxGpuDisplayList.WorldSpriteRecordingBlendsOwnMotionAndKeepsCanonicalExact (213 ms)
+[ RUN      ] GfxGpuDisplayList.PresentationCompositeKeepsMovingMeshAndClearsReusedTarget
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuDisplayList.PresentationCompositeKeepsMovingMeshAndClearsReusedTarget (259 ms)
+[ RUN      ] GfxGpuDisplayList.PresentationCompositeDoesNotWriteTransparentDepth
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxGpuDisplayList.PresentationCompositeDoesNotWriteTransparentDepth (227 ms)
+[ RUN      ] GfxGpuDisplayList.HostReplacementSuppressesOnlyTheTaggedMainDisplayGroup
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuDisplayList.HostReplacementSuppressesOnlyTheTaggedMainDisplayGroup (209 ms)
+[ RUN      ] GfxGpuDisplayList.FilteredOutlineCopiesDoNotSamplePreviousPartOutsideBounds
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxGpuDisplayList.FilteredOutlineCopiesDoNotSamplePreviousPartOutsideBounds (231 ms)
+[----------] 10 tests from GfxGpuDisplayList (2373 ms total)
+
+[----------] 6 tests from GfxDisplayList
+[ RUN      ] GfxDisplayList.BonesBlendPerBoneAtHalf
+[       OK ] GfxDisplayList.BonesBlendPerBoneAtHalf (0 ms)
+[ RUN      ] GfxDisplayList.Keyed2DInterpolatesOnlyScreenPositionAndOpacity
+[       OK ] GfxDisplayList.Keyed2DInterpolatesOnlyScreenPositionAndOpacity (1 ms)
+[ RUN      ] GfxDisplayList.Keyed2DRejectsReusedOrIncompatibleDraws
+[       OK ] GfxDisplayList.Keyed2DRejectsReusedOrIncompatibleDraws (0 ms)
+[ RUN      ] GfxDisplayList.WorldSpriteInterpolatesMotionDepthAndCamera
+[       OK ] GfxDisplayList.WorldSpriteInterpolatesMotionDepthAndCamera (0 ms)
+[ RUN      ] GfxDisplayList.WorldSpritePerspectiveUsesWorldEndpoints
+[       OK ] GfxDisplayList.WorldSpritePerspectiveUsesWorldEndpoints (0 ms)
+[ RUN      ] GfxDisplayList.WorldSpriteRejectsReuseTeleportAndIncompatibleViews
+[       OK ] GfxDisplayList.WorldSpriteRejectsReuseTeleportAndIncompatibleViews (0 ms)
+[----------] 6 tests from GfxDisplayList (4 ms total)
+
+[----------] 1 test from GfxMeshDc2
+[ RUN      ] GfxMeshDc2.MeshConstantsKeepChroniclesSize
+[       OK ] GfxMeshDc2.MeshConstantsKeepChroniclesSize (0 ms)
+[----------] 1 test from GfxMeshDc2 (0 ms total)
+
+[----------] 15 tests from GfxMisc
+[ RUN      ] GfxMisc.PipelineCache
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxMisc.PipelineCache (544 ms)
+[ RUN      ] GfxMisc.TextureLimits
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+gfx: texture size 1048576x4 is outside what the device supports (1..8192)
+gfx: texture size 0x4 is outside what the device supports (1..8192)
+gfx: texture 4x4 cannot have 4 mip levels
+gfx: texture size 1048576x4 is outside what the device supports (1..8192)
+gfx: UpdateTexture: 2x1 at 0,0 is outside mip 2 of 1x1
+gfx: UpdateTexture: 1x1 at 0,0 is outside mip 3 of 1x1
+gfx: UpdateTexture: no texture 0x10003
+[       OK ] GfxMisc.TextureLimits (171 ms)
+[ RUN      ] GfxMisc.DrawsOutsideAFrameAreDropped
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxMisc.DrawsOutsideAFrameAreDropped (192 ms)
+[ RUN      ] GfxMisc.UntexturedFogAndAlphaIgnoreTextureAlphaExpansion
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+pixel 32,24 is 64,128,192, expected 3,5,7
+pixel 32,24 is 132,69,106, expected 3,5,7
+[       OK ] GfxMisc.UntexturedFogAndAlphaIgnoreTextureAlphaExpansion (349 ms)
+[ RUN      ] GfxMisc.Png
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxMisc.Png (190 ms)
+[ RUN      ] GfxMisc.TextureReusingFrameTargetKeepsTexelCoordinates
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxMisc.TextureReusingFrameTargetKeepsTexelCoordinates (208 ms)
+[ RUN      ] GfxMisc.TextureWithMorePixelsThanItsLogicalSizeIsAddressedInLogicalTexels
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxMisc.TextureWithMorePixelsThanItsLogicalSizeIsAddressedInLogicalTexels (200 ms)
+[ RUN      ] GfxMisc.SourceAlphaAndFixBlendsAgree
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] GfxMisc.SourceAlphaAndFixBlendsAgree (200 ms)
+[ RUN      ] GfxMisc.NearSafeFogProvesOnlyMeshesInFrontOfTheEye
+[       OK ] GfxMisc.NearSafeFogProvesOnlyMeshesInFrontOfTheEye (0 ms)
+[ RUN      ] GfxMisc.NearSafeFogRejectsNearCrossingsButAllowsFarClipping
+[       OK ] GfxMisc.NearSafeFogRejectsNearCrossingsButAllowsFarClipping (0 ms)
+[ RUN      ] GfxMisc.NearSafeFogRejectsOverflowOfClampedVertexFogWeight
+[       OK ] GfxMisc.NearSafeFogRejectsOverflowOfClampedVertexFogWeight (0 ms)
+[ RUN      ] GfxMisc.NearSafeFogGuardsAgainstCancellation
+[       OK ] GfxMisc.NearSafeFogGuardsAgainstCancellation (0 ms)
+[ RUN      ] GfxMisc.NearSafeFogRejectsNonFiniteAndUnboundedInputs
+[       OK ] GfxMisc.NearSafeFogRejectsNonFiniteAndUnboundedInputs (0 ms)
+[ RUN      ] GfxMisc.NearSafeFogRequiresAGradientAndValidClamp
+[       OK ] GfxMisc.NearSafeFogRequiresAGradientAndValidClamp (0 ms)
+[ RUN      ] GfxMisc.MeshBoundsFollowTheFlagAndAreInvalidatedByUpdates
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] GfxMisc.MeshBoundsFollowTheFlagAndAreInvalidatedByUpdates (185 ms)
+[----------] 15 tests from GfxMisc (2245 ms total)
+
+[----------] 13 tests from GfxTim2
+[ RUN      ] GfxTim2.Ct32AlphaConverted
+[       OK ] GfxTim2.Ct32AlphaConverted (0 ms)
+[ RUN      ] GfxTim2.Ct24OpaqueWithoutAlpha
+[       OK ] GfxTim2.Ct24OpaqueWithoutAlpha (0 ms)
+[ RUN      ] GfxTim2.Ct16WidensAndAppliesTexa
+[       OK ] GfxTim2.Ct16WidensAndAppliesTexa (0 ms)
+[ RUN      ] GfxTim2.T8ClutCsm1
+[       OK ] GfxTim2.T8ClutCsm1 (0 ms)
+[ RUN      ] GfxTim2.T4LowNibbleFirst
+[       OK ] GfxTim2.T4LowNibbleFirst (0 ms)
+[ RUN      ] GfxTim2.DecodePaletteWithoutLevels
+[       OK ] GfxTim2.DecodePaletteWithoutLevels (0 ms)
+[ RUN      ] GfxTim2.MipLevels
+[       OK ] GfxTim2.MipLevels (0 ms)
+[ RUN      ] GfxTim2.SwizzleRoundTrip
+[       OK ] GfxTim2.SwizzleRoundTrip (41 ms)
+[ RUN      ] GfxTim2.SwizzleKnownPositions
+[       OK ] GfxTim2.SwizzleKnownPositions (0 ms)
+[ RUN      ] GfxTim2.DecodeSwizzledT8
+[       OK ] GfxTim2.DecodeSwizzledT8 (0 ms)
+[ RUN      ] GfxTim2.ParsePictureAndFile
+[       OK ] GfxTim2.ParsePictureAndFile (2 ms)
+[ RUN      ] GfxTim2.DecodeRejectsEmptySource
+[       OK ] GfxTim2.DecodeRejectsEmptySource (0 ms)
+[ RUN      ] GfxTim2.UploadRgbaAndIndexed
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.12 s
+[       OK ] GfxTim2.UploadRgbaAndIndexed (151 ms)
+[----------] 13 tests from GfxTim2 (199 ms total)
+
+[----------] 2 tests from GfxValidation
+[ RUN      ] GfxValidation.LayerIsInstalled
+../../../tools/kazarov/src/cpp/tests/gfx_validation_test.cpp:38: Skipped
+no Vulkan SDK on this host: VK_LAYER_KHRONOS_validation is missing
+
+[  SKIPPED ] GfxValidation.LayerIsInstalled (1 ms)
+[ RUN      ] GfxValidation.DeliberateMisuseIsCaught
+../../../tools/kazarov/src/cpp/tests/gfx_validation_test.cpp:45: Skipped
+the renderer compiles validation out of release builds
+
+[  SKIPPED ] GfxValidation.DeliberateMisuseIsCaught (0 ms)
+[----------] 2 tests from GfxValidation (1 ms total)
+
+[----------] 6 tests from DynamicMask/GfxGpuColorWriteMask
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.DepthOnlyDrawsKeepTheirDepthAndLeaveColourAlone/0
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.DepthOnlyDrawsKeepTheirDepthAndLeaveColourAlone/0 (224 ms)
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.DepthOnlyDrawsKeepTheirDepthAndLeaveColourAlone/1
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.DepthOnlyDrawsKeepTheirDepthAndLeaveColourAlone/1 (180 ms)
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.ZeroReferenceAlphaTestKeepsTransparentCoverage/0
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.17 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.ZeroReferenceAlphaTestKeepsTransparentCoverage/0 (223 ms)
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.ZeroReferenceAlphaTestKeepsTransparentCoverage/1
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.ZeroReferenceAlphaTestKeepsTransparentCoverage/1 (193 ms)
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.GEqualFiltersAroundQuantizedReferences/0
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.GEqualFiltersAroundQuantizedReferences/0 (223 ms)
+[ RUN      ] DynamicMask/GfxGpuColorWriteMask.GEqualFiltersAroundQuantizedReferences/1
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+[       OK ] DynamicMask/GfxGpuColorWriteMask.GEqualFiltersAroundQuantizedReferences/1 (202 ms)
+[----------] 6 tests from DynamicMask/GfxGpuColorWriteMask (1248 ms total)
+
+[----------] 3 tests from Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership
+[ RUN      ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/0
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+[       OK ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/0 (223 ms)
+[ RUN      ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/1
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.15 s
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+[       OK ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/1 (204 ms)
+[ RUN      ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/2
+Vulkan: using WebGL2 ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) (Vulkan 1.3.0), offscreen
+Vulkan: portability subset: triangle fans drawn as lists, one stencil reference and mask pair for both faces
+Vulkan: each draw pushes its textures: shaderSampledImageArrayDynamicIndexing, descriptorBindingPartiallyBound, descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, 8192 update-after-bind sampled images (maxPerStageDescriptorUpdateAfterBindSampledImages, maxDescriptorSetUpdateAfterBindSampledImages), maxPerStageUpdateAfterBindResources for the texture array
+gfx: shader statistics ''
+gfx: 13116 pipelines ready in 0.16 s
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+gfx: a recorded draw names unavailable texture 0x10003
+gfx: a recorded indexed draw names unavailable palette 0x10006
+gfx: a recorded draw names unavailable texture 0x10005
+[       OK ] Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership.DoomedBindingsStayInTheirOwningRecording/2 (210 ms)
+[----------] 3 tests from Keyed2DBillboardAndDepthOfField/GfxGpuPresentationOwnership (638 ms total)
+
+[----------] Global test environment tear-down
+[==========] 133 tests from 10 test suites ran. (33701 ms total)
+[  PASSED  ] 131 tests.
+[  SKIPPED ] 2 tests, listed below:
+[  SKIPPED ] GfxValidation.LayerIsInstalled
+[  SKIPPED ] GfxValidation.DeliberateMisuseIsCaught
+exit=0
+exit=0
