@@ -1,0 +1,345 @@
+# Dark Chronicle for the PC: ChronicleTwo at the commit port/web/dc2.json pins, built the way its own CI builds it
+# (its .github/workflows/windows.yml, linux.yml's Flatpak and macos.yml, without their tests), and put on main's
+# release build-<commit> beside Dark Cloud's builds (builds.yml) with darkchronicle-mods.zip, the mods the dc2/ page
+# has built in. The dc2/ page's "Play on your PC" offers the newest release that has them (ChronicleTwo's
+# port/web/site/shell.js, PC_BUILDS). A pull request that touches this builds the three without publishing.
+#
+# ChronicleTwo is checked out at the top of the workspace, where its scripts expect to be; this repository's own
+# files (the pin, builtin.py) are read in the jobs that need them.
+name: Dark Chronicle PC builds
+
+on:
+  push:
+    branches: [main]
+    paths: [port/web/dc2.json, port/web/mods/builtin.json, port/web/mods/builtin.py, .github/workflows/dc2-builds.yml]
+  pull_request:
+    paths: [port/web/dc2.json, .github/workflows/dc2-builds.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dc2-builds-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    outputs:
+      repository: ${{ steps.pin.outputs.repository }}
+      commit: ${{ steps.pin.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pin
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          pin = json.load(open('port/web/dc2.json'))
+          assert re.fullmatch(r'[\w.-]+/[\w.-]+', pin['repository']), pin['repository']
+          assert re.fullmatch(r'[0-9a-f]{40}', pin['commit']), pin['commit']
+          print('repository=' + pin['repository'])
+          print('commit=' + pin['commit'])
+          PY
+
+  # ChronicleTwo's windows.yml, build mode: an LLVM cross compiler in its CI image, on Linux.
+  windows:
+    name: Dark Chronicle (Windows x64)
+    needs: pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.pin.outputs.repository }}
+          ref: ${{ needs.pin.outputs.commit }}
+          submodules: true
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache/restore@v4
+        id: compile-cache
+        with:
+          path: |
+            .kazarov/ccache/windows-cross
+            .kazarov/cargo-target/windows-cross
+            port/build/windows-cross-x64-release/cargo
+            port/build/windows-cross-x64-release/lto-cache
+          key: dc2-windows-${{ hashFiles('tools/ci/Dockerfile', 'tools/ci/windows-toolchain.cmake', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}-${{ needs.pin.outputs.commit }}
+          restore-keys: |
+            dc2-windows-${{ hashFiles('tools/ci/Dockerfile', 'tools/ci/windows-toolchain.cmake', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}-
+      - name: Prepare the LLVM cross compiler
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/ci/Dockerfile
+          target: windows
+          load: true
+          tags: chronicletwo-ci:windows
+          cache-from: type=gha,scope=dc2-ci-windows
+          cache-to: type=gha,mode=max,scope=dc2-ci-windows,ignore-error=true
+      - name: Build
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/work" chronicletwo-ci:windows bash tools/ci/windows.sh build
+      - name: Package
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/work" chronicletwo-ci:windows python3 tools/ci/windows-package.py build
+      - name: Restore cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .kazarov port/build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darkchronicle-windows-x64
+          path: artifacts/chronicletwo-windows-x64.zip
+          compression-level: 0
+          if-no-files-found: error
+      - name: Keep the compiler outputs
+        if: always() && steps.compile-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .kazarov/ccache/windows-cross
+            .kazarov/cargo-target/windows-cross
+            port/build/windows-cross-x64-release/cargo
+            port/build/windows-cross-x64-release/lto-cache
+          key: ${{ steps.compile-cache.outputs.cache-primary-key }}
+
+  # ChronicleTwo's linux.yml Flatpak job (its docs/FLATPAK.md), its manifest pointed at the pinned commit.
+  linux:
+    name: Dark Chronicle (Linux x86_64 Flatpak)
+    needs: pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08@sha256:6ed6921bb5a9e1a916989971844f159b854b7b225880c381fa34f7a158863039
+      options: --privileged
+    env:
+      MANIFEST: port/flatpak/ci.yml
+      COMMIT: ${{ needs.pin.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.pin.outputs.repository }}
+          ref: ${{ needs.pin.outputs.commit }}
+          submodules: true
+      - name: Point the manifest at the pinned commit
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # flatpak-builder mirrors the checkout by its refs, and a commit checked out by its hash is on none.
+          git branch -f dc2-pin HEAD
+          awk -v commit="$COMMIT" '
+            /# chronicletwo-source:/ {
+              print
+              print "      - type: git"
+              print "        path: ../.."
+              print "        commit: " commit
+              skip = 1
+              next
+            }
+            /# chronicletwo-source-end/ { skip = 0 }
+            !skip { print }
+          ' port/flatpak/org.themoonpeople.ChronicleTwo.yml > "$MANIFEST"
+      - name: Restore Flatpak sources and build outputs
+        uses: actions/cache/restore@v4
+        id: flatpak-cache
+        with:
+          path: .flatpak-builder
+          key: dc2-flatpak-${{ hashFiles('port/flatpak/org.themoonpeople.ChronicleTwo.yml', 'port/flatpak/cargo-sources.json') }}-${{ needs.pin.outputs.commit }}
+          restore-keys: |
+            dc2-flatpak-${{ hashFiles('port/flatpak/org.themoonpeople.ChronicleTwo.yml', 'port/flatpak/cargo-sources.json') }}-
+      - name: Download Flatpak dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4; do
+            if flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && \
+              flatpak-builder --download-only --install-deps-from=flathub \
+                --disable-rofiles-fuse --force-clean --arch=x86_64 \
+                --state-dir=.flatpak-builder flatpak_app "$MANIFEST"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Flatpak dependency downloads failed after four attempts." >&2
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@0fadf5d65cdfbdb9c94c7a2f3637c41206cc1a70 # v6
+        with:
+          manifest-path: ${{ env.MANIFEST }}
+          bundle: darkchronicle.flatpak
+          artifact-name: darkchronicle-linux-x86_64
+          restore-cache: false
+          save-cache: ${{ steps.flatpak-cache.outputs.cache-hit != 'true' }}
+          cache-key: dc2-flatpak-${{ hashFiles('port/flatpak/org.themoonpeople.ChronicleTwo.yml', 'port/flatpak/cargo-sources.json') }}-${{ needs.pin.outputs.commit }}
+
+  # ChronicleTwo's dependencies.yml for Apple: the verified dependency bundle macOS builds from.
+  apple-dependencies:
+    needs: pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.pin.outputs.repository }}
+          ref: ${{ needs.pin.outputs.commit }}
+          submodules: true
+          persist-credentials: false
+      - uses: actions/cache@v4
+        id: bundle
+        with:
+          path: .kazarov/bundle
+          key: dc2-deps-apple-${{ hashFiles('tools/ci/Dockerfile*', 'port/CMakeLists.txt', 'port/cmake/**', 'port/src/tests/CMakeLists.txt', 'tools/kazarov/cmake/**', 'tools/kazarov/Cargo.toml', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}
+      - uses: docker/setup-buildx-action@v3
+        if: steps.bundle.outputs.cache-hit != 'true'
+      - name: Build the verified dependency bundle
+        if: steps.bundle.outputs.cache-hit != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/ci/Dockerfile
+          target: apple-bundle
+          outputs: type=local,dest=.kazarov/export
+          cache-from: type=gha,scope=dc2-deps-apple
+          cache-to: type=gha,mode=max,scope=dc2-deps-apple,ignore-error=true
+      - name: Collect the dependency bundle
+        if: steps.bundle.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .kazarov/bundle
+          mv .kazarov/export/deps.tar.gz .kazarov/export/deps.sha256 .kazarov/bundle/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dc2-apple-dependencies
+          path: .kazarov/bundle/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # ChronicleTwo's macos.yml, build mode, on GitHub's macOS runner (its own names a runner this repository has not).
+  macos:
+    name: Dark Chronicle (macOS arm64)
+    needs: [pin, apple-dependencies]
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.kazarov/cargo-target/macos
+      CCACHE_DIR: ${{ github.workspace }}/.kazarov/ccache/macos
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.pin.outputs.repository }}
+          ref: ${{ needs.pin.outputs.commit }}
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: dc2-apple-dependencies
+          path: .kazarov/bundle
+      - name: Unpack verified dependencies
+        run: |
+          test "$(shasum -a 256 .kazarov/bundle/deps.tar.gz | cut -d' ' -f1)" = "$(cat .kazarov/bundle/deps.sha256)"
+          tar xzf .kazarov/bundle/deps.tar.gz -C .kazarov
+      - name: Restore native Apple dependencies
+        uses: actions/cache/restore@v4
+        id: native-deps-cache
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            ~/.cargo/registry
+            ~/.cargo/git
+            .kazarov/deps/bin
+            .kazarov/ffmpeg/darwin-arm64
+          key: dc2-native-deps-macos-${{ hashFiles('tools/ci/Dockerfile', 'tools/ci/apple-deps.sh', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}
+      - uses: actions/cache/restore@v4
+        id: compile-cache
+        with:
+          path: |
+            .kazarov/cargo-target/macos
+            port/build/macos-arm64-release/cargo
+            .kazarov/ccache/macos
+            port/build/macos-arm64-release/lto-cache
+          key: dc2-macos-${{ hashFiles('tools/ci/Dockerfile', 'tools/ci/apple-deps.sh', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}-${{ needs.pin.outputs.commit }}
+          restore-keys: |
+            dc2-macos-${{ hashFiles('tools/ci/Dockerfile', 'tools/ci/apple-deps.sh', 'tools/kazarov/Cargo.lock', 'tools/kazarov/tools/ffmpeg/kz-ffmpeg') }}-
+      - name: Install the native Apple toolchain
+        id: prepare-native-deps
+        run: bash tools/ci/apple-deps.sh macos-arm64
+      - name: Configure
+        run: cmake --preset macos-arm64-release -C tools/ci/dependencies.cmake -DCT_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
+      - name: Build
+        run: cmake --build --preset macos-arm64-release --parallel "$(sysctl -n hw.ncpu)"
+      - name: Package
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/darkchronicle-macos-arm64.tar.gz -C port/build/macos-arm64-release darkchronicle dc2data scripts glyphs fonts Luau-LICENSE.txt Tracy-LICENSE.txt -C assets data.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darkchronicle-macos-arm64
+          path: artifacts/darkchronicle-macos-arm64.tar.gz
+          if-no-files-found: error
+      - name: Keep the compiler outputs
+        if: always() && steps.compile-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .kazarov/cargo-target/macos
+            port/build/macos-arm64-release/cargo
+            .kazarov/ccache/macos
+            port/build/macos-arm64-release/lto-cache
+          key: ${{ steps.compile-cache.outputs.cache-primary-key }}
+      - name: Keep the native Apple dependencies
+        if: always() && steps.prepare-native-deps.outcome == 'success' && steps.native-deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            ~/.cargo/registry
+            ~/.cargo/git
+            .kazarov/deps/bin
+            .kazarov/ffmpeg/darwin-arm64
+          key: ${{ steps.native-deps-cache.outputs.cache-primary-key }}
+
+  # Onto main's release build-<commit>, made here if builds.yml hasn't made it yet. Each build that passed goes
+  # in; one that failed is left out, so a broken macOS build doesn't hold back the Windows one.
+  release:
+    needs: [pin, windows, linux, macos]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      (needs.windows.result == 'success' || needs.linux.result == 'success' || needs.macos.result == 'success')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: darkchronicle-*
+          path: got
+      - name: Gather the files
+        run: |
+          mkdir -p out
+          find got -type f | sort
+          zip=$(find got -name 'chronicletwo-windows-x64.zip' | head -1)
+          [ -n "$zip" ] && mv "$zip" out/darkchronicle-windows-x64.zip
+          flatpak=$(find got -name '*.flatpak' | head -1)
+          [ -n "$flatpak" ] && mv "$flatpak" out/darkchronicle-linux-x86_64.flatpak
+          mac=$(find got -name 'darkchronicle-macos-arm64.tar.gz' | head -1)
+          [ -n "$mac" ] && mv "$mac" out/darkchronicle-macos-arm64.tar.gz
+          python3 port/web/mods/builtin.py --game chronicle-two --out got/mods
+          if [ -f got/mods/darkchronicle-mods.zip ]; then mv got/mods/darkchronicle-mods.zip out/; fi
+          ls -l out
+      - name: Publish onto the release
+        run: |
+          tag="build-${SHA:0:8}"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" out/* --clobber
+          else
+            # builds.yml writes the release's notes (Dark Chronicle's files among them) when it publishes.
+            printf 'Built from %s on main. Dark Cloud'"'"'s files come when its builds pass.\n' "$SHA" > notes.md
+            gh release create "$tag" out/* --target "$SHA" --title "Build ${SHA:0:8}" --notes-file notes.md \
+              --latest=false || gh release upload "$tag" out/* --clobber
+          fi

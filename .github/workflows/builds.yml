@@ -92,6 +92,11 @@ jobs:
             Options > Game > Mod Manager.
 
           The game data comes from your own disc (docs/PC.md).
+
+          **Dark Chronicle** (ChronicleTwo), when a commit moves its pin (dc2-builds.yml):
+          \`darkchronicle-windows-x64.zip\`, \`darkchronicle-linux-x86_64.flatpak\`, \`darkchronicle-macos-arm64.tar.gz\`
+          and \`darkchronicle-mods.zip\` (unzip it into the \`mods\` folder inside the game's saves folder). The game
+          data comes from your own PAL disc.
           EOF
           # GitHub's Latest is the release of main's newest commit, so a release finishing late for an older one
           # doesn't take it.
